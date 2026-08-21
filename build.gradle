@@ -1,0 +1,149 @@
+// Goety Tuner - 诡厄巫法附属Boss「调律师」
+// Authors: toniat0 & vibe-coding | https://github.com/QieFanQie/ | MIT License
+// 构建说明见 DEVELOPMENT_PLAN.md
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file("run")
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        client {
+        }
+        server {
+            args '--nogui'
+        }
+        data {
+            args '--mod', mod_id, '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
+        }
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    // 【必须排在最前】本地 libs/ 中的 goety 发行 jar（命名 goety-<version>.jar）。
+    // blank:goety 坐标会优先命中这里，绝不回退到远程仓库（aliyun 对该路径返回 401）。
+    flatDir {
+        dirs 'libs'
+    }
+    maven { url 'https://maven.aliyun.com/repository/public/' }
+	maven { url 'https://maven.aliyun.com/repository/forge/' }
+    maven {
+        name = "CurseForge"
+        url = "https://www.cursemaven.com"
+        content {
+            includeGroup "curse.maven"
+        }
+    }
+    maven {
+        name = "Modrinth Maven"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+}
+
+// mods.toml / pack.mcmeta 变量展开（MDK标准配置）
+// 【2026-08-19 第二十八轮】filteringCharset 必须显式 UTF-8：默认字符集在 Windows 上
+// 是 GBK，expand 过滤会把 mods.toml 里的中文（credits 音乐作者）读坏（字节替换成 '?'）
+tasks.named('processResources', ProcessResources).configure {
+    filteringCharset 'UTF-8'
+    var replaceProperties = [
+            minecraft_version   : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            forge_version       : forge_version,
+            forge_version_range : forge_version_range,
+            loader_version_range: loader_version_range,
+            mod_id              : mod_id,
+            mod_name            : mod_name,
+            mod_license         : mod_license,
+            mod_version         : mod_version,
+            mod_authors         : mod_authors,
+            mod_description     : mod_description
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // ---- 诡厄巫法（本体，必装）----
+    // 【2026-08-18 第四轮修复定论】原注释"正式 jar 放 run/mods 后由 ModLauncher 的
+    // naming service 统一重映射"经实测证伪：srgtomcp 只映射 minecraft/forge 域，
+    // run/mods 里的正式 jar 保持 SRG 名不变，运行期调用 MC 成员必崩
+    // （实证：Patchouli BookCrashHandler 调 Minecraft.m_91087_() -> NoSuchMethodError）。
+    // 因此三个 mod 一律用 fg.deobf(坐标式) 本地反混淆依赖（MCP 命名域、全离线），
+    // flatDir 优先命中 libs/ 本地 jar，运行期从 classpath 加载，run/mods 不再放置。
+    // 注意：fg.deobf(files(...)) 不受支持（FG6 直接跳过 deobf 用原 jar），必须坐标式。
+    //
+    // Goety 的 libs jar 为 devfix 版：refmap 已清空（mappings=0/data={}），mixin 类为
+    // MCP 名；fg.deobf 后全 jar 处于 MCP 域，@Shadow/@Inject 直接命中。refmap 必须保持
+    // 清空，否则原版 MCP->SRG 映射会把 dev 目标解析成 SRG 名而崩。
+    implementation fg.deobf("blank:goety:${goety_version}")
+    implementation fg.deobf("blank:patchouli:1.20.1-81-FORGE")
+    implementation fg.deobf("blank:curios-forge:5.14.1+1.20.1")
+    // 方式B：CurseMaven（若已知file id，取消注释并替换后删除上一行）
+    // compileOnly fg.deobf("curse.maven:goety-<projectId>:<fileId>")
+
+    // ---- GeckoLib ----
+    // 【2026-08-19 第十九轮移除】Goety 2.5.56.5 本体经实证（全 jar class 扫描）零 geckolib
+    // 引用，本项目（调律师）亦未在代码中使用 GeoEntity/GeoEntityRenderer——boss 渲染走
+    // 原版 HumanoidModel + 自定义贴图 + 披风 RenderLayer。故彻底移除该依赖与 libs jar。
+
+    // ---- 调试工具（可选）----
+    // Configured：游戏内图形化编辑配置。此前误以为其自带 Mixin（@Redirect GuiGraphics.blit）
+    // 与 Goety 的 GuiGraphicsMixin 注入冲突而注释；第四轮已证明崩溃根因是 refmap，恢复。
+    // 【2026-08-18 第六轮修复】原 curse.maven 坐标的 jar 带原版 refmap（MCP->SRG），dev 环境
+    // 下 ScreenMixin @ModifyArg 目标被解析成 SRG 名 m_280039_ 找不到而崩溃。libs/ 内为
+    // configured-2.2.3.jar（refmap 已清空，同 goety devfix 手术），改走 flatDir 本地坐标。
+    runtimeOnly fg.deobf("blank:configured:2.2.3")
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_authors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.jar.archiveVersion,
+                'Implementation-Vendor'   : mod_authors,
+                'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    finalizedBy 'reobfJar'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

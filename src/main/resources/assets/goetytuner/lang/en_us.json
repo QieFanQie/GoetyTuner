@@ -1,0 +1,17 @@
+{
+  "item.goetytuner.tuner_spawn_egg": "Tuner Spawn Egg",
+  "itemGroup.goetytuner": "Goety Tuner",
+  "entity.goetytuner.tuner": "The Tuner",
+  "entity.goetytuner.tuner.subtitle": "调律师",
+  "info.goetytuner.music.buildup": "Overture",
+  "info.goetytuner.music.climax": "Crescendo",
+  "info.goetytuner.music.valley": "Interlude",
+  "config.goetytuner.title": "Goety Tuner Config",
+  "config.goetytuner.classify.button": "Auto-classify Foci (LLM)",
+  "config.goetytuner.classify.apikey": "LLM API Key",
+  "config.goetytuner.classify.status.running": "Classifying...",
+  "config.goetytuner.classify.status.done": "Done: %s foci classified",
+  "config.goetytuner.classify.status.failed": "Failed: %s",
+  "tooltip.goetytuner.wand_witchcraft_bonus": "Tuned: Witchcraft Bonus +%s%%",
+  "tooltip.goetytuner.wand_magic_damage_bonus": "Tuned: Magic Damage Bonus +%s%%"
+}

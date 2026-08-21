@@ -1,0 +1,17 @@
+{
+  "item.goetytuner.tuner_spawn_egg": "调律师刷怪蛋",
+  "itemGroup.goetytuner": "诡厄调律师",
+  "entity.goetytuner.tuner": "调律师",
+  "entity.goetytuner.tuner.subtitle": "The Tuner",
+  "info.goetytuner.music.buildup": "铺垫",
+  "info.goetytuner.music.climax": "高潮",
+  "info.goetytuner.music.valley": "低谷",
+  "config.goetytuner.title": "诡厄调律师配置",
+  "config.goetytuner.classify.button": "自动配置聚晶分类与评分（大模型）",
+  "config.goetytuner.classify.apikey": "大模型 API Key",
+  "config.goetytuner.classify.status.running": "正在分类…",
+  "config.goetytuner.classify.status.done": "完成：已分类 %s 个聚晶",
+  "config.goetytuner.classify.status.failed": "失败：%s",
+  "tooltip.goetytuner.wand_witchcraft_bonus": "调律:巫法加成 +%s%%",
+  "tooltip.goetytuner.wand_magic_damage_bonus": "调律:魔法伤害加成 +%s%%"
+}

@@ -1,0 +1,28 @@
+{
+  "type": "goety:ritual",
+  "ritual_type": "goetytuner:tuner_boss_summon",
+  "activation_item": {
+    "tag": "goety:wands"
+  },
+  "craftType": "magic",
+  "entity_to_summon": "goetytuner:tuner",
+  "soulCost": 3,
+  "duration": 10,
+  "ingredients": [
+    {
+      "item": "minecraft:nether_star"
+    },
+    {
+      "item": "minecraft:nether_star"
+    },
+    {
+      "item": "minecraft:nether_star"
+    },
+    {
+      "item": "minecraft:nether_star"
+    }
+  ],
+  "result": {
+    "item": "goety:jei_dummy/none"
+  }
+}

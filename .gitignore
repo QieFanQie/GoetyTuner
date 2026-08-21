@@ -1,0 +1,38 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+blocking.txt
+run
+run/
+libs/*.jar
+!libs/.gitkeep
+
+# build logs / analysis artifacts
+*.log
+build_*.log
+build_log*.txt
+build_log_utf8.txt
+build-compile.log
+build-full.log
+_rmerr.txt
+javap_*.txt
+clean_result.txt
+deploy_result.txt
+

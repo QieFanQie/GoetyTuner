@@ -1,0 +1,11 @@
+{
+  "boss_music_phase1": {
+    "category": "record",
+    "sounds": [
+      {
+        "name": "goetytuner:boss_music_phase1",
+        "stream": true
+      }
+    ]
+  }
+}

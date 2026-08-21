@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "goetytuner:item/tuner_spawn_egg"
+  }
+}
