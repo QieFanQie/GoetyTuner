@@ -11,7 +11,7 @@
 
 | | |
 |---|---|
-| **作者** | toniat0 & vibe-coding |
+| **作者** | QieFanQie & vibe-coding |
 | **团队** | Goety Tuner Project |
 | **音乐** | 由 [乌鸦Producer] 提供（音频在原曲基础上有改动） |
 | **GitHub** | <https://github.com/QieFanQie/> |
