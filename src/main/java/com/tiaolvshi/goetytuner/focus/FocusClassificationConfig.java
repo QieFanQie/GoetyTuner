@@ -13,18 +13,22 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.stream.JsonReader;
 import com.tiaolvshi.goetytuner.GoetyTuner;
+import com.tiaolvshi.goetytuner.focus.LLMClassifier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 静态聚晶分类与评分表：config/goetytuner/focus_classification.json
@@ -52,6 +56,11 @@ public class FocusClassificationConfig {
     private final Map<String, double[]> table = new LinkedHashMap<>(); // [cat, atk, surv]
     private final Map<String, String> rawCategories = new LinkedHashMap<>();
     private String apiKey = "";
+    /** 【v0.0.3】LLM 提示词（自定义覆盖默认模板；空=用默认模板） */
+    private String prompt = "";
+
+    /** 合法聚晶 id 校验（modid:itemid，宽松） */
+    private static final Pattern ID_PATTERN = Pattern.compile("^[a-z0-9_.-]+:[a-z0-9_/.*-]+$");
 
     public FocusClassificationConfig() {
         this.file = FMLPaths.CONFIGDIR.get().resolve(GoetyTuner.MOD_ID).resolve("focus_classification.json");
@@ -61,9 +70,16 @@ public class FocusClassificationConfig {
         FocusClassificationConfig cfg = new FocusClassificationConfig();
         try {
             if (Files.exists(cfg.file)) {
-                JsonObject root = GSON.fromJson(Files.readString(cfg.file), JsonObject.class);
+                // 【v0.0.3】宽松解析：容忍尾随逗号等轻微格式瑕疵
+                JsonReader reader = new JsonReader(new StringReader(Files.readString(cfg.file)));
+                reader.setLenient(true);
+                JsonObject root = GSON.fromJson(reader, JsonObject.class);
+                if (root == null) root = new JsonObject();
                 if (root.has("apiKey")) {
                     cfg.apiKey = root.get("apiKey").getAsString();
+                }
+                if (root.has("prompt")) {
+                    cfg.prompt = root.get("prompt").getAsString();
                 }
                 if (root.has("foci") && root.get("foci").isJsonObject()) {
                     JsonObject foci = root.getAsJsonObject("foci");
@@ -102,6 +118,10 @@ public class FocusClassificationConfig {
             JsonObject root = new JsonObject();
             if (apiKey != null && !apiKey.isEmpty()) {
                 root.addProperty("apiKey", apiKey);
+            }
+            // 仅在用户真正自定义过提示词时落盘；空则沿用默认模板，避免文件冗余
+            if (prompt != null && !prompt.isEmpty()) {
+                root.addProperty("prompt", prompt);
             }
             JsonObject foci = new JsonObject();
             for (String id : table.keySet()) {
@@ -192,17 +212,47 @@ public class FocusClassificationConfig {
 
     // ---- LLM 结果写回 ----
 
-    public synchronized void writeLLMResult(JsonArray fociArray) {
+    /**
+     * 【v0.0.3】接收 LLM 输出的 foci 数组，做宽松校验与修正后写回：
+     * - 跳过缺失 id / 非法 id（不符合 modid:itemid）的条目
+     * - 分类按关键词宽松归一化（byIdLenient），未知→other
+     * - 评分钳制到 [0,10] 并按 0.5 步进取整（与设计规范一致）
+     */
+    public synchronized int writeLLMResult(JsonArray fociArray) {
+        int applied = 0;
         for (var el : fociArray) {
+            if (el == null || !el.isJsonObject()) continue;
             JsonObject o = el.getAsJsonObject();
+            if (!o.has("id")) {
+                GoetyTuner.LOGGER.warn("[Tuner] LLM result entry missing 'id', skipped");
+                continue;
+            }
             String id = o.get("id").getAsString();
-            String cat = o.has("category") ? o.get("category").getAsString() : "other";
-            double atk = o.has("attackScore") ? o.get("attackScore").getAsDouble() : 5.0;
-            double surv = o.has("survivalScore") ? o.get("survivalScore").getAsDouble() : 5.0;
+            if (id == null || !ID_PATTERN.matcher(id).matches()) {
+                GoetyTuner.LOGGER.warn("[Tuner] LLM result has invalid id '{}', skipped", id);
+                continue;
+            }
+            String catRaw = o.has("category") ? o.get("category").getAsString() : "other";
+            String cat = FocusCategory.byIdLenient(catRaw).getId();
+            double atk = roundToHalf(clampScore(o.has("attackScore") ? o.get("attackScore").getAsDouble() : 5.0));
+            double surv = roundToHalf(clampScore(o.has("survivalScore") ? o.get("survivalScore").getAsDouble() : 5.0));
             rawCategories.put(id, cat);
             table.put(id, new double[]{atk, surv});
+            applied++;
         }
+        GoetyTuner.LOGGER.info("[Tuner] LLM auto-classify applied {} foci", applied);
         save();
+        return applied;
+    }
+
+    private static double clampScore(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return 5.0;
+        return Math.max(0.0, Math.min(10.0, v));
+    }
+
+    /** 按 0.5 步进取整（0~10 范围） */
+    private static double roundToHalf(double v) {
+        return Math.round(v * 2.0) / 2.0;
     }
 
     public String getApiKey() {
@@ -211,5 +261,19 @@ public class FocusClassificationConfig {
 
     public synchronized void setApiKey(String apiKey) {
         this.apiKey = apiKey == null ? "" : apiKey;
+    }
+
+    /** 返回当前提示词：空则用默认模板（LLMClassifier.PROMPT_TEMPLATE） */
+    public String getPrompt() {
+        return (prompt == null || prompt.isEmpty()) ? LLMClassifier.PROMPT_TEMPLATE : prompt;
+    }
+
+    /** 返回自定义提示词原文（未自定义则返回空串，用于 UI 输入框预填，避免塞入整段默认模板） */
+    public String getPromptTextOrDefault() {
+        return (prompt == null) ? "" : prompt;
+    }
+
+    public synchronized void setPrompt(String p) {
+        this.prompt = (p == null) ? "" : p;
     }
 }

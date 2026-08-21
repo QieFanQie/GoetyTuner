@@ -38,6 +38,30 @@ public enum FocusCategory {
         return OTHER;
     }
 
+    /**
+     * 【v0.0.3】宽松分类：LLM 可能输出非规范字符串（大小写/别名/中英文/拼写误差）。
+     * 优先精确匹配，否则按关键词包含匹配，最后兜底 OTHER。
+     */
+    public static FocusCategory byIdLenient(String id) {
+        if (id == null) return OTHER;
+        FocusCategory exact = byId(id);
+        if (exact != OTHER) return exact;
+        String s = id.toLowerCase();
+        if (s.contains("summon") || s.contains("召唤") || s.contains("minion")
+                || s.contains("spawn") || s.contains("仆从") || s.contains("随从")) {
+            return SUMMON;
+        }
+        if (s.contains("defen") || s.contains("防御") || s.contains("guard")
+                || s.contains("armor") || s.contains("shield")) {
+            return DEFENSE;
+        }
+        if (s.contains("attack") || s.contains("攻击") || s.contains("atk")
+                || s.contains("offense") || s.contains("damage") || s.contains("输出")) {
+            return ATTACK;
+        }
+        return OTHER;
+    }
+
     /** 是否参与评分（攻击/召唤） */
     public boolean isScored() {
         return this == ATTACK || this == SUMMON;

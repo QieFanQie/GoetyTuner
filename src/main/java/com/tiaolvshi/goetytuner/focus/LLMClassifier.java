@@ -83,9 +83,11 @@ public class LLMClassifier {
     /**
      * 异步执行自动分类。
      * @param apiKey 大模型API Key（来自 focus_classification.json 的输入）
-     * @param onDone 成功回调（已分类条数）；onFail 失败回调（错误信息）
+     * @param promptOverride 自定义提示词（含 %s 占位符则替换聚晶列表；为空则用默认模板）
+     * @param onDone 成功回调（已应用条数）；onFail 失败回调（错误信息）
      */
-    public static CompletableFuture<Integer> runAsync(String apiKey, Consumer<Integer> onDone, Consumer<String> onFail) {
+    public static CompletableFuture<Integer> runAsync(String apiKey, String promptOverride,
+                                                      Consumer<Integer> onDone, Consumer<String> onFail) {
         List<String[]> foci = collectFocusDescriptions();
         JsonArray arr = new JsonArray();
         for (String[] f : foci) {
@@ -94,13 +96,20 @@ public class LLMClassifier {
             o.addProperty("description", f[1]);
             arr.add(o);
         }
+        String fociJson = arr.toString();
+
+        // 拼接提示词：优先使用用户自定义（含 %s 占位符时替换聚晶列表），否则追加
+        String prompt = (promptOverride == null || promptOverride.trim().isEmpty())
+                ? PROMPT_TEMPLATE
+                : (promptOverride.contains("%s") ? String.format(promptOverride, fociJson)
+                                                 : promptOverride + "\n\n" + fociJson);
 
         JsonObject body = new JsonObject();
         body.addProperty("model", TunerCommonConfig.LLM_MODEL.get());
         JsonArray messages = new JsonArray();
         JsonObject msg = new JsonObject();
         msg.addProperty("role", "user");
-        msg.addProperty("content", String.format(PROMPT_TEMPLATE, arr.toString()));
+        msg.addProperty("content", prompt);
         messages.add(msg);
         body.add("messages", messages);
         body.addProperty("temperature", 0.2);
@@ -124,15 +133,15 @@ public class LLMClassifier {
                         .get(0).getAsJsonObject()
                         .getAsJsonObject("message")
                         .get("content").getAsString();
-                // 剥离可能的markdown代码块包裹
+                // 【v0.0.3】宽松解析：先剥离 markdown 代码块，再尝试直接解析；
+                // 失败则从文本中提取第一个平衡 {…} 对象（容忍前后多余文字）
                 content = content.replaceAll("(?s)```(json)?", "").trim();
-                JsonObject parsed = JsonParser.parseString(content).getAsJsonObject();
-                JsonArray resultFoci = parsed.getAsJsonArray("foci");
+                JsonArray resultFoci = extractFoci(content);
 
                 FocusClassificationConfig cfg = FocusPoolManager.classification();
-                cfg.writeLLMResult(resultFoci);
+                int applied = cfg.writeLLMResult(resultFoci);
                 FocusPoolManager.reclassify();
-                return resultFoci.size();
+                return applied;
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
             }
@@ -144,5 +153,50 @@ public class LLMClassifier {
                 onDone.accept(count);
             }
         });
+    }
+
+    /**
+     * 【v0.0.3】从 LLM 文本中宽鬆提取 foci 数组：
+     * ① 直接 JSON 对象含 "foci" → 取之；② 直接 JSON 数组 → 当作 foci；
+     * ③ 否则提取首个平衡 {…} 对象并寻找其内部 "foci" 数组；都失败则空数组（不崩溃）。
+     */
+    private static JsonArray extractFoci(String content) {
+        try {
+            JsonObject obj = JsonParser.parseString(content).getAsJsonObject();
+            if (obj.has("foci") && obj.get("foci").isJsonArray()) {
+                return obj.getAsJsonArray("foci");
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            JsonArray arr = JsonParser.parseString(content).getAsJsonArray();
+            return arr;
+        } catch (Exception ignored) {
+        }
+        // 提取首个平衡花括号块
+        int start = content.indexOf('{');
+        if (start >= 0) {
+            int depth = 0;
+            for (int i = start; i < content.length(); i++) {
+                char c = content.charAt(i);
+                if (c == '{') depth++;
+                else if (c == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        String candidate = content.substring(start, i + 1);
+                        try {
+                            JsonObject obj = JsonParser.parseString(candidate).getAsJsonObject();
+                            if (obj.has("foci") && obj.get("foci").isJsonArray()) {
+                                return obj.getAsJsonArray("foci");
+                            }
+                        } catch (Exception ignored2) {
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        GoetyTuner.LOGGER.warn("[Tuner] Could not parse LLM response into foci array; nothing applied");
+        return new JsonArray();
     }
 }
