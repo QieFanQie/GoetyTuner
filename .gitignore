@@ -19,7 +19,6 @@ build
 
 # other
 blocking.txt
-run
 run/
 libs/*.jar
 !libs/.gitkeep

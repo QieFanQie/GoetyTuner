@@ -34,9 +34,20 @@ description="Goety addon boss: The Tuner. A headless conductor who plays every F
     ordering="AFTER"
     side="BOTH"
 
+# curios 仅作软依赖：本模组代码不直接引用 Curios API（Goety 本体已把它声明为必装依赖，
+# 调律师使用法杖/聚晶的能力全部来自 Goety 的 IFocus/IWand 体系）。
 [[dependencies.${mod_id}]]
     modId="curios"
-    mandatory=true
+    mandatory=false
     versionRange="[1.20-5.3.4,)"
+    ordering="NONE"
+    side="BOTH"
+
+# patchouli 同样仅作软依赖：本模组不使用 Patchouli（Goety 的手册需要它）。
+# build.gradle 中声明 implementation 是为了 dev 运行环境 classpath 完整。
+[[dependencies.${mod_id}]]
+    modId="patchouli"
+    mandatory=false
+    versionRange="[1.20-1.20.1,)"
     ordering="NONE"
     side="BOTH"

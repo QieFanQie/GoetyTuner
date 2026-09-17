@@ -9,9 +9,7 @@
 
 package com.tiaolvshi.goetytuner.focus;
 
-import com.Polarice3.Goety.api.magic.ISpell;
 import com.Polarice3.Goety.common.items.handler.SoulUsingItemHandler;
-import com.Polarice3.Goety.utils.WandUtil;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
@@ -66,25 +64,6 @@ public final class BossWandHelper {
         }
         handler.insertItem(focus);
         return wandStack;
-    }
-
-    /** boss当前主手是否已装该聚晶 */
-    public static boolean isHoldingFocus(LivingEntity boss, FocusEntry entry) {
-        ItemStack wand = boss.getMainHandItem();
-        ItemStack focus = com.Polarice3.Goety.api.items.magic.IWand.getFocus(wand);
-        return !focus.isEmpty() && focus.getItem() == entry.getFocusItem();
-    }
-
-    /** 读取当前聚晶法术（供调试/断言） */
-    @Nullable
-    public static ISpell currentSpell(LivingEntity boss) {
-        return WandUtil.getSpell(boss);
-    }
-
-    /** 构建附魔名→等级映射的简易文本描述（调试命令用） */
-    public static String describe(ItemStack wand) {
-        ItemStack focus = com.Polarice3.Goety.api.items.magic.IWand.getFocus(wand);
-        return focus.isEmpty() ? "(empty)" : focus.toString();
     }
 
     public static void logCast(ServerLevel level, LivingEntity boss, FocusEntry entry) {

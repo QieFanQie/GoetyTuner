@@ -74,9 +74,10 @@ public class TunerCommonConfig {
     public static final ForgeConfigSpec.ConfigValue<String> PHASE2_BUILDUP_ROTATION;  // 二阶段铺垫轮换
     public static final ForgeConfigSpec.ConfigValue<String> PHASE1_CLIMAX_CHANNELS;   // 一阶段高潮并行通道
     public static final ForgeConfigSpec.ConfigValue<String> PHASE2_CLIMAX_CHANNELS;   // 二阶段高潮并行通道
+    /** 二阶段主动瞬移间隔倍率（范围 0.1~1.0，即**只能缩短**、不能拉长；1.0=与一阶段相同） */
     public static final ForgeConfigSpec.DoubleValue PHASE2_TELEPORT_INTERVAL_FACTOR;
     /** 【第二十二轮】二阶段铺垫期攻击法术开始前的弧形瞬移半径（boss身前半圆弧，0=关闭） */
-    public static final ForgeConfigSpec.DoubleValue PHASE2_BUILDUP_ARC_RADIUS;  // 二阶段主动瞬移间隔倍率
+    public static final ForgeConfigSpec.DoubleValue PHASE2_BUILDUP_ARC_RADIUS;
     /** 【第二十二轮】二阶段弧形走位瞬移触发频率：每N次攻击施法触发一次 */
     public static final ForgeConfigSpec.IntValue PHASE2_BUILDUP_ARC_EVERY_N;
 
@@ -231,7 +232,9 @@ public class TunerCommonConfig {
                 .define("phase1ClimaxChannels", "123");
         PHASE2_CLIMAX_CHANNELS = b.comment("二阶段高潮期并行通道序列。如\"222\"=三端攻击")
                 .define("phase2ClimaxChannels", "222");
-        PHASE2_TELEPORT_INTERVAL_FACTOR = b.comment("二阶段主动瞬移间隔倍率（作用于teleportInterval，1.0=与一阶段相同。二阶段铺垫期的走位主要由 phase2BuildupArcRadius 的攻击前弧形瞬移承担）")
+        PHASE2_TELEPORT_INTERVAL_FACTOR = b.comment("二阶段主动瞬移间隔倍率（作用于teleportInterval，1.0=与一阶段相同）。"
+                        + "注意取值范围 0.1~1.0：本项**只能缩短**二阶段瞬移间隔、无法拉长。"
+                        + "二阶段铺垫期的走位主要由 phase2BuildupArcRadius 的攻击前弧形瞬移承担")
                 .defineInRange("phase2TeleportIntervalFactor", 1.0, 0.1, 1.0);
         PHASE2_BUILDUP_ARC_RADIUS = b.comment("二阶段铺垫期：攻击法术开始前的弧形瞬移半径（格，boss身前半圆弧随机点，0=关闭）。默认6")
                 .defineInRange("phase2BuildupArcRadius", 6.0, 0.0, 16.0);

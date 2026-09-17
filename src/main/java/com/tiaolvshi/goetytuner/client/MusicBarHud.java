@@ -56,7 +56,6 @@ public class MusicBarHud {
     // 【2026-08-19 第十九轮】样式调整：更扁更长（182x12 → 260x6）、配色提亮、指针加粗
     private static final int BAR_WIDTH = 260;
     private static final int BAR_HEIGHT = 6;
-    private static final int ACCENT_U = 200; // 重音刻度贴图u（示例）
 
     // ---- 重音闪烁状态（第十九轮：客户端本地检测进度越过重音tick，无需额外网络包） ----
     private static int flashTicks = 0;          // 剩余闪烁帧

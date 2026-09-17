@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：v0.6.1 ｜ 整理日期：2026-08-20 ｜ 覆盖轮次：第 1~32 轮
+> 版本：0.0.4 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~41 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -16,11 +16,13 @@
 | 依赖 mod | goety 2.5.56.5、patchouli、curios-forge、configured（均为 dev 坐标式依赖） |
 | 作者 | toniat0, vibe-coding（https://github.com/QieFanQie/） |
 | 协议 | MIT |
-| 源码规模 | 36 个 Java 源文件，包根 `com.tiaolvshi.goetytuner` |
+| 源码规模 | 39 个 Java 源文件（约 303 KB），包根 `com.tiaolvshi.goetytuner` |
 
-**定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss 不持有实体法杖，而是通过
-Goety 的聚晶(Focus)体系施法——从全体聚晶池中抽签施放玩家装填的法术，并按音乐
-(乐谱/重音)驱动三阶段战斗节奏。
+**定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss **主手常驻一把实体法杖**
+`goety:dark_wand`（`TunerBoss` 构造函数 `setItemInHand(MAIN_HAND, ModItems.DARK_WAND)`；
+从存档读回时若主手不是 `IWand` 会补发——Goety 的 `SoulUsingItemHandler.get` 要求
+`ITEM_HANDLER` capability，缺失会崩服）。施法时由 `BossWandHelper.installFocus` 把从
+全体聚晶池抽签得到的聚晶装进这把杖再释放，并按音乐(乐谱/重音)驱动三阶段战斗节奏。
 
 ---
 
@@ -38,14 +40,14 @@ com.tiaolvshi.goetytuner
 │   ├── ModEvents.java               # 实体加入拦截 / 掉落 / 召唤物归属等
 │   └── ModBusEvents.java            # MOD 总线：属性、图层、屏幕
 ├── entity/
-│   ├── TunerBoss.java               # Boss 主体（AI 状态机 / 阶段 / 战斗数值）
+│   ├── TunerBoss.java               # Boss 主体（1671 行核心类：AI 状态机 / 阶段 / 战斗数值）
 │   ├── BossPhase.java               # 三阶段枚举（铺垫/高潮/低谷）
 │   ├── MusicController.java         # 服务端乐谱推进 / 阶段转换 / 重音触发
 │   └── ai/CastChannel.java          # 施法通道（前摇/高潮并行通道/瞬发）
 ├── focus/
 │   ├── FocusPoolManager.java        # 聚晶池构建 / 抽签 / 锁池归还 / 黑名单
 │   ├── FocusEntry.java              # 聚晶条目（id/分类/标签）
-│   ├── FocusCategory.java           # ATTACK / UTILITY / SUMMON / BUFF / DEBUFF
+│   ├── FocusCategory.java           # ATTACK / DEFENSE / SUMMON / OTHER 四类枚举
 │   ├── FocusClassifier.java         # 启发式分类（lang key + 生物名词兜底）
 │   ├── LLMClassifier.java           # 可选 LLM 分类（人工标注优先）
 │   ├── FocusClassificationConfig.java # 分类配置 + lang 缓存（服务端读 jar）
@@ -60,14 +62,21 @@ com.tiaolvshi.goetytuner
 │   ├── MusicBarHud.java             # 音乐条 HUD（分段色块/重音刻度/指针）
 │   ├── ClientCameraShake.java       # 重音镜头震动
 │   ├── TunerConfigScreen.java       # Configured 配置屏入口
+│   ├── TunerToast.java              # 客户端 Toast（LLM 评分/命令结果提示）
 │   ├── ClientSetup.java             # 图层定义注册 / 渲染器绑定
 │   └── render/                      # TunerRenderer/TunerModel/TunerCape*
 ├── network/
 │   ├── TunerNetwork.java            # 通道注册
 │   ├── SMusicSyncPacket.java        # 乐谱/进度/speed 同步（服务端→客户端）
 │   └── SShakePacket.java            # 镜头震动同步
-└── config/
-    └── TunerCommonConfig.java       # 全部可调参数（common toml）
+├── config/
+│   └── TunerCommonConfig.java       # 全部可调参数（common toml，58 项 / 10 个 section）
+├── command/
+│   └── TunerCommands.java           # /goetytuner 命令（tune 等）
+└── ritual/
+    ├── ModRituals.java              # goety:ritual_factory 仪式召唤注册
+    ├── TunerSummonRitual.java       # 调律师召唤仪式本体
+    └── WandUpgradeEvents.java       # 法杖快照制升级事件
 ```
 
 ### 2.2 数据流（一图流）
@@ -79,7 +88,7 @@ TunerBoss.aiStep ─┐
   ├─ 重音命中 onAccent ──────────────→ 击退+粒子+音效（服务端）  ／        └─→ MusicBarHud 渲染
   │                                   └→ SShakePacket(震动) ──→ ClientCameraShake
   ├─ 抽签 CastChannel ── FocusPoolManager.draw → spell.mobSpellResult ─→ Goety 法术生效
-  └─ 阶段转换 enterPhase2 ── 自buff/回血/进场连发 ──→ 客户端音频 pitch 切换
+  └─ 阶段转换 enterPhase2 ── 自buff/回血/进场连发 ──→ 客户端阶段切换（HUD 分段配色；音频不换速）
 ```
 
 ---
@@ -93,9 +102,12 @@ TunerBoss.aiStep ─┐
 - **三阶段节奏**（由音乐驱动而非纯计时器）：
   - 一阶段：铺垫 → 高潮（三并行施法通道，聚晶池高权重抽签）→ 低谷（清正面效果）→ 铺垫 循环；
   - 二阶段：高潮结束后低谷**替换为铺垫**（节奏加快、无低谷喘息）；
-    每 40tick 自 buff（强健3/重振5，lockMark≥10 升级 6/8）；lockMark 7~12 按档位回血。
+    每 40tick 自 buff（原版力量 等级2/5 + 重振 5/8，`lockMark≥10` 升级；详见 §3.6）；
+    `lockMark` 7~12 按档位回血。
 - **瞬移走位**：`tickTeleport`（玩家目标）与 `tickTeleportNonPlayer`（无参战玩家时追非玩家目标）
-  独立计时器；aiStep 全程判定（距离区间 + 间隔）。
+  独立计时器；**瞬移判定位于 `hasAggro` 仇恨门控之外、全程每 tick 判定**（第 22 轮修复：
+  原先只在铺垫期与二阶段高潮期调用，导致一阶段高潮/低谷期不追击，观感即"瞬移追击失效"）；
+  触发仍受距离区间 (teleportMinDistance, teleportChaseMaxDistance) 与间隔限制。
 - **瞬移逐跳追击（v0.6.0）**：`tryTeleportHop` 沿自身→目标水平连线每跳 8 格（间隔 10tick），
   链内保持追击、链结束恢复冷却；落点 ±3 高度找可站立方块（可爬坡），空中目标兜底
   「两格可通行」空中位；水平距 <4 格不跳（防目标头顶抖动）。
@@ -108,12 +120,18 @@ TunerBoss.aiStep ─┐
   （getViewVector / yHeadRot / yBodyRot），全量覆盖（125+109 法术逐一反编译验证）。
 - **前摇下蹲**：施法中且非嘲讽逃跑 → `setPose(CROUCHING)`（复用 TunerModel 蹲姿映射）；
   嘲讽触发加「非施法中」门控，施法蹲姿优先。
-- **嘲讽机制**：原地嘲讽循环（蹲起 + 音效），高潮施法中不触发。
+- **嘲讽彩蛋（一阶段专属）**：`tickTaunt` 状态机——待机 / 蹲起循环 / 反向跳跃逃跑 / 蹲望。
+  触发条件：**非二阶段 + 有存活仇恨目标 + 距离 (6,12] 格 + 冷却结束(200 tick) +
+  非施法中 + 每 tick 0.002 概率**。命中后二选一：70% 蹲起 4 轮后反向跳跃逃跑
+  （26 tick / 5 格，`setDeltaMovement` 不走导航，避免与高潮 navigation.stop 打架）、
+  30% 蹲望 40~70 tick。常量：蹲/站各 4 tick、逃跑 26 tick、冷却 200 tick。
+  **施法中不触发**（第 31 轮加的门控，防嘲讽姿态与施法瞄准蹲姿互相覆盖、逃跑朝向带偏施法方向）。
 
 ### 3.2 施法系统（Goety 聚晶集成）
 
 - **聚晶池**：扫描所有已注册 Focus（Goety 本体 + 附属），按 `FocusClassifier` 分类
-  （ATTACK/UTILITY/SUMMON/BUFF/DEBUFF）→ 各阶段按权重抽签（高潮攻击池权重 222）。
+  （`FocusCategory`：**ATTACK / DEFENSE / SUMMON / OTHER 四个功能聚晶池**）→ 各阶段按权重
+  抽签（高潮攻击池权重 222）。
 - **分类决策链**（手动/LLM 配置条目 → `spell instanceof ISummonSpell` 权威判定 →
   describe() 双后缀 .info/.desc → 生物名词兜底）。
 - **抽签语义坑**：`FocusPoolManager.draw()` **只返回不移除** → 多通道会重复抽同一聚晶；
@@ -134,8 +152,9 @@ TunerBoss.aiStep ─┐
 ### 3.3 音乐系统（第二十~二十一轮定稿）
 
 - **音频**：`boss_music_phase1.ogg` 内置（用户曲目 98.27s / BPM120 / G 大调转码）；
-  一/二阶段共用，二阶段以 pitch 1.25 加速。WAV→OGG 必须**分块流式写入**
-  （soundfile 一次性 sf.write 大文件崩溃）。
+  一/二阶段共用同一音频、同一速度（第 21 轮撤销了二阶段变速，全程单一
+  `music.pitchPhase1`，默认 1.0；配置项 `pitchPhase2` / `MUSIC_PITCH_PHASE2` 已删除）。
+  WAV→OGG 必须**分块流式写入**（soundfile 一次性 sf.write 大文件崩溃）。
 - **客户端循环实例**（BossMusicManager，FORGE 总线 Dist.CLIENT）：
   `SimpleSoundInstance(RECORDS, looping=true, Attenuation.NONE, relative=true)`；
   ClientTickEvent 管生命周期（实体不在/死亡/同步超时 3s → 停播）；
@@ -167,7 +186,9 @@ TunerBoss.aiStep ─┐
 ### 3.5 网络与配置
 
 - `TunerNetwork` 通道：SMusicSyncPacket（进度/speed/分段/演奏实体集）、SShakePacket。
-- `TunerCommonConfig`：common toml，约 30 项（boss.* / music.* / focus.* / phase2.*），
+- `TunerCommonConfig`：common toml，**58 项、10 个 section**——`boss`(17) / `phase2_buffs`(3) /
+  `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
+  `music`(11) / `llm`(2) / `wand_upgrade`(6)，
   Configured 中文分类引导；`music_score.json`、`focus_classification.json` 运行时双写。
 
 ### 3.6 战斗数值（v0.5.0 / v0.6.0 调整后）
@@ -178,6 +199,13 @@ TunerBoss.aiStep ─┐
   或 direct==entity 且非投射非爆炸）×(1+倍数)。
 - Boss 身份免疫：摔落/火焰(IS_FIRE 标签)/窒息/溺水 → 免疫；魔法/爆炸/普攻正常吃。
 - 召唤冷却免疫：`canBeAffected` 拒绝 GoetyEffects.SUMMON_DOWN。
+- **二阶段自 buff**（`tickPhase2Buffs`，每 40 tick）：施原版力量 `DAMAGE_BOOST`
+  （amplifier = 等级-1，持续 60 tick）+ Goety `RALLYING`；并额外挂 `SPELL_POTENCY` 的
+  `MULTIPLY_TOTAL` modifier（值 = 力量等级 × 0.1），UUID =
+  `nameUUIDFromBytes("goetytuner:boss_phase2_spell_potency")`；关闭总开关
+  `phase2_buffs.phase2BuffsEnabled` 时移除该 modifier（防热重载残留）。
+- **二阶段回血**（`tickPhase2Regen`）：lockMark 7~12 且非锁血宽限期、血量低于当前档位上限时，
+  每 40 tick `heal(1)`。
 
 ---
 
@@ -217,12 +245,14 @@ TunerBoss.aiStep ─┐
   （否则 Windows 默认 GBK 读 UTF-8 文件，全角括号字节被替换成 '?'）。
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
-- 打包产物重名坑：新版本必须 bump mod_version（0.1.0→0.2.0→…），否则游戏 mods 里
+- 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
+  ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~32 轮浓缩）
+## 五、版本演进时间线（第 1~41 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -242,6 +272,14 @@ TunerBoss.aiStep ─┐
 | v0.5.0 | 29c | 聚晶分类修复（ISummonSpell 权威判定）、目光锁定、近战易伤、召唤冷却免疫 |
 | v0.6.0 | 31 | 施法方向钉死（三调用点+O字段）、前摇下蹲、逐跳追击、二阶段进场连发 |
 | v0.6.1 | 32 | beginCast 起手钉朝向（startSpell 结算前 snap），修无干扰也打偏 |
+| v0.6.2 | 34 | 三个 bug 闭环：死亡回弹改覆写 `tick()`+`reviveIfDead()`（原 aiStep 内分支死亡后不可达）、二阶段药水改原版力量+`SPELL_POTENCY`、重音击退旁观白名单 |
+| v0.7.0 | 36 | 任务#118 落地：仪式召唤（`goety:ritual_factory`）+ 快照制升级法杖 + tooltip + 经验×4 |
+| v0.7.1 | 37 | 仪式参数修正（duration 单位=秒：600→10；soulCost 1→3）+ 模组图标 `logoFile` 移入 `[[mods]]` 块 |
+| v0.7.2 | 37b | 图标二次修复（mods.toml 改双引号）+ `/goetytuner tune` 命令 + 二阶段 `SPELL_POTENCY` 法术加成 |
+| v0.0.0 | 38 | **版本号重置为正式版初版**；法杖白名单 `WAND_WHITELIST` + `identify()` 重写 |
+| v0.0.1 | 39 | 图标热修复（logo 1250×450 → 512×184） |
+| v0.0.2 | 40 | 署名「音乐由[乌鸦Producer]提供」+ 项目整理 + 初始化 git（GitHub QieFanQie/GoetyTuner） |
+| v0.0.3 | 41 | 配置界面可见性修复（注册 `IConfigScreenFactory`，Mods 菜单出现 Config 按钮）+ LLM 评分 UI 完整化（提示词框/TunerToast/宽松校验） |
 
 ---
 
@@ -266,17 +304,41 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 ## 七、遗留问题与后续方向
 
-1. **二阶段切换音频重叠**（第二十一轮已客户端化后基本解决，仍保留 EntitySoundInstance
-   备选方案；音量>1 对无衰减实例是线性增益放大可能失真）。
+1. **二阶段切换音频重叠**：第二十一轮客户端化后已基本解决（阶段切换不再重启音频实例），
+   仍保留 EntitySoundInstance 备选方案；音量>1 对无衰减实例是线性增益放大可能失真。
 2. **DoT 伤害归因**、**召唤物 owner 识别**（E4/E5，低优先级）。
 3. 哪些聚晶需永久写入配置黑名单——以运行日志 ERROR 行为准（目前默认仅
    `goetytwilight:destruction_focus`）。
-4. 联机场景：服务器/客户端 common config 不互通（音量/音调取客户端本地配置；
-   pitch 实际用同步包 speed 优先）——单人/LAN 无碍。
-5. Boss 专属魔杖（C 计划）、等效护甲显示（A4）、死亡/受击音效（E7）未实施。
-6. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
+4. Boss 专属魔杖（C 计划）、等效护甲显示（A4）、死亡/受击音效（E7）未实施——
+   E7 现状：`getAmbientSound` / `getDeathSound` / `getHurtSound` 三者均 `return null`，
+   代码内带 TODO 注释。
+5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
+
+### 已知缺陷与待办（0.0.4 时点）
+
+以下为本轮复核代码后新确认的问题，均**未修复**：
+
+1. `SummonScoreTracker` 的两个期望基线硬编码：`dpsExpectation = 3.0`、
+   `survExpectation = 8.0`，源码注释已标 TODO 配置项，但尚未接入 toml。
+2. `CastChannel.beginCast` 中 `BossWandHelper.installFocus(..., null)` 的**附魔注入路径未启用**
+   （第三参数恒为 null，TODO：`focus_enchants.json` 附魔表）。
+3. `music.phase2ValleyKnockbackMultiplier` 在二阶段**不可达**——二阶段低谷已被
+   `MusicController` 映射为铺垫（`getPhase()` / `getSegments()` 两处），`onAccent` 的
+   `case VALLEY` 分支在二阶段永不命中，该配置项仍暴露在 toml 中产生误导。
+4. `MusicBarHud.BACKGROUND_TEXTURE` 指向不存在的 `textures/gui/music_bar.png`
+   （`assets/goetytuner/textures/` 下只有 entity/ 与 item/）；常量与 `ACCENT_U` 目前均未被引用。
+5. `LLMClassifier` 在 common 代码里 import 了客户端类
+   `net.minecraft.client.resources.language.I18n`——当前不会崩（服务端不调用该路径），
+   但服务端若调用 `collectFocusDescriptions()` 会 `NoClassDefFoundError`。
+6. `focus_classification.json`（FOCUS 分类配置文件）目前只有 3 条示例条目
+   （`goety:soul_bolt_focus` / `goety:iron_hide_focus` / `goety:rotting_focus`），
+   其余聚晶靠启发式兜底；LLM 批量评分尚未真正跑过一轮。
+7. 联机场景服务器/客户端 common config 不互通——音量取客户端本地配置；
+   pitch 以同步包 speed 优先。单人/LAN 无碍。
 
 ---
 
 *本文档由开发记忆库自动整理，与 DEVELOPMENT_PLAN.md / README.md 互为补充；*
+*本文件是**技术现状的最新权威文档**，优先级高于 DEVELOPMENT_PLAN.md（后者是阶段性计划书，
+进度表可能滞后）。*
 *两副本（D:\tiaolvshi\goety-tuner 与 D:\测试\tiaolvshi\goety-tuner）需保持同步。*

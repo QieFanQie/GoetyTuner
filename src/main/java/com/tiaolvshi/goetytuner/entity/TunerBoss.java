@@ -117,7 +117,9 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     // 0 = 满血未锁过；每次跌破下一档地板时 +1；maxMark = maxHealth/interval。
     // 地板序列：maxHealth-interval*1, maxHealth-interval*2, ..., maxHealth-interval*(maxMark-1)。
     // 当 lockMark >= maxMark-1 时地板<=0，boss 可被正常击杀。
-    // 例：maxHealth=1024, interval=128 → maxMark=8，地板 896/768/640/512/384/256/128，共7次锁血。
+    // 例（当前默认）：maxHealth=216, interval=18 → maxMark=12，地板 198/180/162/…/18，
+    // 共 11 次锁血回弹；第 12 档（lockMark=12）后锁血耗尽，可被正常击杀。
+    // 二阶段入口 = 第 6 档（108 血 = 半血），见 phase2LockMark。
     private int lockMark = 0;
     // 【2026-08-18 第十三轮】锁血宽限期：触发锁血后 graceTicks 内血量持续钉在 lockGraceFloor，
     // 让"锁血"有存在感（防高频/多段伤害穿透），窗口结束才继续掉血。0=关闭。
@@ -435,20 +437,21 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
             interruptAllCasts(level);
         }
 
-        // 3.5 【第二十二轮】瞬移追击/异常位置修正：全程每tick判定（原先只在铺垫期与
+        // 6.5 【第二十二轮】瞬移追击/异常位置修正：全程每tick判定（原先只在铺垫期与
         //     二阶段高潮期调用——一阶段高潮/低谷期、或脱战边缘玩家跑远时不会追击，观感即"瞬移追击失效"）。
         //     目标=最近可索敌玩家（不依赖仇恨），触发仍受距离区间
         //     (teleportMinDistance, teleportChaseMaxDistance) 与瞬移间隔限制，不会跨图追人。
+        //     ★注意：本步起已在 hasAggro 仇恨门控**之外**，故编号接在第 6 步之后。
         tickTeleport(level);
 
-        // 3.6 【第二十三轮】非玩家瞬移追击（独立新逻辑，未改动 tickTeleport）：
+        // 6.6 【第二十三轮】非玩家瞬移追击（独立新逻辑，未改动 tickTeleport）：
         //     当 boss 处于被激怒状态（存在存活仇恨目标）、仇恨目标不是玩家、
         //     且 96格内没有任何可参战的生存/冒险模式玩家时生效——
         //     典型场景：boss 被铁傀儡/其他生物激怒、或玩家已全部远离，boss 不会卡在远处干瞪眼。
         //     有可参战玩家在场时本逻辑不介入（追击一律交给玩家版 tickTeleport）。
         tickTeleportNonPlayer(level);
 
-        // 4.5 【2026-08-18 第十四轮】二阶段仆从连续清理（4轮，每15tick，防史莱姆分裂残留）
+        // 6.7 【2026-08-18 第十四轮】二阶段仆从连续清理（4轮，每15tick，防史莱姆分裂残留）
         if (phase2MinionCleansRemaining > 0 && --phase2CleanTimer <= 0) {
             cleanOwnedMinions(level);
             phase2MinionCleansRemaining--;
@@ -902,7 +905,11 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         return nearest;
     }
 
-    /** 主动瞬移间隔：二阶段乘以配置倍率（默认0.6=间隔缩短40%） */
+    /**
+     * 主动瞬移间隔：二阶段乘以配置倍率。
+     * 注意 phase2TeleportIntervalFactor 的范围是 0.1~1.0（默认 1.0 = 与一阶段相同），
+     * 即该配置**只能缩短**二阶段间隔、无法拉长；下限 20 tick 兜底。
+     */
     private int currentTeleportInterval() {
         int base = TunerCommonConfig.TELEPORT_INTERVAL.get();
         if (music.isPhase2()) {
@@ -1086,7 +1093,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         if (this.getMaxHealth() != maxHealth) {
             this.getAttribute(Attributes.MAX_HEALTH).setBaseValue(maxHealth);
         }
-        int maxMark = (int) (maxHealth / interval); // 1024/128=8
+        int maxMark = (int) (maxHealth / interval); // 默认 216/18 = 12
 
         // 死亡状态自愈（兜底分支）：主检测在 tick() 覆写（aiStep 在死亡后不执行，
         // 本分支在死亡期间实际不可达，保留以防 tick 覆写被其他调用路径绕过）。

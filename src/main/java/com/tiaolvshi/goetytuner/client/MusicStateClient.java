@@ -86,7 +86,8 @@ public class MusicStateClient {
      * HUD每帧调用：获取平滑推进后的进度。
      * 【第十七轮】浮点连续推进：sinceSync/50.0F 不取整——此前 (int)(sinceSync/50) 每50ms
      * 才跳1tick（每秒20级台阶），60fps下表现为"蠕动"而非平移；现在逐帧连续平移。
-     * 【第二十轮】乘以 speed（=音乐pitch）：二阶段1.25倍速时音乐条与音频等比加速。
+     * 【第二十轮】乘以 speed（=音乐pitch），使音乐条与音频等比推进；
+     * 【第二十一轮】二阶段变速已撤销，speed 恒为 pitchPhase1（默认 1.0）。
      * 不做本地取模：渲染端自行处理循环wrap（浮点模会引入精度跳变）。
      */
     public static State smoothed(int entityId) {

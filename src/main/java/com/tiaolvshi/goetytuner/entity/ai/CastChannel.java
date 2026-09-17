@@ -24,13 +24,13 @@ import net.minecraft.world.item.ItemStack;
 /**
  * 施法通道：忠实模拟玩家「长按右键施法」的完整生命周期。
  *
- * 状态机：IDLE → WARMUP(前摇，tick useSpell) → CAST_DONE(SpellResult) → 进入冷却池 → IDLE
+ * 状态机：IDLE → WARMUP(前摇，每tick useSpell) → 结算(SpellResult) → 进入冷却池 → IDLE
  *
  * - 前摇时长 = min(spell.castDuration(boss, wand), maxCastWindowTicks) × 倍率，保底10tick。
  *   【2026-08-18 第十三轮】Goety 法术前摇 castDuration 默认 5-10 秒甚至 300 秒（玩家按住右键
  *   的完整蓄力时长），boss 照搬会导致站桩蓄力过久、几乎不放技能。已确认玩家「提前松手」
  *   （releaseUsing → MagicResults → SpellResult）是合法释放路径，故将每次蓄力截断到配置窗口
- *   （默认40tick=2秒），显著提升释放频率。
+ *   （【第二十六轮起】默认50tick=2.5秒），显著提升释放频率。
  * - 完成后：聚晶移入对应冷却池（spell.spellCooldown(boss) + 防复读额外冷却）
  * - 【2026-08-18 第十三轮】beginCast 成功后立即将聚晶从功能池移除（锁池），防止高潮多通道
  *   争抢同一聚晶重复抽中；interrupt/失败时归还功能池（无冷却）。
@@ -42,7 +42,8 @@ import net.minecraft.world.item.ItemStack;
  */
 public class CastChannel {
 
-    public enum State { IDLE, WARMUP, FINISHED }
+    /** 通道状态：IDLE=空闲可接单；WARMUP=前摇中（结算完成或被打断后立即回 IDLE）。 */
+    public enum State { IDLE, WARMUP }
 
     private final FocusCategory category; // 本通道负责的功能分块
     private final TunerCastCallback callback;
@@ -172,7 +173,8 @@ public class CastChannel {
         current = entry;
         castTicksElapsed = 0;
         // 【2026-08-18 第十三轮】蓄力时长封顶：Goety castDuration 默认 5-10 秒甚至 300 秒，
-        // boss 照搬会站桩蓄力过久。截断到 maxCastWindowTicks（默认40=2秒），保底10tick(0.5秒)。
+        // boss 照搬会站桩蓄力过久。截断到 maxCastWindowTicks（【第二十六轮起】默认50=2.5秒），
+        // 保底10tick(0.5秒)。
         // 玩家提前松手（releaseUsing→MagicResults）是合法释放路径，提前结算安全。
         int raw = (int) Math.max(1, spell.castDuration(boss, boss.getMainHandItem()) * warmupMultiplier);
         int window = TunerCommonConfig.MAX_CAST_WINDOW_TICKS.get();
@@ -196,12 +198,15 @@ public class CastChannel {
         try {
             spell.startSpell(level, boss, boss.getMainHandItem(), WandUtil.getStats(boss, spell));
         } catch (Throwable t) {
-            // 【第三十一轮】此路径施法尚未开始（onCastStart 未调用），不触发 onCastFailed
-            // 回调——TunerBoss 的施法状态计数器在 onCastStart 才递增，此处调用会造成计数失衡。
+            // 【第三十一轮】此路径施法尚未开始（onCastStart 尚未调用），**不得**触发 onCastFailed 回调——
+            // TunerBoss 的施法状态计数器 activeWarmups 只在 onCastStart 里递增，而 onCastFailed 会走
+            // castEnded() 无条件自减。并行高潮通道下若 A 通道正在前摇、B 通道在此抛异常，
+            // B 的自减会把计数提前打到 0 → DATA_CAST_STATE 误清 0 → A 的蹲姿/瞄准提前收势。
+            // 【0.0.4 修复】此前代码与注释相反，确实调用了 onCastFailed（历史缺陷），现已移除；
+            // 施法未开始故也无需 castEnded 平衡：此处只做拉黑 + 归还聚晶 + 复位。
             GoetyTuner.LOGGER.error("[Tuner] Spell {} threw on startSpell. Auto-blacklisting focus {}.",
-                    current.getItemId(), current.getItemId(), t);
+                    spell.getClass().getSimpleName(), current.getItemId(), t);
             FocusPoolManager.runtimeBlacklist(current.getItemId().toString());
-            callback.onCastFailed(current);
             callback.pools().returnEntry(current);
             current = null;
             state = State.IDLE;
@@ -265,7 +270,7 @@ public class CastChannel {
             spell.SpellResult(level, boss, boss.getMainHandItem(), WandUtil.getStats(boss, spell));
         } catch (Throwable t) {
             GoetyTuner.LOGGER.error("[Tuner] Spell {} threw on instantCast. Auto-blacklisting focus {}.",
-                    entry.getItemId(), entry.getItemId(), t);
+                    spell.getClass().getSimpleName(), entry.getItemId(), t);
             FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
             callback.pools().returnEntry(entry);
             return false;
@@ -283,8 +288,10 @@ public class CastChannel {
      * boss 的位置与朝向，而 LookControl 每 tick 最多转 50°，跟不上瞬移造成的角度突变；
      * Goety 法术沿施法者视线/旋转角度发射，就会朝旧方向打偏（"施法方向 bug"）。
      *
-     * <p>处理：前摇期间每 tick、以及瞬发结算前，把 yRot/yHeadRot/yBodyRot/xRot 直接
-     * 设为指向目标（头部俯仰瞄准目标眼睛，空中目标也能朝上打）。
+     * <p>处理：共三个调用点——① 前摇期间每 tick；② <b>beginCast 内调用 spell.startSpell 之前</b>
+     * （VoidRift/FlameStrike/AbyssalBeam/ChipRain 等法术在 startSpell 内就沿视线 rayTrace 生成实体，
+     * 此时若不钉朝向，无任何瞬移干扰也会朝旧视线放出）；③ 瞬发（instantCast）结算前。
+     * 三处都把 yRot/yHeadRot/yBodyRot/xRot 直接设为指向目标（头部俯仰瞄准目标眼睛，空中目标也能朝上打）。
      * 该调用发生在阶段行为步骤（早于嘲讽状态机），即使嘲讽逃跑中施法，发射方向也正确。
      */
     private void snapTowardTarget(LivingEntity boss) {
@@ -310,10 +317,6 @@ public class CastChannel {
         // O 字段为纯服务端逻辑量，服务端直写不影响客户端渲染插值。
         boss.yRotO = yaw;
         boss.xRotO = pitch;
-    }
-
-    public State getState() {
-        return state;
     }
 
     public FocusCategory getCategory() {

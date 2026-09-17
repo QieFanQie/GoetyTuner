@@ -16,8 +16,6 @@ import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.network.simple.SimpleChannel;
 import net.minecraft.server.level.ServerPlayer;
 
-import java.util.Optional;
-
 public class TunerNetwork {
     private static SimpleChannel INSTANCE;
     private static int id = 0;

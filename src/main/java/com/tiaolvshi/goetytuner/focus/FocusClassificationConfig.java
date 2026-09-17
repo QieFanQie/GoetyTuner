@@ -15,7 +15,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.stream.JsonReader;
 import com.tiaolvshi.goetytuner.GoetyTuner;
-import com.tiaolvshi.goetytuner.focus.LLMClassifier;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.fml.loading.FMLPaths;
 
@@ -261,11 +260,6 @@ public class FocusClassificationConfig {
 
     public synchronized void setApiKey(String apiKey) {
         this.apiKey = apiKey == null ? "" : apiKey;
-    }
-
-    /** 返回当前提示词：空则用默认模板（LLMClassifier.PROMPT_TEMPLATE） */
-    public String getPrompt() {
-        return (prompt == null || prompt.isEmpty()) ? LLMClassifier.PROMPT_TEMPLATE : prompt;
     }
 
     /** 返回自定义提示词原文（未自定义则返回空串，用于 UI 输入框预填，避免塞入整段默认模板） */

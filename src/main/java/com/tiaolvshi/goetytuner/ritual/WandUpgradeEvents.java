@@ -22,7 +22,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageType;
-import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -126,7 +125,8 @@ public class WandUpgradeEvents {
     /**
      * 【第三十五轮】登录兜底：LivingEquipmentChangeEvent 只在装备变化时触发，
      * 玩家登录/重进存档时若主手已是升级法杖，modifier 不会自动挂上。
-     * 每 20 tick（1秒）低频检查一次，无变化时零写入（幂等跳过）。
+     * 每 32 tick（1.6秒，实现为 tickCount &amp; 0x1F == 0x1F）低频检查一次，
+     * 无变化时零写入（幂等跳过）。
      */
     @SubscribeEvent
     public static void onPlayerTick(net.minecraftforge.event.TickEvent.PlayerTickEvent event) {

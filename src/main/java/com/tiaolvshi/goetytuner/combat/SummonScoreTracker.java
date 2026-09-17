@@ -12,7 +12,6 @@ package com.tiaolvshi.goetytuner.combat;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.entity.TunerBoss;
-import com.tiaolvshi.goetytuner.focus.FocusCategory;
 import com.tiaolvshi.goetytuner.focus.FocusEntry;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
 import net.minecraft.server.level.ServerLevel;
@@ -22,7 +21,6 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.projectile.Projectile;
 
-import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;

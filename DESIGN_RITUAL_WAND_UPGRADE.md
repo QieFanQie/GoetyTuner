@@ -1,5 +1,9 @@
 # 《仪式召唤 + 法杖升级》设计方案（任务 #118）
 
+> **【实施状态】已完成。** 本方案已于第 36 轮落地（当时版本 v0.7.0），当前版本 0.0.4。
+> 实际落地的类名与本文稿略有差异，见文末「实施差异」一节。
+> 本文稿保留作为设计留痕（含反编译实证依据），**技术现状请以 `TECHNICAL_SUMMARY.md` 为准**。
+
 > MC 1.20.1 Forge 47.3.22 · 诡厄巫法 Goety 2.5.56.5 附属 · mod id `goetytuner`
 > 版本基线：v0.6.2（三个 bug 修复已闭环）· 本文档为 #118 编码前设计稿
 > 编写日期：2026-08-19 · 状态：**待审阅**
@@ -57,7 +61,7 @@
 | `result` | ✅ | JsonObject → ItemStack；继承 `ModShapelessRecipe` 强制存在；**召唤配方官方用占位物品 `goety:jei_dummy/none`** |
 | `entity_to_summon` | ❌ | RL → `ForgeRegistries.ENTITY_TYPES` |
 | `craftType` | ❌ | String，默认 `""`；**决定结构检查**（必须命中内置类型） |
-| `duration` | ❌ | int，默认 30，**tick 单位**（官方 summon 配方 10~30） |
+| `duration` | ❌ | int，默认 30，**单位是秒**（官方 summon 配方 10~30；★第 37 轮修正，原稿误标为 tick） |
 | `soulCost` | ❌ | int，默认 0，**每秒费率**（见 3.3） |
 | `summonLife` / `research` / `entity_to_sacrifice` / `entity_to_convert` / `structure_to_locate` / `enchantment` / `xpLevelCost` | ❌ | 本项目用不到，不写 |
 
@@ -228,9 +232,9 @@ public static final RegistryObject<ModRitualFactory> TUNER_BOSS_SUMMON =
   "ritual_type": "goetytuner:tuner_boss_summon",
   "activation_item": { "tag": "goety:wands" },
   "craftType": "magic",
-  "entity_to_summon": "goetytuner:tuner_boss",
-  "soulCost": 1,
-  "duration": 600,
+  "entity_to_summon": "goetytuner:tuner",
+  "soulCost": 3,
+  "duration": 10,
   "ingredients": [
     { "item": "minecraft:nether_star" },
     { "item": "minecraft:nether_star" },
@@ -243,7 +247,7 @@ public static final RegistryObject<ModRitualFactory> TUNER_BOSS_SUMMON =
 
 - `activation_item` 用 **`#goety:wands` 物品 tag**（实证 = `dark_wand` + 11 把 staff）→ **任意法杖**；
 - `craftType: "magic"` → 结构检查走 `MagicRitualType` → `RitualRequirements.getStructures("magic", ...)`（魔法结构：需按 Goety 的魔法仪式布局搭建，激活与仪式全程保持）；
-- `duration: 600`（30 秒仪式）+ `soulCost: 1`（每秒 1 灵魂，总量约 30）—— **具体数值进配置或数据包可改**；
+- ★ **第 37 轮修正：`duration: 10`（秒）+ `soulCost: 3`（每秒）**。Goety 的 `duration` **单位是秒**（官方配方都是 10/30，非 tick），`soulCost` 是**每秒**消耗量。原稿写 600 秒 × 1/秒 = 总消耗 600 灵魂，玩家实测在 150 秒时灵魂耗尽导致仪式中断；改为 10 秒 × 3/秒 = **总消耗 30 灵魂**，10 秒完成 —— 数值仍走数据包配方 JSON，玩家可直接修改；
 - 注意：**配方放 `data/goety/` 而非 `data/goetytuner/`**（recipe type 是 goety 的，玩家能直接看到/改）。
 
 ### 4.5 玩家交互与成本汇总（写入 README/游戏内说明）
@@ -252,7 +256,7 @@ public static final RegistryObject<ModRitualFactory> TUNER_BOSS_SUMMON =
 2. 祭坛周围按**魔法仪式结构**摆放（`craftType: magic` 对应布局，见 Goety 文档/游戏内引导）；
 3. 4 个**下界之星**分别放在 4 个基座上；
 4. **手持任意法杖右键祭坛** → 仪式开始（结构保持 3 秒内不被破坏）；
-5. 30 秒后 Boss 从祭坛现身，**手持那把法杖**；
+5. **10 秒**后 Boss 从祭坛现身，**手持那把法杖**（原稿写 30 秒，第 37 轮随 `duration: 10` 修正）；
 6. 玩家手中法杖**不消耗**（原版机制：消耗的是祭坛内副本）—— 向玩家明示这一设计。
 
 ---
@@ -329,14 +333,19 @@ public static final RegistryObject<ModRitualFactory> TUNER_BOSS_SUMMON =
 @SubscribeEvent
 public static void onLivingDamage(LivingDamageEvent event) {
     // 1) 伤害来源 = 玩家（持升级法杖）或 Boss（持升级法杖）
-    // 2) 伤害类型判定：魔法/法术类（damageSource.isMagic() 或 Goety 法术 DamageSource 家族）
-    // 3) 若伤害来源方主手/副手为升级法杖 → event.setAmount(amount * (1 + 0.4))
+    // 2) 伤害类型判定：魔法/法术类
+    //    ★ 1.20.1 没有 DamageSource.isMagic()（1.20.2+ 才有），改判
+    //      forge:is_magic 伤害类型 tag + msgId "magic"/"indirectMagic" 兜底（见下方「1.20.1 API 兼容坑」）
+    // 3) 若伤害来源方主手/副手为升级法杖 → event.setAmount(amount * (1 + NBT 中叠加后的加成))
 }
 ```
 
-- 判定细节：优先用 **`damageSource.getEntity()`（直接攻击者）**，兜底 `getDirectEntity()`；法术伤害大多直接实体为施法者；
-- 类型过滤用 `damageSource.isMagic()` 命中大部分法术；Goety 自带的 `ModDamageSource` 家族（`OwnedDamageSource`/`NoKnockBackDamageSource` 等）多为魔法系 —— 若 `isMagic()` 覆盖不全，再按 `damageSource.getMsgId()` 前缀或 `instanceof` 白名单扩展；
-- **防误伤**：仅当攻击者手持/装备升级法杖时生效；Boss 手持升级法杖时其法术同样 +40%（符合直觉：Boss 用升级版打你更疼，但正常流程 Boss 拿的是未升级原版）。
+- 判定细节：优先用 **`damageSource.getEntity()`（直接攻击者）**；法术伤害大多直接实体为施法者（实际落地只判 `getEntity()`，未再加 `getDirectEntity()` 兜底）；
+- ★ **类型过滤（第 36 轮落地修正）**：`DamageSource.isMagic()` **在 1.20.1 不存在**（1.20.2+ 才有，写了直接编译错），实际实现为两层判定——
+  1. `src.is(TagKey<DamageType>)` 命中 **`forge:is_magic`** 伤害类型标签（Goety 的 `ModDamageTypeTagsProvider` 把 phobia / ice_bouquet / acid / spike / magic_bolt / wind_blast / soul_leech / life_leech 共 **8 种**法术伤害标入，数据驱动、可被整合包扩展）；
+  2. 伤害消息 id `"magic"` / `"indirectMagic"` 兜底（Goety 的 `magic_bolt` 的 `message_id` 即 `indirectMagic`，与标签判定双重命中）；
+- **防误伤**：仅当攻击者手持/装备升级法杖时生效；Boss 手持升级法杖时**默认不加成**（`wandBonusAppliesToBoss=false`，见第六节）—— 原稿"Boss 同样 +40%"与落地默认值不符，以配置开关为准；
+- 加成数值取自**法杖 NBT 中叠加后的值**（而非配置里的单次值），因此多次击败 Boss 得到的叠满法杖按实际数值生效；玩家主/副手各持一把时**两把相加**（双持叠加）。
 
 **③ 玩家手持升级法杖的"生效"总链路**
 
@@ -349,6 +358,16 @@ public static void onLivingDamage(LivingDamageEvent event) {
 
 两个加成均为**常驻型**（无冷却、无施法前摇关联）—— 完全满足"自创一个不是冷却/施法前摇的加成"的约束。
 
+**④ 1.20.1 API 兼容坑（撰稿时按 1.20.2+ API 描述，落地时逐一修正）**
+
+| 误记写法 | 1.20.1 实际情况 | 落地写法 |
+|---|---|---|
+| `damageSource.isMagic()` | **1.20.1 无此方法**（1.20.2+ 新增）；写了直接编译失败 | `src.is(FORGE_IS_MAGIC)`（`forge:is_magic` 伤害类型标签）+ `src.getMsgId()` 命中 `"magic"`/`"indirectMagic"` 兜底 |
+| `stack.save(HolderLookup.Provider)` | **1.20.1 无 `HolderLookup.Provider` 重载**（1.20.2+ / 数据组件化后才有） | `originalWand.save(new CompoundTag())` |
+| `ItemStack.of(HolderLookup.Provider, tag)` | 同上，1.20.1 无该重载 | `ItemStack.of(tag.getCompound("OriginalWand"))` |
+
+> 说明：`ItemStack.save()` / `ItemStack.of()` 的 `HolderLookup.Provider` 重载是 1.20.2+ 引入的；1.20.1 上读写 NBT 一律用单参数版本。快照持久化见 5.1（`TunerBoss.addAdditionalSaveData` / `readAdditionalSaveData`，键 `OriginalWand`）。
+
 ### 5.4 非仪式召唤的 Boss（刷怪蛋路径）
 
 - 刷怪蛋/指令生成的 Boss **无手持法杖** → 死亡不掉落升级法杖（正常，只有仪式召唤的 Boss 才携带）;
@@ -358,15 +377,22 @@ public static void onLivingDamage(LivingDamageEvent event) {
 
 ## 六、配置项清单（TunerCommonConfig 新增）
 
-| 配置键 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `ritualSoulCostPerSecond` | int | 1 | 仪式每秒灵魂费率（配方 `soulCost`；数据包可改，此为文档值） |
-| `ritualDurationTicks` | int | 600 | 仪式时长 tick（数据包可改，此为文档值） |
-| `wandWitchcraftBonus` | double | 0.10 | 升级法杖巫法加成（10% → 0.10） |
-| `wandMagicDamageBonus` | double | 0.40 | 升级法杖魔法伤害加成（40% → 0.40） |
-| `wandBonusStack` | boolean | true | 已有同键加成时叠加（true）或覆盖（false） |
-| `wandUpgradeEnabled` | boolean | true | 总开关：关闭则 Boss 只掉原版法杖 |
-| `wandBonusAppliesToBoss` | boolean | false | Boss 手持升级法杖时其伤害是否同样加成（默认否，防自伤放大） |
+> ★ **落地结果（第 36 轮）：实际新增 6 项，全部在 `[wand_upgrade]` 段。**
+> 原稿列出的 7 项中，**`ritualSoulCostPerSecond` 与 `ritualDurationTicks` 两个键在代码中不存在、也从未落地** ——
+> 仪式数值一律走数据包配方 JSON（见 4.4 的 `soulCost: 3` / `duration: 10`），
+> 与本节末尾"仪式材料配方不进代码配置"的既有结论一致。
+> 另有一项**原稿未写、实际落地**的 `xpMultiplier`（Boss 掉落经验倍率，基础 500 → 2000）。
+
+| 配置键 | 类型 | 默认 | 落地 | 说明 |
+|---|---|---|---|---|
+| `wandUpgradeEnabled` | boolean | true | ✅ | 总开关：关闭则 Boss 掉落原版法杖（无加成）；刷怪蛋/指令 Boss 不受影响 |
+| `wandWitchcraftBonus` | double | 0.10 | ✅ | 升级法杖巫法加成（10% → 0.10，`SPELL_POTENCY` 的 `MULTIPLY_TOTAL`） |
+| `wandMagicDamageBonus` | double | 0.40 | ✅ | 升级法杖魔法伤害加成（40% → 0.40） |
+| `wandBonusStack` | boolean | true | ✅ | 已有同键加成时叠加（true）或覆盖（false） |
+| `wandBonusAppliesToBoss` | boolean | false | ✅ | Boss 手持升级法杖时其伤害是否同样加成（默认否，防自伤放大） |
+| `xpMultiplier` | double | 4.0 | ✅ | **原稿未列**：Boss 掉落经验倍率，基础 500 × 4.0 = 2000 |
+| ~~`ritualSoulCostPerSecond`~~ | ~~int~~ | ~~1~~ | ❌ **未落地** | 代码无此键；仪式灵魂费率走配方 JSON 的 `soulCost`（实际 = 3） |
+| ~~`ritualDurationTicks`~~ | ~~int~~ | ~~600~~ | ❌ **未落地** | 代码无此键；仪式时长走配方 JSON 的 `duration`（实际 = 10 秒，非 tick） |
 
 > 注意：仪式**材料配方**（4×下界之星等）不进代码配置 —— 配方是数据包文件，玩家直接改 JSON 即可（更符合模组惯例）。
 
@@ -380,7 +406,7 @@ public static void onLivingDamage(LivingDamageEvent event) {
 | 2 | `result` 占位物品 `goety:jei_dummy/none` 在无 JEI 环境解析 | 低 | 该物品 Goety 自带（无 JEI 也注册）；官方配方同款写法 |
 | 3 | `craftType:"magic"` 结构布局玩家难搭 | 低 | README 写清结构需求；`magic` 结构相对基础（相比 sabbath/adept_nether） |
 | 4 | 仪式中结构破坏 3 秒即中断 | 低 | README 提示；Boss 战开始前玩家已站桩完成，不涉及战斗 |
-| 5 | `LivingDamageEvent` 误伤非魔法伤害 | 中 | `isMagic()` + 攻击者持杖双条件；附魔伤害可能误判，配置可调关闭 |
+| 5 | `LivingDamageEvent` 误伤非魔法伤害 | 中 | `forge:is_magic` 伤害标签（1.20.1 无 `isMagic()`）+ 攻击者持杖双条件；附魔伤害可能误判，配置可调关闭 |
 | 6 | 玩家侧 `SPELL_POTENCY` modifier 重复叠加/残留 | 中 | 固定 UUID + 事件成对增删；`LivingEquipmentChangeEvent` 槽位快照比对 |
 | 7 | 与 Configured 配置界面联动 | 低 | 新键沿用 `TunerCommonConfig` 现有 builder 注释格式 |
 | 8 | 双副本同步 | 低 | 照旧：编译副本 `D:\测试\...` 与同步副本 `D:\tiaolvshi\...` diff 一致后打包 |
@@ -389,17 +415,20 @@ public static void onLivingDamage(LivingDamageEvent event) {
 
 ## 八、编码任务拆解（审阅通过后执行）
 
-| # | 任务 | 涉及文件（新增/修改） |
-|---|---|---|
-| 1 | 新增 `TunerSummonRitual`（覆写 finish + initSummoned，手持法杖注入） | `ritual/TunerSummonRitual.java`（新） |
-| 2 | 注册自定义 factory（`goety:ritual_factory` DeferredRegister） | `init/ModBusEvents.java` 或 `ritual/RitualRegistration.java`（新） |
-| 3 | 配方 JSON（`data/goety/recipes/tuner_boss_ritual.json`） | `resources/data/goety/recipes/tuner_boss_ritual.json`（新） |
-| 4 | 掉落升级法杖（LivingDropsEvent + NBT 保留/叠加） | `combat/CombatEvents.java`（改）或新 `ritual/WandUpgradeEvents.java` |
-| 5 | 10% 巫法加成落地（装备事件 + SPELL_POTENCY modifier） | `combat/WandBonusHandler.java`（新） |
-| 6 | 40% 魔法伤害加成落地（LivingDamageEvent） | 同上 |
-| 7 | 配置项 7 项 + 注释 | `config/TunerCommonConfig.java`（改） |
-| 8 | 文档：README 仪式流程说明 | `README.md`（改） |
-| 9 | 编译验证 + 双副本同步 + 版本号 bump（0.7.0） | 构建流程（沿用红线） |
+> ★ **实际落地的文件名与本节建议不同**（详见文末「实施差异」）：注册类实为 `ritual/ModRituals.java`，
+> 加成/掉落事件全部集中在 `ritual/WandUpgradeEvents.java`，`RitualRegistration.java` / `WandBonusHandler.java` / `combat/CombatEvents.java` 均**未创建**。
+
+| # | 任务 | 涉及文件（新增/修改） | 实际落地 |
+|---|---|---|---|
+| 1 | 新增 `TunerSummonRitual`（覆写 finish + initSummoned，手持法杖注入） | `ritual/TunerSummonRitual.java`（新） | ✅ 同名 |
+| 2 | 注册自定义 factory（`goety:ritual_factory` DeferredRegister） | `init/ModBusEvents.java` 或 `ritual/RitualRegistration.java`（新） | ⚠️ **`ritual/ModRituals.java`**（`DeferredRegister.create(new ResourceLocation("goety","ritual_factory"), "goetytuner")`；条目 `tuner_boss_summon` = `new ModRitualFactory(TunerSummonRitual::new)`，`register(modBus)` 挂 MOD 总线） |
+| 3 | 配方 JSON（`data/goety/recipes/tuner_boss_ritual.json`） | `resources/data/goety/recipes/tuner_boss_ritual.json`（新） | ✅ 同名 |
+| 4 | 掉落升级法杖（LivingDropsEvent + NBT 保留/叠加） | `combat/CombatEvents.java`（改）或新 `ritual/WandUpgradeEvents.java` | ⚠️ **全部集中在 `ritual/WandUpgradeEvents.java`**（`CombatEvents.java` 未改动） |
+| 5 | 10% 巫法加成落地（装备事件 + SPELL_POTENCY modifier） | `combat/WandBonusHandler.java`（新） | ⚠️ **`ritual/WandUpgradeEvents.java`**（`WandBonusHandler.java` 未创建） |
+| 6 | 40% 魔法伤害加成落地（LivingDamageEvent） | 同上 | ⚠️ **同文件**（`ritual/WandUpgradeEvents.java`） |
+| 7 | 配置项 + 注释 | `config/TunerCommonConfig.java`（改） | ⚠️ 落地 **6 项**（非 7 项），见第六节 |
+| 8 | 文档：README 仪式流程说明 | `README.md`（改） | ✅ 已改 |
+| 9 | 编译验证 + 双副本同步 + 版本号 bump（0.7.0） | 构建流程（沿用红线） | ✅ 第 36 轮落地（该版号 v0.7.0，现 0.0.4） |
 
 ---
 
@@ -407,7 +436,7 @@ public static void onLivingDamage(LivingDamageEvent event) {
 
 - [ ] `goetytuner:tuner_boss_summon` 出现在 `goety:ritual_factory` 注册表（`/forge_registry_name` 或日志）；
 - [ ] 配方 JSON 被 RecipeManager 加载（日志无 parse 错误）；
-- [ ] 按 4.5 流程实搭：右键激活成功、仪式倒计时、灵魂每秒-1、基座之星逐个消失；
+- [ ] 按 4.5 流程实搭：右键激活成功、仪式倒计时（10 秒）、灵魂每秒-3（总消耗 30）、基座之星逐个消失；
 - [ ] 中途拆结构 → 3 秒后中断、法杖副本掉落回地上；
 - [ ] 仪式完成 → Boss 手持**原 NBT 法杖**（附魔/无限耐久/聚晶核对）；
 - [ ] 击杀 → 掉落升级法杖：NBT 全保留 + `goetytuner` 新键；
@@ -419,3 +448,19 @@ public static void onLivingDamage(LivingDamageEvent event) {
 ---
 
 *本文档待用户审阅。确认后按第八节拆解执行（任务 #118），完成后复用构建部署流程（任务 #119）。*
+
+---
+
+## 实施差异（落地时与设计稿的不同点）
+
+| 项 | 设计稿 | 实际落地 |
+|---|---|---|
+| 配方 duration | 600（秒） | **10**（秒）——第 37 轮修正，总消耗 30 灵魂 |
+| 配方 soulCost | 1（每秒） | **3**（每秒） |
+| 配置项 | 7 项（含 ritualSoulCostPerSecond / ritualDurationTicks） | **6 项**（5 项 wand_* + xpMultiplier）；仪式数值改走配方 JSON |
+| 注册类文件名 | RitualRegistration.java | **ModRituals.java** |
+| 加成事件类 | WandBonusHandler.java + CombatEvents.java | 合并为 **WandUpgradeEvents.java** |
+| 魔法伤害判定 | `DamageSource.isMagic()` | 1.20.1 无此 API → **`forge:is_magic` 伤害标签 + msgId `magic`/`indirectMagic` 兜底** |
+| 日期/状态 | "编写日期 2026-08-19 / 待审阅"，正文 5.1 又写"2026-08-20 修订" | 均已实施（第 35~37 轮），状态见文首横幅 |
+
+**验证情况**：仪式注册表 key 与 Goety 本体一致（jar 字节码核实 `Goety.location("ritual_factory")`）；`RitualRecipe$Serializer` 的 JSON 键名全部匹配；`craftType:"magic"` 合法（Goety 自带 83 条配方使用）；`data/goety/tags/items/wands.json` 存在。刷怪蛋/指令路径无原始法杖快照 → 不掉落升级法杖（预期行为）。

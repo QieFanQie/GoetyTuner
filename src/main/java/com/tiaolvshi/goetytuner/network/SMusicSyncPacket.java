@@ -33,8 +33,9 @@ import java.util.function.Supplier;
  * - accents: 重音tick表，客户端画重音刻度（随二阶段内容一起滚动）
  *
  * 【2026-08-18 第十三轮】新增 segments/accents 全量同步（每20tick一次，数据量小，带宽可接受）。
- * 【2026-08-20 第二十轮】新增 speed（乐谱推进速度=音乐pitch）：客户端本地平滑推进
- * 乘以该系数，二阶段 1.25 倍速时音乐条与重音随音频等比加速。
+ * 【2026-08-20 第二十轮】新增 speed（乐谱推进速度 = 音乐 pitch）：客户端本地平滑推进
+ * 乘以该系数，使音乐条与重音与音频等比推进。
+ * 【第二十一轮】二阶段变速已撤销：一/二阶段共用同一音频同一速度，speed 实际恒为 pitchPhase1。
  */
 public class SMusicSyncPacket {
 

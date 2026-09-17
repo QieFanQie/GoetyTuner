@@ -38,12 +38,4 @@ public enum BossPhase {
         }
         return BUILDUP;
     }
-
-    public boolean canCast() {
-        return this == BUILDUP || this == CLIMAX;
-    }
-
-    public boolean canMove() {
-        return this == BUILDUP;
-    }
 }

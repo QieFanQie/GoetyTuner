@@ -113,10 +113,6 @@ public class FocusPoolManager {
                 STATIC_POOLS.get(FocusCategory.OTHER).size());
     }
 
-    public static boolean isInitialized() {
-        return initialized;
-    }
-
     public static List<FocusEntry> allEntries() {
         initIfNeeded();
         return ALL_ENTRIES;

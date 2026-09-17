@@ -5,7 +5,15 @@
 人形无头指挥家「调律师」，以音乐（铺垫/高潮/低谷）驱动战斗节奏，
 轮番演奏诡厄巫法及其附属注册的全部聚晶，并带有自学习式聚晶评分系统。
 
-**开发文档：[DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)**
+**当前版本：0.0.4**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
+
+## 文档索引（按优先级）
+
+| 文档 | 定位 | 时效 |
+|---|---|---|
+| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（覆盖第 1~41 轮） |
+| [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | 阶段性开发计划书：完成度/未完成项/配置总览/实测记录 | 进度表可能滞后，以技术摘要为准 |
+| [DESIGN_RITUAL_WAND_UPGRADE.md](DESIGN_RITUAL_WAND_UPGRADE.md) | 单任务设计稿（任务 #118 仪式召唤 + 法杖升级） | 已实施，保留作设计留痕 |
 
 ## 作者 / 团队
 
@@ -58,8 +66,24 @@ cd ../goety-tuner
 
 ## 目录导览
 
-- `focus/` 聚晶池系统（分类/评分/轮盘/冷却/LLM自动配置）
-- `entity/` Boss实体与音乐阶段控制器
-- `combat/` 动态评分（伤害DPS/召唤物二维追踪）
-- `network/` 音乐同步包（服务端权威）
-- `client/` 节奏条HUD、配置界面、渲染器占位
+源码包 `com.tiaolvshi.goetytuner`（39 个类）：
+
+- `init/` 注册（实体/物品/音效/属性/事件），含链锤实体级拦截
+- `entity/` Boss 实体 `TunerBoss`（核心，1671 行）、`MusicController` 乐谱与阶段、`BossPhase`
+- `entity/ai/` `CastChannel` 施法通道（前摇/锁池/朝向钉死/异常自愈）
+- `focus/` 聚晶池系统（分类/评分/轮盘/冷却池/黑名单/LLM与启发式分类/主手杖装配）
+- `combat/` 动态评分（伤害 DPS 200tick 归因、召唤物输出/生存二维追踪）
+- `ritual/` 仪式召唤 `TunerSummonRitual` + `goety:ritual_factory` 注册 + 法杖升级事件
+- `command/` `/goetytuner tune` 命令
+- `config/` `TunerCommonConfig`（58 项配置 / 10 个 section）
+- `network/` `SMusicSyncPacket`（进度/分段/重音/演奏状态/速度）、`SShakePacket`
+- `client/` 音乐播放器 `BossMusicManager`、节奏条 HUD、配置界面 + Toast、相机震颤
+- `client/render/` 原版 HumanoidModel 渲染 + 自定义披风层（无 GeckoLib）
+- 资源：`assets/goetytuner/`（中英 lang、贴图、内置 boss 音乐 ogg）、`data/goety/recipes/tuner_boss_ritual.json`
+
+## 已知事项（0.0.4）
+
+- 内置音乐 `boss_music_phase1.ogg`（98.27s / BPM120）由 [乌鸦Producer] 提供，音频在原曲基础上有改动；一/二阶段共用同一曲目与同一速度（`music.pitchPhase1`）。
+- `config/goetytuner/focus_classification.json` 目前只有 3 条示例条目，其余聚晶靠启发式分类兜底；可在游戏内 Mods 菜单 → Config →「开始评分（大模型）」批量生成（需自备 OpenAI 兼容 API Key）。
+- 升级法杖（仪式召唤专属）：只有通过仪式召唤的 Boss 死亡才掉落带「调律」加成的法杖；刷怪蛋/指令生成的 Boss 无原始法杖快照，不掉落。
+- 死亡/受击音效尚未实现（`getAmbientSound/getDeathSound/getHurtSound` 均返回 null）。

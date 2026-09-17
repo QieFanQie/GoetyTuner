@@ -1,19 +1,11 @@
+// 注意：本项目**不使用 Mixin**（无 mixins.json、无 Access Transformer），
+// 故不声明 org.spongepowered:mixingradle 插件解析策略（0.0.4 清理的历史残留）。
 pluginManagement {
     repositories {
         gradlePluginPortal()
         maven {
             name = 'MinecraftForge'
             url = 'https://maven.minecraftforge.net/'
-        }
-        maven {
-            url = "https://repo.spongepowered.org/repository/maven-public/"
-        }
-    }
-    resolutionStrategy {
-        eachPlugin {
-            if (it.requested.id.namespace == 'org.spongepowered') {
-                it.useModule('org.spongepowered:mixingradle:0.7-SNAPSHOT')
-            }
         }
     }
 }
