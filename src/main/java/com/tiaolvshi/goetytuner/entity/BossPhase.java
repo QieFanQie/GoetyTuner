@@ -20,10 +20,24 @@ public enum BossPhase {
     CLIMAX("climax"),
     VALLEY("valley");
 
+    private static final BossPhase[] VALUES = values();
+
     private final String id;
 
     BossPhase(String id) {
         this.id = id;
+    }
+
+    /**
+     * 【0.0.5 性能】按序号取枚举（越界钳制到边界，不抛异常）。
+     * Java 的 {@code values()} 每次调用都会 clone 一个新数组，而本枚举在热路径上被频繁按序号查询
+     * （服务端每 tick 取"上一阶段"、同步包每次编解码、客户端每次收包），故用缓存的 VALUES 替代。
+     */
+    public static BossPhase byOrdinal(int ordinal) {
+        if (ordinal <= 0) {
+            return VALUES[0];
+        }
+        return ordinal >= VALUES.length ? VALUES[VALUES.length - 1] : VALUES[ordinal];
     }
 
     public String getId() {

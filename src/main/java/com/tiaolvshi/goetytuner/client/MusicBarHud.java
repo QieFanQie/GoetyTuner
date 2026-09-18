@@ -63,6 +63,28 @@ public class MusicBarHud {
     private static float lastProgressF = -1.0F; // 上帧浮点进度（用于越线检测）
     private static final int FLASH_MAX_TICKS = 8;
 
+    // ---- 【0.0.5 性能】阶段文字缓存 ----
+    // I18n.get(String, Object...) 内部无条件走一遍 String.format（即使模板无占位符），
+    // 叠加 "§c" 拼接，每帧会产生若干临时对象；而文字只依赖 phase（3 值）与语言数据。
+    // 以 Language 实例身份作为失效键：资源/语言重载会安装新 Language 对象，缓存随之失效。
+    private static BossPhase labelPhase;
+    private static net.minecraft.locale.Language labelLang;
+    private static String labelText;
+
+    private static String phaseLabel(BossPhase p) {
+        net.minecraft.locale.Language lang = net.minecraft.locale.Language.getInstance();
+        if (p != labelPhase || lang != labelLang) {
+            labelPhase = p;
+            labelLang = lang;
+            labelText = switch (p) {
+                case BUILDUP -> "§7" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.buildup");
+                case CLIMAX -> "§c" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.climax");
+                case VALLEY -> "§5" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.valley");
+            };
+        }
+        return labelText;
+    }
+
     @SubscribeEvent
     public static void onRender(RenderGuiOverlayEvent.Post event) {
         if (event.getOverlay() != VanillaGuiOverlay.BOSS_EVENT_PROGRESS.type()) {
@@ -70,6 +92,14 @@ public class MusicBarHud {
         }
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) {
+            return;
+        }
+        // 【0.0.5 性能】零分配早退：没有任何 Boss 在演奏时直接返回。
+        // 下方为找到可见调律师会遍历 level.entitiesForRendering()（客户端全部已加载实体，
+        // 整合包可达数百个），而"无人演奏"时后续逻辑必然 return、一个像素都不画。
+        // 等价性：所有状态 playing=false ⇒ 任何 boss 的 smoothed() 都不满足
+        // "playing && totalDuration>0"，故提前返回不改变任何像素与闪烁时序。
+        if (!MusicStateClient.anyPlaying()) {
             return;
         }
         // 找到可见的调律师
@@ -163,13 +193,8 @@ public class MusicBarHud {
             flashTicks--;
         }
 
-        // 当前阶段文字
-        String label = switch (s.phase) {
-            case BUILDUP -> "§7" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.buildup");
-            case CLIMAX -> "§c" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.climax");
-            case VALLEY -> "§5" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.valley");
-        };
-        gfx.drawString(mc.font, label, x, y - 13, 0xFFFFFF);
+        // 当前阶段文字（【0.0.5】按阶段+语言缓存，避免每帧 I18n.get 内部的 String.format 与拼接）
+        gfx.drawString(mc.font, phaseLabel(s.phase), x, y - 13, 0xFFFFFF);
         RenderSystem.disableBlend();
     }
 
@@ -208,33 +233,20 @@ public class MusicBarHud {
         }
         // 重音刻度（第二十轮分阶段样式，随内容滚动）
         if (s.accents != null) {
-            for (int accentTick : s.accents) {
+            // 【0.0.5】阶段已在同步时预计算（accentPhases 与 accents 同序同长），每帧只做索引读取
+            BossPhase[] pre = s.accentPhases;
+            for (int i = 0; i < s.accents.size(); i++) {
+                int accentTick = s.accents.get(i);
                 if (accentTick < 0 || accentTick >= s.totalDuration) {
                     continue;
                 }
                 int ax = x + (int) (accentTick * pxPerTick) - (int) scrollX;
                 if (ax >= x - 4 && ax <= x + BAR_WIDTH + 4) { // 可视区内才画（scissor也兜底）
-                    drawAccentMark(gfx, ax, y, phaseAtTick(s, accentTick));
+                    drawAccentMark(gfx, ax, y,
+                            pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick));
                 }
             }
         }
-    }
-
-    /**
-     * 【第二十轮】重音tick所在分段的阶段（无分段数据时返回null=普通样式）。
-     */
-    private static BossPhase phaseAtTick(MusicStateClient.State s, int tick) {
-        if (s.segments == null || s.segments.isEmpty()) {
-            return null;
-        }
-        int acc = 0;
-        for (MusicStateClient.Segment seg : s.segments) {
-            acc += seg.ticks;
-            if (tick < acc) {
-                return seg.phase;
-            }
-        }
-        return null;
     }
 
     /**
@@ -312,13 +324,17 @@ public class MusicBarHud {
             }
             // 重音刻度（第二十轮分阶段样式，随内容一起坠落）
             if (s.accents != null) {
-                for (int accentTick : s.accents) {
+                // 【0.0.5】预计算索引：原先 phaseAtTick 在 wrap(-1/0/+1) 三层循环里对同一 tick 重算 3 遍
+                BossPhase[] pre = s.accentPhases;
+                for (int i = 0; i < s.accents.size(); i++) {
+                    int accentTick = s.accents.get(i);
                     if (accentTick < 0 || accentTick >= s.totalDuration) {
                         continue;
                     }
                     int ax = x + Math.round(basePx + accentTick * pxPerTick);
                     if (ax >= clipL && ax <= clipR) {
-                        drawAccentMark(gfx, ax, y, phaseAtTick(s, accentTick));
+                        drawAccentMark(gfx, ax, y,
+                                pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick));
                     }
                 }
             }

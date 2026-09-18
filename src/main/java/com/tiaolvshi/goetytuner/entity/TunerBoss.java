@@ -375,9 +375,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
             // 1. 音乐推进（服务端权威）
             // 【第二十二轮】先记录上一tick阶段，供分段切换判定"从什么阶段进入"
-            BossPhase prevPhase = BossPhase.values()[this.entityData.get(DATA_PHASE)];
+            BossPhase prevPhase = BossPhase.byOrdinal(this.entityData.get(DATA_PHASE));
             BossPhase phase = music.tick();
-            this.entityData.set(DATA_PHASE, phase.ordinal());
+            // 【0.0.5 性能】仅在阶段真正变化时写同步数据：阶段通常持续数百 tick，
+            // 每 tick 无脑 set 会持续触碰 SynchedEntityData 的脏标记路径（并可能引发无谓的同步开销）。
+            int phaseOrdinal = phase.ordinal();
+            if (this.entityData.get(DATA_PHASE) != phaseOrdinal) {
+                this.entityData.set(DATA_PHASE, phaseOrdinal);
+            }
 
             // 2. 二阶段判定已移至第7步（applyLockHealth 之后），基于 lockMark 而非血量，
             //    确保锁血回弹先于阶段切换，避免高伤跳过锁血直接进二阶段。
@@ -418,7 +423,10 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
             //      客户端 TunerModel 已映射原版蹲姿动画）。优先级高于嘲讽彩蛋的蹲起循环：
             //      嘲讽触发已加"非施法中"门控（二者不会同时开始），但嘲讽进行中允许施法，
             //      此时蹲姿以施法瞄准为准。逃跑子状态(2)例外——移动中保持站姿观感更自然。
-            if (this.entityData.get(DATA_CAST_STATE) == 1 && tauntState != 2) {
+            // 【0.0.5 性能】加 getPose() != CROUCHING 判断：前摇可持续数十 tick，
+            //      原实现每 tick 都写一次 Pose 同步数据（setPose 无相等性早退），纯属重复写入。
+            if (this.entityData.get(DATA_CAST_STATE) == 1 && tauntState != 2
+                    && this.getPose() != Pose.CROUCHING) {
                 this.setPose(Pose.CROUCHING);
             }
 
@@ -1531,6 +1539,20 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         if (!(this.level() instanceof ServerLevel level)) {
             return;
         }
+        // 【0.0.5 性能】先确认 128 格内有玩家再构造同步包。
+        // 构造包要复制分段表/重音表并分配数组（getSegments/getAccents 各自 List.copyOf）；
+        // 而 Boss 设了 setPersistenceRequired，附近无玩家时 aiStep 仍会跑，
+        // 原实现每 20 tick 为"没人接收"的包做一次完整构造。
+        boolean anyNearby = false;
+        for (ServerPlayer p : level.players()) {
+            if (p.distanceToSqr(this) < 128 * 128) {
+                anyNearby = true;
+                break;
+            }
+        }
+        if (!anyNearby) {
+            return;
+        }
         SMusicSyncPacket pkt = new SMusicSyncPacket(
                 this.getId(),
                 music.getMusicProgressTick(),
@@ -1660,7 +1682,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     // ================= 客户端查询 =================
 
     public BossPhase getClientPhase() {
-        return BossPhase.values()[this.entityData.get(DATA_PHASE)];
+        return BossPhase.byOrdinal(this.entityData.get(DATA_PHASE));
     }
 
     public boolean isClientPhase2() {

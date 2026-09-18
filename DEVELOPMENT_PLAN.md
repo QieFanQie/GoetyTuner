@@ -1,12 +1,12 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.4
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.5
 > 更新日期：2026-08-21
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 41 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 43 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -15,7 +15,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.4 / 第 41 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。
+当前状态（0.0.5 / 第 43 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。本轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）。
 
 ---
 
@@ -65,7 +65,7 @@
 | C | Boss专属魔杖 | 中 | 替代dark_wand占位、专属施法特效 |
 | D | 兼容性测试与适配 | 中 | 其他Goety附属mod共存测试 |
 | E | 逻辑完善 | 中 | 仅剩 E3 竞态实测 / E4 DoT 归因 / E5 召唤物 owner 识别 / E7 音效 |
-| F | 死代码/注释卫生 | 低 | 部分公有方法无引用、若干注释与默认值不符（0.0.4 已清理一批） |
+| F | 死代码/注释卫生 | 低 | 部分公有方法无引用、若干注释与默认值不符（0.0.4 已清理一批；0.0.5 继续清理并补齐注释） |
 
 ---
 
@@ -200,7 +200,8 @@ assets/goetytuner/sounds/
 
 #### D4. 性能
 - [ ] 多附属环境下聚晶池扫描性能（ServerStarting时的initIfNeeded）
-- [ ] 大量仆从时 `ownedMinions` 遍历性能
+- [x] 大量仆从时 `ownedMinions` 遍历性能：0.0.5 改为同一 `gameTime` 内复用缓存
+  （原实现每 tick 被调用 2~6 次、每次遍历全部已加载实体；详见 TECHNICAL_SUMMARY.md §3.7）
 - [ ] 动态评分 tracker 在高频伤害事件下的性能
 
 #### D5. 已知Goety附属列表（待测）
@@ -375,6 +376,10 @@ AI自动初评分**已完整实现**。两条路径：
 | | xpMultiplier | 4.0 | 经验倍率（×4） |
 
 > API Key 不在此 toml 中，存放于 `focus_classification.json`。
+>
+> `[llm]` 端点默认面向国际（OpenAI：`https://api.openai.com/v1/chat/completions` + `gpt-4o-mini`）；
+> **中国大陆环境请改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`**
+> （0.0.5 实测：`api.openai.com` 连接超时、`api.deepseek.com` 可达；评分失败提示现已带目标 URL 与模型名）。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
@@ -392,7 +397,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.4 / 41 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.5 / 43 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -570,6 +575,14 @@ AI自动初评分**已完整实现**。两条路径：
 - ✅ v0.0.3 配置界面可见性修复（根因：配置注册为 COMMON 且未注册 `IConfigScreenFactory`，
   Mods 菜单不显示 Config 按钮，`TunerConfigScreen` 从未被打开）+ LLM 评分 UI 完整化
 
+### 第 42~43 轮（0.0.4 / 0.0.5）
+- 0.0.4：修复 CastChannel 在 startSpell 异常路径误调 onCastFailed（并行高潮下会把 activeWarmups 提前减到 0、
+  导致 DATA_CAST_STATE 误清 0、施法蹲姿提前收势——游戏内实测确认修复成功）；清理 16 处死代码与 5 处未用 import；
+  修正 8 处与代码不符的注释/默认值。
+- 0.0.5：LLM 评分失败信息带上目标 URL 与排查提示（此前只报 HTTP connect timed out，
+  且换任何 Key 报错相同——根因是配置仍指向不可达的 api.openai.com）；
+  提示词框改多行并预填标准模板；一轮系统性性能优化（详见 TECHNICAL_SUMMARY.md §3.7）。
+
 ---
 
 ## 十、构建与运行
@@ -615,3 +628,4 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 动态评分变化太慢/快 | `dpsAdjustRate` / `dynamicScoreCap` | rate=修正速率，cap=偏移上限 |
 | 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单，重启后不参与抽签 |
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
+| LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |

@@ -53,8 +53,34 @@ public class MusicStateClient {
         public float speed = 1.0F;
         public List<Segment> segments = new ArrayList<>();
         public List<Integer> accents = new ArrayList<>();
+        /**
+         * 【0.0.5 性能】与 {@link #accents} 等长：每个重音 tick 所属的阶段。
+         * 在 {@link #handleSync} 时预计算一次（同步包每 20 tick 才来一次），
+         * 渲染端每帧直接按索引取 —— 原先每帧都要为每个重音重算 O(segments) 的分段查找，
+         * 且二阶段 wrap(-1/0/+1) 三份条带会把同一 tick 的阶段算 3 遍。
+         * 元素可能为 null（无分段数据时），语义与旧 phaseAtTick 返回 null 一致。
+         */
+        public BossPhase[] accentPhases = NO_PHASES;
         public long lastSyncMillis;
+
+        /** 该 tick 所在分段的阶段（无分段数据/越界时返回 null = 普通样式） */
+        public BossPhase phaseAtTick(int tick) {
+            if (segments == null || segments.isEmpty()) {
+                return null;
+            }
+            int acc = 0;
+            for (Segment seg : segments) {
+                acc += seg.ticks;
+                if (tick < acc) {
+                    return seg.phase;
+                }
+            }
+            return null;
+        }
     }
+
+    /** 空数组常量（避免每次 new） */
+    private static final BossPhase[] NO_PHASES = new BossPhase[0];
 
     private static final Map<Integer, State> STATES = new HashMap<>();
     /** 上次HUD渲染的tick（用于本地平滑推进） */
@@ -65,21 +91,42 @@ public class MusicStateClient {
         s.entityId = pkt.entityId;
         s.progressTick = pkt.progressTick;
         s.totalDuration = pkt.totalDuration;
-        s.phase = BossPhase.values()[Math.min(pkt.phaseOrdinal, BossPhase.values().length - 1)];
+        s.phase = BossPhase.byOrdinal(pkt.phaseOrdinal);
         s.phase2 = pkt.phase2;
         s.playing = pkt.playing;
         s.speed = pkt.speed > 0.0F ? pkt.speed : 1.0F;
         s.segments = new ArrayList<>();
         for (int i = 0; i < pkt.segments.phaseOrdinals.length; i++) {
             s.segments.add(new Segment(
-                    BossPhase.values()[Math.min(pkt.segments.phaseOrdinals[i], BossPhase.values().length - 1)],
+                    BossPhase.byOrdinal(pkt.segments.phaseOrdinals[i]),
                     pkt.segments.ticks[i]));
         }
         s.accents = new ArrayList<>();
         for (int a : pkt.accents) {
             s.accents.add(a);
         }
+        // 【0.0.5 性能】预计算每个重音所属阶段（渲染端每帧直接索引，见 State.accentPhases）
+        s.accentPhases = new BossPhase[s.accents.size()];
+        for (int i = 0; i < s.accents.size(); i++) {
+            s.accentPhases[i] = s.phaseAtTick(s.accents.get(i));
+        }
         s.lastSyncMillis = System.currentTimeMillis();
+    }
+
+    /**
+     * 【0.0.5 性能】是否存在正在演奏的状态（供 HUD 每帧先做零分配早退）。
+     *
+     * <p>HUD 为了找到可见的调律师会遍历 {@code level.entitiesForRendering()}（客户端全部已加载实体，
+     * 整合包可达数百个）；而在没有任何 Boss 演奏时，后续逻辑必然 return、一个像素都不画。
+     * 用本方法提前短路即可完全跳过那次遍历。只读，不修改 STATES。
+     */
+    public static boolean anyPlaying() {
+        for (State s : STATES.values()) {
+            if (s.playing) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -108,6 +155,7 @@ public class MusicStateClient {
         out.speed = s.speed;
         out.segments = s.segments;
         out.accents = s.accents;
+        out.accentPhases = s.accentPhases; // 引用共享（同步时预计算，渲染端只读）
         out.lastSyncMillis = s.lastSyncMillis;
         // 非演奏中：进度冻结（服务端音乐暂停推进，客户端不做本地平滑）
         out.progressTickF = s.playing ? s.progressTick + localAdvanceF * s.speed : s.progressTick;

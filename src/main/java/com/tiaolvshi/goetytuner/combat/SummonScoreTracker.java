@@ -61,6 +61,21 @@ public class SummonScoreTracker {
     /** 满员标记（迟滞恢复：需低于 上限-hysteresis） */
     private boolean blockedFlag = false;
 
+    /**
+     * 【0.0.5 性能】每 tick 缓存"场上存活仆从"扫描结果。
+     *
+     * <p>{@link #ownedMinions} 走的是 {@code level.getAllEntities()}（遍历**全部已加载实体**），
+     * 而 TunerBoss.aiStep 会在一 tick 内问很多次：
+     * 铺垫期 2 次（minionFillRatio + isSummonBlocked）、**高潮期 3 个并行通道各 2 次 = 6 次**、
+     * 低谷期 1 次（给仆从加药水）＋ 二阶段仆从清理。
+     * 在大型整合包里（本环境 100+ mod）每次扫描都是数千个实体，6 次/ tick 会直接造成掉帧。
+     *
+     * <p>同一 gameTime 内复用同一份结果：语义不变（同一 tick 本来就在同一份世界状态上做判断，
+     * 数量最多滞后一 tick，而它只用于"要不要召唤 / 池权重"，无精度要求）。
+     */
+    private long cachedOwnedTick = Long.MIN_VALUE;
+    private List<Mob> cachedOwned = List.of();
+
     // ================= 仆从登记 =================
 
     /**
@@ -83,10 +98,16 @@ public class SummonScoreTracker {
                 minions.put(e.getUUID(), rec);
             }
         }
+        // 刚登记了新仆从 → 作废本 tick 的缓存，后续查询立即反映新数量
+        cachedOwnedTick = Long.MIN_VALUE;
     }
 
-    /** 场上存活仆从列表 */
+    /** 场上存活仆从列表（【0.0.5】同一 tick 内复用缓存，避免每 tick 多次全实体扫描） */
     public List<Mob> ownedMinions(ServerLevel level, TunerBoss boss) {
+        long now = level.getGameTime();
+        if (now == cachedOwnedTick) {
+            return cachedOwned;
+        }
         List<Mob> out = new ArrayList<>();
         for (Entity e : level.getAllEntities()) {
             if (e instanceof Mob mob && mob.isAlive()
@@ -95,6 +116,8 @@ public class SummonScoreTracker {
                 out.add(mob);
             }
         }
+        cachedOwnedTick = now;
+        cachedOwned = out;
         return out;
     }
 

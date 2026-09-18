@@ -152,8 +152,15 @@ public class FocusClassificationConfig {
                 return;
             }
             JsonObject lang = GSON.fromJson(new String(in.readAllBytes(), StandardCharsets.UTF_8), JsonObject.class);
+            // 【0.0.5 加载压力优化】只缓存 describe() 真正会查的键（.info / .desc）。
+            // 此前把整个语言文件塞进 LANG_CACHE：Goety 的 en_us.json 约 230KB / 数千条，
+            // 9 个命名空间合计上万条字符串会被永久驻留，而其中绝大多数（物品名/提示/进度…）从不使用。
+            // 过滤后缓存规模下降约一个数量级，语义完全一致（describe 只读 base+".info" 与 base+".desc"）。
             for (Map.Entry<String, com.google.gson.JsonElement> e : lang.entrySet()) {
-                LANG_CACHE.put(e.getKey(), e.getValue().getAsString());
+                String key = e.getKey();
+                if (key.endsWith(".info") || key.endsWith(".desc")) {
+                    LANG_CACHE.put(key, e.getValue().getAsString());
+                }
             }
         } catch (Exception ex) {
             GoetyTuner.LOGGER.debug("Failed to load lang {}: {}", path, ex.toString());

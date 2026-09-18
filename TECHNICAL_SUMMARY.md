@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.4 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~41 轮
+> 版本：0.0.5 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~43 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -61,7 +61,7 @@ com.tiaolvshi.goetytuner
 │   ├── MusicStateClient.java        # 音乐进度本地平滑推进（×speed）
 │   ├── MusicBarHud.java             # 音乐条 HUD（分段色块/重音刻度/指针）
 │   ├── ClientCameraShake.java       # 重音镜头震动
-│   ├── TunerConfigScreen.java       # Configured 配置屏入口
+│   ├── TunerConfigScreen.java       # Configured 配置屏入口（多行提示词框，预填标准模板）
 │   ├── TunerToast.java              # 客户端 Toast（LLM 评分/命令结果提示）
 │   ├── ClientSetup.java             # 图层定义注册 / 渲染器绑定
 │   └── render/                      # TunerRenderer/TunerModel/TunerCape*
@@ -186,6 +186,13 @@ TunerBoss.aiStep ─┐
 ### 3.5 网络与配置
 
 - `TunerNetwork` 通道：SMusicSyncPacket（进度/speed/分段/演奏实体集）、SShakePacket。
+  0.0.5 起 `SMusicSyncPacket` 改为**先检测 128 格内有无玩家，无人接收时不构造、不发送**
+  （原先先构造包体——`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组——再判断；
+  Boss 设了 `setPersistenceRequired`，附近无玩家时仍会空跑）。
+- LLM 端点（`llm.apiUrl` / `llm.model`）：默认面向国际用户保留 OpenAI
+  （`https://api.openai.com/v1/chat/completions` + `gpt-4o-mini`）；
+  **中国大陆环境需改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`**
+  （0.0.5 实测：`api.openai.com` 连接超时、`api.deepseek.com` 可达；错误报文现已带目标 URL 与模型名）。
 - `TunerCommonConfig`：common toml，**58 项、10 个 section**——`boss`(17) / `phase2_buffs`(3) /
   `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
   `music`(11) / `llm`(2) / `wand_upgrade`(6)，
@@ -206,6 +213,33 @@ TunerBoss.aiStep ─┐
   `phase2_buffs.phase2BuffsEnabled` 时移除该 modifier（防热重载残留）。
 - **二阶段回血**（`tickPhase2Regen`）：lockMark 7~12 且非锁血宽限期、血量低于当前档位上限时，
   每 40 tick `heal(1)`。
+
+### 3.7 性能优化记录（0.0.5，功能语义不变）
+
+| # | 位置 | 原问题（0.0.4 及以前） | 0.0.5 处理 |
+|---|---|---|---|
+| 1 | `SummonScoreTracker.ownedMinions()` | 走 `level.getAllEntities()`（遍历**全部已加载实体**），而 `TunerBoss.aiStep` 每 tick 会问很多次——铺垫期 2 次（`minionFillRatio` + `isSummonBlocked`）、**高潮期 3 个并行通道各 2 次 = 6 次**、低谷期 1 次（给仆从加药水）＋ 二阶段仆从清理；大型整合包里这是掉帧主因 | 同一 `gameTime` 内复用缓存；`registerNewMinions` 登记新仆从后作废缓存。语义不变（同一 tick 本就在同一世界状态上判断） |
+| 2 | `BossPhase.values()` | Java 的 `values()` 每次调用都 clone 数组，而它在热路径上被按序号使用（服务端每 tick 取上一阶段、同步包每次编解码、客户端每次收包） | 新增 `BossPhase.byOrdinal(int)`（缓存 `VALUES` + 越界钳制），替换 4 处调用 |
+| 3 | `broadcastMusicSync` | **先构造** `SMusicSyncPacket`（`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组）**再**判断 128 格内有无玩家；Boss 设了 `setPersistenceRequired`，附近无玩家时仍会跑 | 先检测玩家，无人接收直接返回 |
+| 4 | `entityData` / 蹲姿同步 | `entityData.set(DATA_PHASE, …)` 每 tick 无条件写；施法蹲姿 `setPose(Pose.CROUCHING)` 每 tick 重复设（前摇可持续数十 tick，`setPose` 无相等性早退） | 仅阶段变化时写 `DATA_PHASE`；蹲姿加 `getPose() != CROUCHING` 判断 |
+| 5 | `FocusClassificationConfig.ensureLangLoaded` | 把整个 `en_us.json` 灌进 `LANG_CACHE`（Goety 约 230KB / 数千条，9 个命名空间合计上万条永久驻留） | 只保留 `describe()` 真正会查的 `.info` / `.desc` 键 → 加载压力与内存占用下降约一个数量级，语义完全一致 |
+| 6 | `MusicBarHud.onRender` | 每帧遍历 `level.entitiesForRendering()`（客户端全部已加载实体，整合包数百个）找调律师，**任何世界任何时候都在跑** | 新增 `MusicStateClient.anyPlaying()` 做零分配早退 |
+| 7 | HUD 阶段文字 | `I18n.get(String, Object...)` 内部**无条件**走一遍 `String.format`，叠加 `"§c" +` 拼接，每帧产生数个临时对象 | 按 `(phase, Language 实例)` 缓存 |
+| 8 | 重音所属阶段 | 渲染端每帧用 `phaseAtTick` 做 O(segments) 查找；二阶段 `wrap(-1/0/+1)` 三份条带会把**同一 tick 重算 3 遍** | 同步时预计算 `MusicStateClient.State.accentPhases`（与 `accents` 同序同长），渲染端只做索引读取 |
+| 9 | `TunerCapeLayer` | Forge 47.x 的 `RenderType.create` 无内部缓存表，原先每帧每实体都新建 RenderType/缓冲区，且同帧多个调律师无法合批 | `RenderType.entitySolid(TEXTURE)` 缓存为静态常量 |
+
+**明确"不动的部分"**（客户端审计逐条列出，写入文档以防后续误改）：逐格 `gfx.fill`
+（直接写共享 GUI 缓冲、无分配，合并极易改错 1px 边界）、`enableScissor/disableScissor`
+每帧一对（二阶段条带必要裁剪）、闪烁 `flashTicks--` 按**帧**衰减（改 tick 会改变时序）、
+`ClientCameraShake` 的随机抖动、`TunerModel` 每帧一次 `hasPose`、`TunerCapeModel.setupAnim`
+故意留空（摆动由 Layer 施加，补上会转两次）、`smoothed()` 的 `System.currentTimeMillis()`
+（换游戏刻会跳变）、`renderSegments`/`renderStripAtAnchor` 的三等分回退分支（健壮性）、
+可视区 ±4px 预筛边界。
+
+**未采纳的建议（附理由，避免后续重复尝试）**：
+① `smoothed()` 复用 State 对象——仅 60 对象/秒，风险收益比不划算，且一旦出现第二个调用点会互相踩踏；
+② `BossMusicManager` 每 tick 的 `activeEntityIds()` 快照——20/s、开销极小，且该处
+（第 79 行）会在遍历中 `clear(id)` 修改 `STATES`，改成直播视图会 `ConcurrentModificationException`。
 
 ---
 
@@ -246,13 +280,13 @@ TunerBoss.aiStep ─┐
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~41 轮浓缩）
+## 五、版本演进时间线（第 1~43 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -280,6 +314,8 @@ TunerBoss.aiStep ─┐
 | v0.0.1 | 39 | 图标热修复（logo 1250×450 → 512×184） |
 | v0.0.2 | 40 | 署名「音乐由[乌鸦Producer]提供」+ 项目整理 + 初始化 git（GitHub QieFanQie/GoetyTuner） |
 | v0.0.3 | 41 | 配置界面可见性修复（注册 `IConfigScreenFactory`，Mods 菜单出现 Config 按钮）+ LLM 评分 UI 完整化（提示词框/TunerToast/宽松校验） |
+| v0.0.4 | 42 | 施法计数缺陷修复（`startSpell` 异常路径不再误调 `onCastFailed`）+ 死代码/注释卫生 + 4 份文档全面回填 |
+| v0.0.5 | 43 | LLM 错误报文带 URL/模型；提示词改多行并预填标准模板；性能优化（仆从扫描每 tick 缓存、枚举数组克隆、同步包早退、HUD 早退与预计算、RenderType 缓存、语言缓存瘦身） |
 
 ---
 
@@ -294,6 +330,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 # 验证（reobf jar 覆写方法显示 SRG 名，字符串检查会漏报 → 用 javap 验证方法表）
 # 部署：删游戏 mods 旧 jar → 放新 jar；大改默认值须删 config/goetytuner-common.toml
 # 同步：D:\tiaolvshi\goety-tuner（同步副本）↔ D:\测试\tiaolvshi\goety-tuner（编译/运行副本）
+# 游戏实例：versions\1.20.1-Forge_47.4.23 已改名 versions\测试（实例内 Goety 2.5.56.5，与开发依赖一致；Forge 47.4.23）
 ```
 
 工具脚本（scripts/）：`clear_refmaps.py`（清 refmap）、`replace_mixin_classes.py`
@@ -314,9 +351,12 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    代码内带 TODO 注释。
 5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
 
-### 已知缺陷与待办（0.0.4 时点）
+### 已知缺陷与待办（0.0.5 时点）
 
-以下为本轮复核代码后新确认的问题，均**未修复**：
+以下为 0.0.4 复核代码后新确认、到 0.0.5 时点仍未修复的问题：
+
+> 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
+> 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。
 
 1. `SummonScoreTracker` 的两个期望基线硬编码：`dpsExpectation = 3.0`、
    `survExpectation = 8.0`，源码注释已标 TODO 配置项，但尚未接入 toml。
@@ -326,13 +366,16 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    `MusicController` 映射为铺垫（`getPhase()` / `getSegments()` 两处），`onAccent` 的
    `case VALLEY` 分支在二阶段永不命中，该配置项仍暴露在 toml 中产生误导。
 4. `MusicBarHud.BACKGROUND_TEXTURE` 指向不存在的 `textures/gui/music_bar.png`
-   （`assets/goetytuner/textures/` 下只有 entity/ 与 item/）；常量与 `ACCENT_U` 目前均未被引用。
+   （`assets/goetytuner/textures/` 下只有 entity/ 与 item/）；该常量目前仅作为美术接入点注释存在、
+   无代码引用（同节的 `ACCENT_U` 常量现已不存在）。
 5. `LLMClassifier` 在 common 代码里 import 了客户端类
    `net.minecraft.client.resources.language.I18n`——当前不会崩（服务端不调用该路径），
    但服务端若调用 `collectFocusDescriptions()` 会 `NoClassDefFoundError`。
 6. `focus_classification.json`（FOCUS 分类配置文件）目前只有 3 条示例条目
    （`goety:soul_bolt_focus` / `goety:iron_hide_focus` / `goety:rotting_focus`），
-   其余聚晶靠启发式兜底；LLM 批量评分尚未真正跑过一轮。
+   其余聚晶靠启发式兜底；LLM 批量评分尚未真正跑过一轮
+   （0.0.5 发起的评分请求因 `llm.apiUrl` 仍指向不可达的 `api.openai.com`，在连接阶段即超时、
+   请求根本没到服务器——换任何 API Key 报错相同；现已补上带目标 URL/模型名的错误报文，见 §3.5）。
 7. 联机场景服务器/客户端 common config 不互通——音量取客户端本地配置；
    pitch 以同步包 speed 优先。单人/LAN 无碍。
 

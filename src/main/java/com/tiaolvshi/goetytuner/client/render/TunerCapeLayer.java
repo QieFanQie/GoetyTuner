@@ -39,6 +39,15 @@ public class TunerCapeLayer extends RenderLayer<TunerBoss, TunerModel> {
     private static final ResourceLocation TEXTURE =
             new ResourceLocation(GoetyTuner.MOD_ID, "textures/entity/tuner_cape.png");
 
+    /**
+     * 【0.0.5 性能】缓存披风的 RenderType。
+     * {@code RenderType.entitySolid(...)} 每次调用都会新建 TextureStateShard + CompositeState
+     * + CompositeRenderType（Forge 47.x 的 RenderType.create 无内部缓存表）；
+     * 更关键的是新实例在 {@code MultiBufferSource} 的批次表里查不到 → 每帧新建缓冲区，
+     * 且同帧多个调律师的披风无法共批。渲染状态与贴图完全相同，缓存后像素结果不变。
+     */
+    private static final RenderType CAPE_TYPE = RenderType.entitySolid(TEXTURE);
+
     private final TunerCapeModel model;
 
     public TunerCapeLayer(RenderLayerParent<TunerBoss, TunerModel> parent, EntityModelSet modelSet) {
@@ -58,7 +67,7 @@ public class TunerCapeLayer extends RenderLayer<TunerBoss, TunerModel> {
         float idleSway = (Mth.cos(ageInTicks * 0.09F) + 1.0F) * 1.5F;
         poseStack.mulPose(Axis.XP.rotationDegrees(walkSwing + idleSway));
 
-        VertexConsumer vc = buffer.getBuffer(RenderType.entitySolid(TEXTURE));
+        VertexConsumer vc = buffer.getBuffer(CAPE_TYPE);
         this.model.getCape().render(poseStack, vc, packedLight, OverlayTexture.NO_OVERLAY,
                 1.0F, 1.0F, 1.0F, 1.0F);
         poseStack.popPose();

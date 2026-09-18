@@ -123,11 +123,29 @@ public class LLMClassifier {
                 .build();
 
         return CompletableFuture.supplyAsync(() -> {
+            // 【0.0.5】错误信息必须带上目标 URL 与排查提示：
+            // 此前只报 "HTTP connect timed out"，看不出请求发往哪个端点——
+            // 实测踩坑：配置里仍是 api.openai.com（本机不可达），界面只显示连接超时，
+            // 且换任何 API Key 报错都相同（请求根本没到服务器），极难定位。
+            String url = TunerCommonConfig.LLM_API_URL.get();
+            String model = TunerCommonConfig.LLM_MODEL.get();
+            String tail = "（model=" + model + "；请检查 llm.apiUrl / llm.model 与网络连通性）";
+
+            // 阶段一：只负责发请求——连接类失败（超时/DNS/拒绝）在这里给出可定位的报文
+            HttpResponse<String> resp;
             try {
-                HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-                if (resp.statusCode() / 100 != 2) {
-                    throw new RuntimeException("HTTP " + resp.statusCode() + ": " + resp.body());
-                }
+                resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+            } catch (Exception e) {
+                String netErr = e.getMessage() == null ? e.toString() : e.getMessage();
+                throw new RuntimeException("请求 " + url + " 失败：" + netErr + tail, e);
+            }
+            // 阶段二：HTTP 层错误（401/403/429/5xx…）——带 URL 与截断后的响应体
+            if (resp.statusCode() / 100 != 2) {
+                throw new RuntimeException("请求 " + url + " 返回 HTTP " + resp.statusCode()
+                        + "：" + abbrev(resp.body()) + tail);
+            }
+            // 阶段三：解析与写回
+            try {
                 JsonObject respJson = JsonParser.parseString(resp.body()).getAsJsonObject();
                 String content = respJson.getAsJsonArray("choices")
                         .get(0).getAsJsonObject()
@@ -143,7 +161,8 @@ public class LLMClassifier {
                 FocusPoolManager.reclassify();
                 return applied;
             } catch (Exception e) {
-                throw new RuntimeException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
+                String parseErr = e.getMessage() == null ? e.toString() : e.getMessage();
+                throw new RuntimeException("解析/写回 " + url + " 的响应失败：" + parseErr + tail, e);
             }
         }, java.util.concurrent.Executors.newSingleThreadExecutor()).whenComplete((count, err) -> {
             if (err != null) {
@@ -198,5 +217,17 @@ public class LLMClassifier {
         }
         GoetyTuner.LOGGER.warn("[Tuner] Could not parse LLM response into foci array; nothing applied");
         return new JsonArray();
+    }
+
+    /**
+     * 【0.0.5】截断错误响应体：HTTP 错误页（HTML）动辄数十 KB，
+     * 直接拼进界面状态行与 Toast 会刷屏并拖慢渲染，故只保留前 300 字符。
+     */
+    private static String abbrev(String body) {
+        if (body == null) {
+            return "(empty)";
+        }
+        String oneLine = body.replaceAll("\\s+", " ").trim();
+        return oneLine.length() <= 300 ? oneLine : oneLine.substring(0, 300) + "…";
     }
 }

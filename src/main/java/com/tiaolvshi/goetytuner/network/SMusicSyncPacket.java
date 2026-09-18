@@ -120,7 +120,7 @@ public class SMusicSyncPacket {
             ords[i] = buf.readByte();
             tks[i] = buf.readVarInt();
             segs.add(new com.tiaolvshi.goetytuner.entity.MusicController.Segment(
-                    BossPhase.values()[Math.min(ords[i], BossPhase.values().length - 1)], tks[i]));
+                    BossPhase.byOrdinal(ords[i]), tks[i]));
         }
         int accN = buf.readVarInt();
         List<Integer> accents = new ArrayList<>(accN);
