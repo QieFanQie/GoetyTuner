@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.7 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~45 轮
+> 版本：0.0.8 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~46 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -16,7 +16,7 @@
 | 依赖 mod | goety 2.5.56.5、patchouli、curios-forge、configured（均为 dev 坐标式依赖） |
 | 作者 | toniat0, vibe-coding（https://github.com/QieFanQie/） |
 | 协议 | MIT |
-| 源码规模 | 39 个 Java 源文件（约 303 KB），包根 `com.tiaolvshi.goetytuner` |
+| 源码规模 | 41 个 Java 源文件（约 303 KB），包根 `com.tiaolvshi.goetytuner` |
 
 **定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss **主手常驻一把实体法杖**
 `goety:dark_wand`（`TunerBoss` 构造函数 `setItemInHand(MAIN_HAND, ModItems.DARK_WAND)`；
@@ -64,11 +64,13 @@ com.tiaolvshi.goetytuner
 │   ├── TunerConfigScreen.java       # Configured 配置屏入口（多行提示词框，预填标准模板）
 │   ├── TunerToast.java              # 客户端 Toast（LLM 评分/命令结果提示）
 │   ├── ClientSetup.java             # 图层定义注册 / 渲染器绑定
+│   ├── ClientDeathAnimation.java    # 客户端死亡动画复位（deathTime/hurtTime/姿态，由 SEntityRevivePacket 触发）
 │   └── render/                      # TunerRenderer/TunerModel/TunerCape*
 ├── network/
-│   ├── TunerNetwork.java            # 通道注册
+│   ├── TunerNetwork.java            # 通道注册（id 0/1/2）
 │   ├── SMusicSyncPacket.java        # 乐谱/进度/speed 同步（服务端→客户端）
-│   └── SShakePacket.java            # 镜头震动同步
+│   ├── SShakePacket.java            # 镜头震动同步
+│   └── SEntityRevivePacket.java     # 死亡动画复位同步（0.0.8 新增，通道 id 2，发给所有追踪者）
 ├── config/
 │   └── TunerCommonConfig.java       # 全部可调参数（common toml，60 项 / 10 个 section）
 ├── command/
@@ -382,6 +384,61 @@ protected void actuallyHurt(DamageSource source, float amount) {
 
 > ⚠️ **注意**：`README-音乐资源说明.txt` 只在「0.0.7 改名前的历史名」语境下出现，jar 内已不存在该文件。
 
+### 3.10 附属模组变化时的健壮性（0.0.8）
+
+**起因（用户提问）**：「聚晶数量随附属模组变化，我们的聚晶相关系统会不会出问题？」
+
+**审计结论（先给结论）**：**正常换附属不会出问题**——聚晶系统是**运行期扫描**设计的。
+`FocusPoolManager.initIfNeeded()` 在服务器启动时（`ServerStartingEvent`）遍历 `ForgeRegistries.ITEMS`，
+取 `instanceof IFocus && getSpell() != null` 的物品建池；评分表/冷却池/战斗池都按**当前实际注册**的聚晶重建。
+配置文件里多余的条目**不会被匹配**（无害），缺少的条目走启发式兜底。
+⇒ **增删附属只需重启游戏**，系统自动适配，无需手工清配置。
+
+**但审计发现 4 个真实脆弱点，已全部加固（0.0.8）**：
+
+| # | 脆弱点 | 加固 |
+|---|---|---|
+| 1 | **`initIfNeeded` 的扫描没有逐项兜底**：某个附属的 `IFocus.getSpell()`（或 `FocusEntry` 构造）抛异常会让**整个扫描失败** → 池子为空 + 启动报错 | 改为**逐项 `try/catch(Throwable)`**：跳过坏项并记 ERROR `Skipping focus item {} — scan threw {}`；统计跳过数量后再打一条 WARN `{} focus item(s) skipped during scan (broken addon implementations)`；其余聚晶照常可用 |
+| 2 | **分类阶段 `FocusClassificationConfig.applyTo(...)` 同样可能抛异常**（第三方法术类在 `instanceof ISummonSpell`、`describe()` 描述解析等处）。实际加固位置是**调用点**：`FocusPoolManager.initIfNeeded` 里对 `classification.applyTo(ALL_ENTRIES)` 整体 `try/catch(Throwable)` | 失败时记 ERROR `Focus classification failed; keeping default categories`，**保留默认分类继续建池**（不会因为分类异常导致池子为空） |
+| 3 | **`CastChannel.beginCast` 原本只有 `startSpell` 被 try 包住**，而 `conditionsMet` / `installFocus` / `castDuration` / `CastingSound` / `castingVolume` **都在 try 之外**——附属法术在这些点抛异常会沿 `tickBuildup/tickClimax → aiStep → serverAiStep` **一路冒泡直接崩服**（整合包换一批附属就可能触发） | **整条流程统一兜底**：`beginCast` 只负责抽签，随后 `startCast(...)` 的全部步骤被 try 包住，任一步抛异常都按「该聚晶不可用」处理 → 运行期拉黑 + 归还功能池 + 复位通道，并返回 false |
+| 4 | **`FocusPoolManager.returnEntry` 不幂等**：施法在多条失败路径上归还，会让同一聚晶在池里出现多份、抽取权重被人为放大 | 改为**幂等**：池中已有该条目就不再添加（`if (pool != null && !pool.contains(entry)) pool.add(entry);`） |
+
+**同点 3 一并加固的三处**（都是第三方法术实现的调用点）：
+- `instantCast` → `instantCastInternal(...)` 统一兜底（异常 → 拉黑 + 归还 + 返回 false）；
+- `interrupt` 的 `spell.stopSpell(...)`（**打断路径必须无论如何都把聚晶归还**，否则永远锁在池外；异常只记 ERROR 不中断归还）；
+- `finishCast` 的 `spellCooldown(...)`（抛异常时退化为「仅额外冷却」，否则聚晶既不回功能池也不进冷却池 = 永久丢失）。
+
+> 另说明：`RUNTIME_BLACKLIST` 是**会话级**的（重启清空），永久屏蔽要写配置 `focus.blacklist`。
+
+### 3.11 死亡状态完善（0.0.8）
+
+**起因（用户反馈）**：特殊手段仍会让 Boss 处于「血量不为 0 但已在死亡动画」的状态。
+
+**本轮做了反编译实证**（这是「为什么必须自己发包」的依据）：
+
+- `LivingEntity.deathTime` 是**普通 public 字段、不是 SynchedEntityData**（只在 NBT 里以 `"DeathTime"` 持久化）。
+- 扫**整个 Minecraft jar**：引用该字段的类**只有 5 个**——`LocalPlayer`、`LivingEntityRenderer`、`GameRenderer`、`AbstractHorse`、`LivingEntity`；
+  而其中**唯一会把它写 0 的地方是 `LocalPlayer.resetPos()`**（玩家复活专用）。**服务端其它任何写入都不会传到客户端。**
+- `LivingEntity.handleEntityEvent(byte)` 的 `lookupswitch` 只有 **13 个分支：3 / 29 / 30 / 46 / 47 / 48 / 49 / 50 / 51 / 52 / 54 / 55 / 60**——**没有 35**。
+  ⇒ 原版图腾复活广播的**实体事件 35 在 1.20.1 不产生任何客户端行为**（`checkTotemDeathProtection` 里确实是 `bipush 35` + `broadcastEntityEvent`，但客户端无对应分支）。
+- `LivingEntityRenderer` 的两处用途：`setupRotations` 用 `deathTime` 做**倒下旋转**（旋转量 ≈ `sqrt((deathTime + partialTick) / 20) * 90°`）；`getOverlayCoords` 在 `hurtTime > 0 || deathTime > 0` 时叠**红色受伤层**。
+- ⇒ **结论：服务端把 Boss 复活（血量恢复、`deathTime=0`）后，客户端那份 `deathTime` 永远卡在 > 0 → 玩家看到「血条是满的，但 Boss 躺着演死亡动画」。**这正是用户报告的现象。
+
+**三层修复**：
+
+1. **新增网络包 `SEntityRevivePacket`（通道 id 2）+ 客户端处理类 `client/ClientDeathAnimation`**：
+   `TunerNetwork.sendToTracking(...)`（Forge `PacketDistributor.TRACKING_ENTITY`）发给所有追踪者；
+   客户端把 `deathTime` / `hurtTime` / `hurtDuration` 归零，并把 `Pose.DYING` 恢复为 `STANDING`。
+   （**三样都必须清**：倒下旋转、红色受伤层、垂死姿态各自依赖其一。）
+2. **`maintainDeathState()` 新增「脏状态」分支**（替换原 `reviveIfDead()`）：血量 **> 0** 但 `deathTime > 0`
+   （被外部手段救活/回血却没清动画）→ **只清动画、不消耗锁血档位**（原实现会把这种状态当成一次死亡而白吃一档）；
+   只有**真死（血量 ≤ 0）**才走「回弹到下一档地板 + 锁血档位 +1」的原逻辑。`tick()` 每 tick 调用它（死亡动画期同样运行）。
+3. **拦截 `remove(KILLED)`**：原版在 `deathTime` 到 20 时会 `remove(KILLED)`——**一旦移除就再也回弹不了**（实体已不在世界里）。
+   现在「锁血未耗尽 + 总开关开启」时挡下这次移除（`canStillRevive()`，日志 `Blocked KILLED removal — lock tiers remain (mark={}), will revive next tick`），交给下一 tick 回弹。
+   该判断**合并进类里原有的 `remove(RemovalReason)` 覆写**（那里还要执行 `CombatEvents.unregisterBoss(this)`）。
+   只拦 `KILLED`：区块卸载（UNLOADED_*）、和平模式消失（DISCARDED）照常放行；锁血耗尽时也放行（正常击杀路径不变）。
+4. 保留 `applyLockHealth()` 里的「死亡自愈兜底分支」（注释已说明其在死亡动画期不可达）。
+
 ---
 
 ## 四、关键工程决策与红线（踩坑沉淀）
@@ -421,13 +478,13 @@ protected void actuallyHurt(DamageSource source, float amount) {
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~45 轮浓缩）
+## 五、版本演进时间线（第 1~46 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -459,6 +516,7 @@ protected void actuallyHurt(DamageSource source, float amount) {
 | v0.0.5 | 43 | LLM 错误报文带 URL/模型；提示词改多行并预填标准模板；性能优化（仆从扫描每 tick 缓存、枚举数组克隆、同步包早退、HUD 早退与预计算、RenderType 缓存、语言缓存瘦身） |
 | v0.0.6 | 44 | 限伤（单次伤害上限，默认 25% 最大生命≈54，参照 Goety 本体做法的 actuallyHurt 钳制）+ 限DPS（滑动 1 秒窗口预算，默认关闭） |
 | v0.0.7 | 45 | LLM 批量评分改分批请求（修 200 聚晶只应用 25 条）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；实证「锁血机制已隐含限伤，限伤/限DPS 在当前设计下作用有限」 |
+| v0.0.8 | 46 | 附属模组变化健壮性加固（扫描逐项兜底、beginCast/instantCast/interrupt/finishCast 全流程兜底、returnEntry 幂等）+ 死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不吃档位、拦截 remove(KILLED)） |
 
 ---
 
@@ -494,9 +552,9 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    代码内带 TODO 注释。
 5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
 
-### 已知缺陷与待办（0.0.7 时点）
+### 已知缺陷与待办（0.0.8 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.7** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.8** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。

@@ -37,7 +37,7 @@ public class TunerNetwork {
         INSTANCE.registerMessage(nextID(), SShakePacket.class,
                 SShakePacket::encode, SShakePacket::decode, SShakePacket::consume);
 
-        // 【0.0.7】死亡动画复位包：服务端 → 客户端
+        // 【0.0.8】死亡动画复位包：服务端 → 客户端
         // （deathTime 非同步数据，服务端复活后必须显式通知客户端清动画）
         INSTANCE.registerMessage(nextID(), SEntityRevivePacket.class,
                 SEntityRevivePacket::encode, SEntityRevivePacket::decode, SEntityRevivePacket::consume);
@@ -48,7 +48,7 @@ public class TunerNetwork {
     }
 
     /**
-     * 【0.0.7】发送给所有正在追踪该实体的玩家（死亡动画复位用）。
+     * 【0.0.8】发送给所有正在追踪该实体的玩家（死亡动画复位用）。
      * 直接复用 Forge 的 TRACKING_ENTITY 分发器，无需自己遍历玩家列表。
      */
     public static void sendToTracking(Object pkt, net.minecraft.world.entity.Entity entity) {

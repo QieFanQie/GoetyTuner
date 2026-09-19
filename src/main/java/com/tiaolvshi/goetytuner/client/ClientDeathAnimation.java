@@ -15,7 +15,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 
 /**
- * 【0.0.7】客户端死亡动画复位（由 {@link com.tiaolvshi.goetytuner.network.SEntityRevivePacket} 触发）。
+ * 【0.0.8】客户端死亡动画复位（由 {@link com.tiaolvshi.goetytuner.network.SEntityRevivePacket} 触发）。
  *
  * <p>背景：{@code LivingEntity.deathTime} 不是同步数据，服务端把它清零客户端并不知道
  * （详见 {@code SEntityRevivePacket} 的类注释）。本类把客户端那份状态一并清零，

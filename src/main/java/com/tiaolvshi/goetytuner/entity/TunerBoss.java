@@ -316,7 +316,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     }
 
     /**
-     * 【0.0.7】死亡状态维护（每 tick，死亡动画期同样运行）。分两种情形：
+     * 【0.0.8】死亡状态维护（每 tick，死亡动画期同样运行）。分两种情形：
      *
      * <p><b>情形 A —— 脏状态清理（本轮新增）</b>：血量已经 &gt; 0，但死亡动画还挂着
      * （{@code deathTime > 0}）。实测由多种"特殊手段"造成，例如：
@@ -363,7 +363,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     }
 
     /**
-     * 【0.0.7】把服务端与客户端的死亡/受伤动画状态一起清零。
+     * 【0.0.8】把服务端与客户端的死亡/受伤动画状态一起清零。
      *
      * <p>必须三样都清（原因见 {@code ClientDeathAnimation}）：
      * {@code deathTime}（倒下旋转）、{@code hurtTime}/{@code hurtDuration}（红色受伤叠加层）、
@@ -385,7 +385,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     }
 
     /**
-     * 【0.0.7】拦住在"锁血未耗尽"时发生的 {@code remove(KILLED)}。
+     * 【0.0.8】拦住在"锁血未耗尽"时发生的 {@code remove(KILLED)}。
      *
      * <p>某些特殊手段会绕过 {@code hurt()} 直接把血量打到 0（{@code /kill} 的 genericKill、
      * 其它模组的 {@code setHealth(0)}/{@code kill()}）。死亡动画跑满 20 tick 后原版会执行
@@ -1619,7 +1619,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public void remove(RemovalReason reason) {
-        // 【0.0.7】锁血未耗尽时挡住 KILLED 移除：死亡动画跑满 20 tick 后原版会 remove(KILLED)，
+        // 【0.0.8】锁血未耗尽时挡住 KILLED 移除：死亡动画跑满 20 tick 后原版会 remove(KILLED)，
         // 一旦移除就再也回弹不了（实体已不在世界里）。挡下这一次，由下一 tick 的
         // maintainDeathState() 负责复活；锁血耗尽/总开关关闭时照常放行。
         if (reason == RemovalReason.KILLED && !this.level().isClientSide && canStillRevive()) {

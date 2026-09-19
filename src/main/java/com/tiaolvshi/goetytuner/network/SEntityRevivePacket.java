@@ -18,7 +18,7 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 /**
- * 【0.0.7】死亡动画复位包（服务端 → 客户端）。
+ * 【0.0.8】死亡动画复位包（服务端 → 客户端）。
  *
  * <p><b>为什么必须自己发包</b>：
  * 原版 {@code LivingEntity.deathTime} 是**普通字段、不是 SynchedEntityData**

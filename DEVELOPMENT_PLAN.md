@@ -1,12 +1,12 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.7
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.8
 > 更新日期：2026-09-19
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 45 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 46 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -15,7 +15,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.7 / 第 45 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；本轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」。
+当前状态（0.0.8 / 第 46 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；上一轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；本轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）。
 
 ---
 
@@ -312,7 +312,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（60项 / 10个 section，第45轮实况）
+### `run/config/goetytuner-common.toml`（60项 / 10个 section，第46轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
@@ -399,7 +399,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.7 / 45 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.8 / 46 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -612,6 +612,23 @@ AI自动初评分**已完整实现**。两条路径：
   （最小 0.72 / 最大 7.99）。⇒ 锁血本身就是一个比 0.0.6 限伤更严格的隐式限伤；**限伤/限DPS 在当前设计下作用有限**，
   真正决定战斗时长的是 `lockGraceTicks` 与档位数（maxHealth/lockHealthInterval）。
 
+### 第 46 轮（0.0.8）
+- 用户提问「聚晶数量随附属变化，系统会不会出问题」→ 审计结论：聚晶池是运行期扫描，增删附属重启即自适应，
+  配置里多余条目不会被匹配（无害）、缺少的走启发式兜底。但发现并修掉 4 个脆弱点：
+  ① initIfNeeded 扫描无逐项兜底（某个附属 IFocus 抛异常会让整个扫描失败）；
+  ② applyTo 分类阶段同样可能抛异常（已整体兜底，失败保留默认分类）；
+  ③ CastChannel.beginCast 原本只有 startSpell 被 try 包住，conditionsMet/installFocus/castDuration/
+     CastingSound/castingVolume 都在 try 之外 → 附属法术在此抛异常会一路冒泡到 serverAiStep 崩服；
+     现统一兜底（beginCast→startCast），instantCast/interrupt(stopSpell)/finishCast(spellCooldown) 同样加固；
+  ④ returnEntry 改幂等（避免多路径归还把同一聚晶复制多份、放大抽取权重）。
+- 死亡状态完善（用户反馈：特殊手段会让 Boss 处于"血量不为 0 但已在死亡动画"）：反编译实证
+  LivingEntity.deathTime 是普通字段非同步数据、全 MC jar 只有 5 个类引用它、唯一归零处是
+  LocalPlayer.resetPos（玩家复活专用）、handleEntityEvent 无 35 分支（图腾复活广播的事件在 1.20.1
+  不产生客户端行为）⇒ 服务端复活后客户端模型会一直躺着。
+  三层修复：① 新增 SEntityRevivePacket（通道 id2）+ ClientDeathAnimation 复位客户端 deathTime/hurtTime/姿态；
+  ② maintainDeathState 新增"血量>0 但 deathTime>0"的脏状态分支（只清动画、不吃锁血档位）；
+  ③ 锁血未耗尽时拦截 remove(KILLED)（原版 deathTime=20 时移除后无法再回弹）。
+
 ---
 
 ## 十、构建与运行
@@ -659,3 +676,4 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
 | LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |
 | 打得太快/被秒杀 | **`lockGraceTicks` / 档位数（`maxHealth` ÷ `lockHealthInterval`）**；`maxHitDamagePercent` / `maxDamagePerSecond`（仅作保险） | **实测结论：战斗时长主要由 `lockGraceTicks`（每档最短时长，默认 10t=0.5s）与档位数（默认 216/18 = 12 档）决定**——锁血阶梯把每次命中的有效伤害钳到一档，超出部分被丢弃，所以伤害上限不改变阶梯推进速度。`maxHitDamagePercent`（默认 0.25×216≈54，0=关闭）与 `maxDamagePerSecond`（默认 0=关闭）都只在**阶梯耗尽后**（血量 ≤18 那段）才可能起作用，主要作为防「秒杀式巨额伤害」的保险 |
+| Boss 卡在死亡动画不动 | `lockDeathRevive`（默认 true） | 0.0.8 已修（新增 `SEntityRevivePacket` 同步复位客户端死亡动画 + 脏状态只清动画不吃档位 + 锁血未耗尽时拦截 `remove(KILLED)`）；若仍出现，先确认 `lockDeathRevive` 未被关闭 |

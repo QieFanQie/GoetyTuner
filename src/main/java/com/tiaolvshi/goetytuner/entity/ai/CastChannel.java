@@ -148,7 +148,7 @@ public class CastChannel {
         if (entry == null) {
             return false;
         }
-        // 【0.0.7 健壮性】把整条施法流程统一兜底。
+        // 【0.0.8 健壮性】把整条施法流程统一兜底。
         // 附属模组的法术实现（ISpell）可能在 conditionsMet / castDuration / startSpell /
         // CastingSound / castingVolume 等**任一处**抛异常；原实现只 try 了 startSpell，
         // 其余几步抛出的异常会沿 tickBuildup/tickClimax → aiStep → serverAiStep 一路冒泡，
@@ -245,7 +245,7 @@ public class CastChannel {
 
     private void finishCast() {
         LivingEntity boss = callback.boss();
-        // 【0.0.7 健壮性】spellCooldown 也是第三方法术实现；它抛异常时不能让结算中断——
+        // 【0.0.8 健壮性】spellCooldown 也是第三方法术实现；它抛异常时不能让结算中断——
         // 否则聚晶留在锁池状态（既不在功能池也没进冷却池）永久丢失。失败则退化为纯额外冷却。
         int cooldown;
         try {
@@ -267,7 +267,7 @@ public class CastChannel {
         if (state == State.WARMUP && current != null) {
             LivingEntity boss = callback.boss();
             var spell = current.getSpell();
-            // 【0.0.7 健壮性】stopSpell 也是第三方法术实现，同样可能抛异常；
+            // 【0.0.8 健壮性】stopSpell 也是第三方法术实现，同样可能抛异常；
             // 打断路径必须无论如何都把聚晶归还、把通道复位（否则聚晶永远锁在池外）。
             try {
                 spell.stopSpell(level, boss, boss.getMainHandItem(),
@@ -295,7 +295,7 @@ public class CastChannel {
         if (entry == null) {
             return false;
         }
-        // 【0.0.7 健壮性】同 beginCast：conditionsMet / installFocus / spellCooldown 都可能由
+        // 【0.0.8 健壮性】同 beginCast：conditionsMet / installFocus / spellCooldown 都可能由
         // 附属模组的法术实现抛异常，统一兜底而不是让异常冒到 AI tick 上崩服。
         try {
             return instantCastInternal(level, entry);
