@@ -5,13 +5,13 @@
 人形无头指挥家「调律师」，以音乐（铺垫/高潮/低谷）驱动战斗节奏，
 轮番演奏诡厄巫法及其附属注册的全部聚晶，并带有自学习式聚晶评分系统。
 
-**当前版本：0.0.5**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
+**当前版本：0.0.6**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
 
 ## 文档索引（按优先级）
 
 | 文档 | 定位 | 时效 |
 |---|---|---|
-| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.5，最新一轮；覆盖轮次口径以该文档为准） |
+| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.6，最新一轮；覆盖轮次口径以该文档为准） |
 | [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | 阶段性开发计划书：完成度/未完成项/配置总览/实测记录 | 进度表可能滞后，以技术摘要为准 |
 | [DESIGN_RITUAL_WAND_UPGRADE.md](DESIGN_RITUAL_WAND_UPGRADE.md) | 单任务设计稿（任务 #118 仪式召唤 + 法杖升级） | 已实施，保留作设计留痕 |
 
@@ -75,14 +75,16 @@ cd ../goety-tuner
 - `combat/` 动态评分（伤害 DPS 200tick 归因、召唤物输出/生存二维追踪）
 - `ritual/` 仪式召唤 `TunerSummonRitual` + `goety:ritual_factory` 注册 + 法杖升级事件
 - `command/` `/goetytuner tune` 命令
-- `config/` `TunerCommonConfig`（58 项配置 / 10 个 section）
+- `config/` `TunerCommonConfig`（60 项配置 / 10 个 section）
 - `network/` `SMusicSyncPacket`（进度/分段/重音/演奏状态/速度）、`SShakePacket`
 - `client/` 音乐播放器 `BossMusicManager`、节奏条 HUD、配置界面 + Toast、相机震颤
 - `client/render/` 原版 HumanoidModel 渲染 + 自定义披风层（无 GeckoLib）
 - 资源：`assets/goetytuner/`（中英 lang、贴图、内置 boss 音乐 ogg）、`data/goety/recipes/tuner_boss_ritual.json`
 
-## 已知事项（0.0.5）
+## 已知事项（0.0.6）
 
+- **限伤默认已开启**：`boss.maxHitDamagePercent = 0.25`，即单次命中最多打掉最大生命的 25%（默认 216 血 → 约 54 点）。这是相对宽松的设定，只削掉一击秒杀式的巨额伤害；**设为 `0` 可关闭**。
+- **限DPS 默认关闭**：`boss.maxDamagePerSecond = 0`；想限制「每秒总吞吐」时再开（建议 20/30/40，分别对应最短战斗约 11/7/5.4 秒）。限伤管「单次」，限DPS 管「每秒」，两者互补。
 - 内置音乐 `boss_music_phase1.ogg`（98.27s / BPM120）由 [乌鸦Producer] 提供，音频在原曲基础上有改动；一/二阶段共用同一曲目与同一速度（`music.pitchPhase1`）。
 - `config/goetytuner/focus_classification.json` **首次生成时只有 3 条示例条目**，其余聚晶靠启发式分类兜底。本机已用 LLM 批量评分为 **252 个聚晶**（其中当前游玩实例实际注册的 208 个已覆盖 206 个，仅缺 2 个 `goetyiron:*_focus`，走启发式兜底）。可在游戏内 Mods 菜单 → Config →「开始评分（大模型）」重新批量生成——它会扫描**当前实例实际注册**的聚晶，是让评分表与整合包精确对齐的正规做法（需自备 OpenAI 兼容 API Key；端点见下条）。
 - **LLM 评分的端点默认是 OpenAI**（`llm.apiUrl = https://api.openai.com/v1/chat/completions`）。**中国大陆网络需在配置里改为 `https://api.deepseek.com/v1/chat/completions` 并把 `llm.model` 改为 `deepseek-chat`**，否则会连接超时；失败时界面会显示带目标 URL 的报错，可据此判断端点是否正确。

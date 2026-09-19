@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.5 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~43 轮
+> 版本：0.0.6 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~44 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -70,7 +70,7 @@ com.tiaolvshi.goetytuner
 │   ├── SMusicSyncPacket.java        # 乐谱/进度/speed 同步（服务端→客户端）
 │   └── SShakePacket.java            # 镜头震动同步
 ├── config/
-│   └── TunerCommonConfig.java       # 全部可调参数（common toml，58 项 / 10 个 section）
+│   └── TunerCommonConfig.java       # 全部可调参数（common toml，60 项 / 10 个 section）
 ├── command/
 │   └── TunerCommands.java           # /goetytuner 命令（tune 等）
 └── ritual/
@@ -193,7 +193,7 @@ TunerBoss.aiStep ─┐
   （`https://api.openai.com/v1/chat/completions` + `gpt-4o-mini`）；
   **中国大陆环境需改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`**
   （0.0.5 实测：`api.openai.com` 连接超时、`api.deepseek.com` 可达；错误报文现已带目标 URL 与模型名）。
-- `TunerCommonConfig`：common toml，**58 项、10 个 section**——`boss`(17) / `phase2_buffs`(3) /
+- `TunerCommonConfig`：common toml，**60 项、10 个 section**——`boss`(19) / `phase2_buffs`(3) /
   `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
   `music`(11) / `llm`(2) / `wand_upgrade`(6)，
   Configured 中文分类引导；`music_score.json`、`focus_classification.json` 运行时双写。
@@ -241,6 +241,75 @@ TunerBoss.aiStep ─┐
 ② `BossMusicManager` 每 tick 的 `activeEntityIds()` 快照——20/s、开销极小，且该处
 （第 79 行）会在遍历中 `clear(id)` 修改 `STATES`，改成直播视图会 `ConcurrentModificationException`。
 
+### 3.8 限伤 / 限DPS（0.0.6）
+
+两项都在 `TunerBoss.actuallyHurt(DamageSource, float)` 里做最终结算，且都**只作用于 TunerBoss 自身承受的伤害**。
+
+| | 限伤（单次伤害上限） | 限DPS（每秒伤害上限） |
+|---|---|---|
+| 配置键 | `boss.maxHitDamagePercent`（默认 **0.25**，**默认开启**） | `boss.maxDamagePerSecond`（默认 **0**，**默认关闭**） |
+| 约束对象 | **单次**伤害实例 | **每秒总吞吐**（滑动窗口） |
+| 需要状态 | 无（纯钳制） | 需要（1 秒伤害历史） |
+| 挡得住「一击秒杀」 | ✅ | 只能整段吸收或整段放行，粒度粗、手感突兀 |
+| 挡得住「高频小伤害叠加」 | ❌（100 次 10 点照样打满 1000） | ✅ |
+| 典型用途 | 防爆发 / 防秒杀 | 控制战斗最短时长、压制多段持续爆发 |
+
+**（1）限伤**：单次命中最多打掉 `最大生命 × maxHitDamagePercent`；默认 216 血 → **约 54 点/次**，属**相对宽松**
+（只削掉「一击秒杀」式巨额单次伤害，常规武器一击基本触不到）。范围 0.0~1.0，**0 = 关闭**。
+
+**（2）限DPS**：`TunerBoss` 内有一个 `float[20]` 环形缓冲（槽位 = `gameTime % 20`，槽内只存该 tick 生效的伤害）
++ `damageWindowSum` 总和；每次结算先 `advanceDamageWindow(now)` 把 `(lastTick, now]` 这些 tick 的旧槽位清零，
+再算 `预算 = 上限 - 窗口内已造成伤害`：预算 > 0 → 本次伤害取 `min(伤害, 预算)` 并把生效值记入当前 tick 槽位；
+预算 ≤ 0 → 本次伤害被**完全吸收**（`applyDpsCap` 返回 -1，`actuallyHurt` 直接 return 不调 super）。
+默认关闭的原因：与限伤不同，限DPS 没有「天然宽松值」，合适数值取决于希望这场战斗最短打多久——
+按默认 216 血、纯输出估算，**20 ≈ 11 秒 / 30 ≈ 7 秒 / 40 ≈ 5.4 秒**。
+两者都开时顺序是**先限伤、再限DPS**：先把单次削到上限，再由每秒预算决定这次能兑现多少。
+
+**（3）参照实现（Goety 本体）**：Goety 已有成熟的「限伤」——4 个 Boss 各有一个单次伤害上限配置：
+`AttributesConfig.ApostleDamageCap` / `VizierDamageCap` / `EnderKeeperDamageCap` 默认 **20.0**、
+`RedstoneMonstrosityDamageCap` 默认 **25.0**（注释原文：*"The maximum amount of damage an XXX can attain per hit"*）。
+实现位置是**覆盖 `actuallyHurt`**，而非 `hurt`：
+
+```java
+protected void actuallyHurt(DamageSource source, float amount) {
+    float initialAmount = amount;
+    if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
+        amount = Math.min(initialAmount, AttributesConfig.ApostleDamageCap.get().floatValue());
+    }
+    ...
+    super.actuallyHurt(source, amount);
+}
+```
+
+（`Apostle.java` / `Vizier.java` / `EnderKeeper.java` / `RedstoneMonstrosity.java` 四处同构；另有
+`RobeEvents.DamageEvent` 在 `LivingHurtEvent` 里对戴「不洁之帽」的玩家做同类 clamp。）
+`BYPASSES_INVULNERABILITY` 守卫的作用：不拦 `/kill` 的 `generic_kill` 与掉出世界等伤害，
+否则会出现「管理员杀不死、掉进虚空也不死」。本项目**照搬这一做法**（`TunerBoss` 覆盖 `actuallyHurt`、
+在最终结算处取 `Math.min`、跳过 `BYPASSES_INVULNERABILITY`），并补上 Goety 没有的**限DPS**；
+作为参照，Goety 本体是**固定 20 点**，比本项目的 54 点严格得多。
+
+**补充实测（Goety 全量源码 grep，2116 个 java）**：
+① **Goety 本体没有「限DPS」**——用 `damageTaken|damageAccum|dpsCap|DpsCap|damageThisSecond|recentDamage|damageWindow`
+搜索，**匹配数 0**。即：**限伤是 Goety 已有做法（本项目照搬），限DPS 是 Goety 没有、本项目补上的**——不要误以为两边都是照抄。
+② Goety 相邻的机制是 **`moddedInvul`（受击后无敌帧）**，它限制的是**命中频率**而不是 DPS：`Apostle.java` / `Vizier.java` /
+`EnderKeeper.java` 都有 `public int moddedInvul = 0;`（`Apostle.java:171`），在 `actuallyHurt` 里判断
+`if (this.moddedInvul <= 0) { super.actuallyHurt(...); this.moddedInvul = MobsConfig.BossInvulnerabilityTime.get(); }`，
+并在 tick 里递减（`Apostle.java:1189-1190`）；配置 `MobsConfig.BossInvulnerabilityTime` 注释原文
+*"How long invulnerability, Default: 15"*，默认 **15（tick）**。语义差别：无敌帧 =「打完一下之后 15 tick 内后续命中无效」，
+是**按次数/频率**节流；限DPS =「1 秒内总伤害不超过 N」，是**按累计量**节流——两者不互相替代
+（无敌帧挡不住「一次超高伤害」，限DPS 也不改变单次命中的节奏）。
+
+**（4）为什么放 `actuallyHurt` 而不是 `hurt`**：`actuallyHurt` 是伤害真正生效的唯一入口，放在这里
+**受击动画、击退、无敌帧（`invulnerableTime`）全部照常发生**——玩家看到的是「打中了，但只掉这么多血」，
+而不是「打了完全没反应」。本项目 `hurt()` 里已有的免疫/宽限期/近战易伤/致死截断逻辑完全不动，两者是叠加关系。
+限DPS 被完全吸收的那一次同理：虽然不再调 super，但 `hurt` 已返回 true，受击动画/击退/无敌帧仍然照常发生。
+
+**（5）注意（副作用 / 已知局限）**：
+- 两者都只作用于 **TunerBoss 自身承受的伤害**；玩家侧（Boss 打玩家的伤害）未做限制，如需另说。
+- 限DPS 记的是**实际生效的伤害**（先限伤后记录），所以一次巨额命中不会把整秒预算一次吃光。
+- 限DPS 窗口内若伤害被其它 mod 在 `LivingDamageEvent` 里取消，预算仍已被扣（基础款实现的已知局限）。
+- 新增两个配置项后，配置总数从 **58 → 60**（`boss` 段 17 → 19 项，section 数仍为 10）。
+
 ---
 
 ## 四、关键工程决策与红线（踩坑沉淀）
@@ -280,13 +349,13 @@ TunerBoss.aiStep ─┐
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~43 轮浓缩）
+## 五、版本演进时间线（第 1~44 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -316,6 +385,7 @@ TunerBoss.aiStep ─┐
 | v0.0.3 | 41 | 配置界面可见性修复（注册 `IConfigScreenFactory`，Mods 菜单出现 Config 按钮）+ LLM 评分 UI 完整化（提示词框/TunerToast/宽松校验） |
 | v0.0.4 | 42 | 施法计数缺陷修复（`startSpell` 异常路径不再误调 `onCastFailed`）+ 死代码/注释卫生 + 4 份文档全面回填 |
 | v0.0.5 | 43 | LLM 错误报文带 URL/模型；提示词改多行并预填标准模板；性能优化（仆从扫描每 tick 缓存、枚举数组克隆、同步包早退、HUD 早退与预计算、RenderType 缓存、语言缓存瘦身） |
+| v0.0.6 | 44 | 限伤（单次伤害上限，默认 25% 最大生命≈54，参照 Goety 本体做法的 actuallyHurt 钳制）+ 限DPS（滑动 1 秒窗口预算，默认关闭） |
 
 ---
 

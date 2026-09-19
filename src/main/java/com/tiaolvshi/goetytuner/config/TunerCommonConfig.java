@@ -45,6 +45,10 @@ public class TunerCommonConfig {
     public static final ForgeConfigSpec.IntValue PHASE2_LOCK_MARK;       // 二阶段触发的lockMark阈值
     /** 【第三十一轮】二阶段进场重音击退连发次数 */
     public static final ForgeConfigSpec.IntValue PHASE2_ENTRY_BURST_COUNT;
+    /** 【0.0.6】限伤：单次伤害上限 = 最大生命 × 该比例（0=关闭） */
+    public static final ForgeConfigSpec.DoubleValue MAX_HIT_DAMAGE_PERCENT;
+    /** 【0.0.6】限DPS：滑动 1 秒窗口内承受伤害上限（0=关闭） */
+    public static final ForgeConfigSpec.DoubleValue MAX_DAMAGE_PER_SECOND;
 
     // ---- 二阶段自施药水（第三十三轮）----
     /** 二阶段周期性自施药水总开关（原版力量+重振；Goety 的 BUFF/强健 属性加成对boss法术输出无感知，改原版力量保证肉眼可见） */
@@ -180,6 +184,24 @@ public class TunerCommonConfig {
         PHASE2_ENTRY_BURST_COUNT = b.comment("【第三十一轮】进入二阶段时连续触发的重音击退次数"
                 + "（每5tick一次、音调逐次递升，0=关闭）。默认6")
                 .defineInRange("phase2EntryBurstCount", 6, 0, 20);
+        MAX_HIT_DAMAGE_PERCENT = b.comment("【0.0.6】限伤（单次伤害上限）：单次命中最多打掉 最大生命 × 该比例 的血。\n"
+                        + "· 0 = 关闭（不限制单次伤害）。\n"
+                        + "· 默认 0.25 → 最大生命216的25% ≈ 54 点/次，属【相对宽松】：只削掉「一击秒杀」式的巨额单次伤害，"
+                        + "常规武器的一击基本触不到这条线。\n"
+                        + "· 参照：Goety 本体 Boss 的同类限制是固定 20 点（Apostle / Vizier / EnderKeeper；"
+                        + "RedstoneMonstrosity 为 25），比本值严格得多。\n"
+                        + "· 实现位置：actuallyHurt 的最终结算处（与 Goety 本体同一套做法）——"
+                        + "受击动画、击退、无敌帧全部照常，玩家看到的是「打中了但只掉这么多」，而不是「打了没反应」；"
+                        + "BYPASSES_INVULNERABILITY 类伤害（/kill、虚空）不受限制。")
+                .defineInRange("maxHitDamagePercent", 0.25D, 0.0D, 1.0D);
+        MAX_DAMAGE_PER_SECOND = b.comment("【0.0.6】限DPS（每秒伤害上限）：滑动 1 秒窗口内，boss 总共最多承受这么多伤害；"
+                        + "预算耗尽时后续命中被完全吸收（但仍会有受击动画与无敌帧）。\n"
+                        + "· 0 = 关闭（默认关闭 —— 与限伤不同，本项没有「天然宽松值」，"
+                        + "合适的数值取决于你希望这场战斗最短打多久，故留给你按需开）。\n"
+                        + "· 开启建议值（按默认 216 血、纯输出估算最短战斗时长）：20 ≈ 11 秒 / 30 ≈ 7 秒 / 40 ≈ 5.4 秒。\n"
+                        + "· 与「限伤」的区别（两者互补，不是同一件事）：限伤约束【单次】伤害，限DPS约束【每秒总吞吐】。"
+                        + "只有限伤挡不住高频小伤害的叠加；只有限DPS则会把单次巨额伤害整段吃掉、手感突兀。")
+                .defineInRange("maxDamagePerSecond", 0.0D, 0.0D, 10000.0D);
         b.pop();
 
         b.push("phase2_buffs");

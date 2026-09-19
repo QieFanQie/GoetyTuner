@@ -1200,6 +1200,122 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         return super.hurt(source, amount);
     }
 
+    // ================= 【0.0.6】限伤 / 限DPS（伤害节流） =================
+
+    /** 限DPS 滑动窗口长度：1 秒 = 20 tick，每 tick 一个槽位 */
+    private static final int DAMAGE_WINDOW_TICKS = 20;
+    /** 每秒伤害滑动窗口（环形数组：槽位 = gameTime % 20，槽内只存该 tick 的伤害） */
+    private final float[] damageWindow = new float[DAMAGE_WINDOW_TICKS];
+    private float damageWindowSum = 0.0F;
+    private long damageWindowLastTick = Long.MIN_VALUE;
+
+    /**
+     * 【0.0.6】限伤（单次伤害上限）+ 限DPS（每秒伤害上限）：在**最终结算处**节流 boss 承受的伤害。
+     *
+     * <p><b>为什么覆盖 {@code actuallyHurt} 而不是在 {@code hurt} 里做</b>：
+     * 参照 Goety 本体 Boss 的成熟做法（{@code Apostle}/{@code Vizier}/{@code EnderKeeper}/
+     * {@code RedstoneMonstrosity} 都在 {@code actuallyHurt} 里对最终伤害取 {@code Math.min}）。
+     * {@code actuallyHurt} 是伤害真正生效的唯一入口，放在这里的好处是
+     * **受击动画、击退、无敌帧（invulnerableTime）全部照常发生**——
+     * 玩家看到的是「打中了，但只掉这么多血」，而不是「打了完全没反应」。
+     *
+     * <p><b>限伤与限DPS 是两件不同的事（互补）</b>：
+     * <ul>
+     *   <li><b>限伤</b>：约束<b>单次</b>伤害上限 → 只削掉「一击秒杀 / 巨额爆发」，
+     *       对高频小伤害毫无作用（100 次 10 点照样打满 1000）；</li>
+     *   <li><b>限DPS</b>：约束<b>每秒总吞吐</b>（滑动 1 秒窗口预算）→ 压制多段 / 多来源持续爆发，
+     *       但对「一发超大伤害」只能整段吸收或整段放行，粒度粗、手感突兀。</li>
+     * </ul>
+     * 两者都开启时先限伤再限DPS：先把单次削到上限，再由每秒预算决定这次能兑现多少。
+     */
+    @Override
+    protected void actuallyHurt(DamageSource source, float amount) {
+        // BYPASSES_INVULNERABILITY（/kill 的 generic_kill、掉出世界等）不受任何限伤约束，
+        // 否则会出现「管理员杀不死、掉进虚空也不死」的诡异状态。
+        if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
+            amount = applyHitDamageCap(amount);
+            float allowed = applyDpsCap(amount);
+            if (allowed < 0.0F) {
+                return; // 每秒预算耗尽：本次伤害被完全吸收（hurt 已返回 true，动画/击退/无敌帧照常）
+            }
+            amount = allowed;
+        }
+        super.actuallyHurt(source, amount);
+    }
+
+    /** 限伤：把单次伤害压到 最大生命 × maxHitDamagePercent（配置为 0 时不生效） */
+    private float applyHitDamageCap(float amount) {
+        double pct = TunerCommonConfig.MAX_HIT_DAMAGE_PERCENT.get();
+        if (pct <= 0.0D) {
+            return amount;
+        }
+        float cap = (float) Math.max(1.0D, this.getMaxHealth() * pct);
+        if (amount > cap) {
+            GoetyTuner.LOGGER.debug("[Tuner] Hit damage capped: {} -> {} ({}% of max health {})",
+                    amount, cap, (int) Math.round(pct * 100.0D), this.getMaxHealth());
+            return cap;
+        }
+        return amount;
+    }
+
+    /**
+     * 限DPS：滑动 1 秒窗口预算。
+     *
+     * @return 允许生效的伤害；预算已耗尽时返回 -1（调用方直接放弃本次伤害）
+     */
+    private float applyDpsCap(float amount) {
+        double capPerSecond = TunerCommonConfig.MAX_DAMAGE_PER_SECOND.get();
+        if (capPerSecond <= 0.0D) {
+            return amount;
+        }
+        long now = this.level().getGameTime();
+        advanceDamageWindow(now);
+        float budget = (float) capPerSecond - damageWindowSum;
+        if (budget <= 0.0F) {
+            GoetyTuner.LOGGER.debug("[Tuner] DPS budget exhausted ({}/{} per second), hit absorbed",
+                    damageWindowSum, capPerSecond);
+            return -1.0F;
+        }
+        float allowed = Math.min(amount, budget);
+        recordDamageWindow(now, allowed);
+        return allowed;
+    }
+
+    /** 推进滑动窗口：把 (lastTick, now] 这些 tick 的旧槽位清零（槽位 = tick % 20，20 tick 后会被复用） */
+    private void advanceDamageWindow(long now) {
+        if (damageWindowLastTick == Long.MIN_VALUE) {
+            damageWindowLastTick = now;
+            return;
+        }
+        long delta = now - damageWindowLastTick;
+        if (delta <= 0L) {
+            return;
+        }
+        if (delta >= DAMAGE_WINDOW_TICKS) {
+            for (int i = 0; i < DAMAGE_WINDOW_TICKS; i++) {
+                damageWindow[i] = 0.0F;
+            }
+            damageWindowSum = 0.0F;
+        } else {
+            for (long t = damageWindowLastTick + 1L; t <= now; t++) {
+                int idx = (int) (t % DAMAGE_WINDOW_TICKS);
+                damageWindowSum -= damageWindow[idx];
+                damageWindow[idx] = 0.0F;
+            }
+            if (damageWindowSum < 0.0F) {
+                damageWindowSum = 0.0F; // 浮点误差兜底
+            }
+        }
+        damageWindowLastTick = now;
+    }
+
+    /** 把本次生效的伤害记入当前 tick 的槽位（同一 tick 多次命中会累加） */
+    private void recordDamageWindow(long now, float amount) {
+        int idx = (int) (now % DAMAGE_WINDOW_TICKS);
+        damageWindow[idx] += amount;
+        damageWindowSum += amount;
+    }
+
     /**
      * 判定伤害是否为"直接近战物理攻击"：
      * - 原版类型：player_attack / mob_attack（手持武器挥击与横扫；

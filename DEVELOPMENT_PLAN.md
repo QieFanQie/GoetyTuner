@@ -1,12 +1,12 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.5
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.6
 > 更新日期：2026-08-21
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 43 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 44 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -15,7 +15,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.5 / 第 43 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。本轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）。
+当前状态（0.0.6 / 第 44 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；本轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）。
 
 ---
 
@@ -44,7 +44,7 @@
 | 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段 |
 | 占位纹理 | ✅ | 64x64 PNG（黑立方头+紫眼+紫领带） |
 | 占位渲染器 | ✅ | HumanoidMobRenderer + PLAYER模型层 |
-| 配置系统 | ✅ | 58 项 / 10 个 section（toml） |
+| 配置系统 | ✅ | 60 项 / 10 个 section（toml） |
 | 实测验证 | ✅ | quickPlay自动进档验证通过（第 9/11 轮） |
 | 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮） |
 | 重音特效 | ✅ | 三波 END_ROD 同心冲击环 + 12 个 NOTE 音符爆发 + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮） |
@@ -312,11 +312,11 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（58项 / 10个 section，第41轮实况）
+### `run/config/goetytuner-common.toml`（60项 / 10个 section，第44轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
-| **boss**（17项） | maxHealth | 216 | Boss血量 |
+| **boss**（19项） | maxHealth | 216 | Boss血量 |
 | | lockHealthInterval | 18 | 锁血档距（12档阶梯锁血：216/18） |
 | | lockGraceTicks | 10 | 每次锁血后的宽限期免疫（tick） |
 | | lockDeathRevive | true | 致死伤害被截断后的死亡自愈开关 |
@@ -333,6 +333,8 @@ AI自动初评分**已完整实现**。两条路径：
 | | targetRange | 96 | 索敌范围（FOLLOW_RANGE 属性） |
 | | phase2LockMark | 6 | 触发二阶段的锁血档位 |
 | | phase2EntryBurstCount | 6 | 二阶段进场重音连发次数 |
+| | maxHitDamagePercent | 0.25 | 限伤：单次伤害上限 = 最大生命×该值（0=关闭） |
+| | maxDamagePerSecond | 0.0 | 限DPS：滑动 1 秒窗口伤害上限（0=关闭；建议 20/30/40） |
 | **phase2_buffs**（3项） | phase2BuffsEnabled | true | 二阶段强化药水开关 |
 | | phase2StrengthLevelLow | 2 | 低档力量等级 |
 | | phase2StrengthLevelHigh | 5 | 高档力量等级 |
@@ -397,7 +399,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.5 / 43 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.6 / 44 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -583,6 +585,14 @@ AI自动初评分**已完整实现**。两条路径：
   且换任何 Key 报错相同——根因是配置仍指向不可达的 api.openai.com）；
   提示词框改多行并预填标准模板；一轮系统性性能优化（详见 TECHNICAL_SUMMARY.md §3.7）。
 
+### 第 44 轮（0.0.6）
+- 新增「限伤」：单次伤害上限 = 最大生命 × `maxHitDamagePercent`（默认 0.25 ≈ 54 点，相对宽松）；
+  实现照搬 Goety 本体做法（覆盖 `actuallyHurt` 取 min + 跳过 `BYPASSES_INVULNERABILITY`），
+  受击动画/击退/无敌帧照常。参照值：Goety 的 Apostle/Vizier/EnderKeeper 为固定 20、RedstoneMonstrosity 为 25。
+- 新增「限DPS」：滑动 1 秒（20 tick）窗口预算，预算耗尽则本次伤害被完全吸收；默认关闭（0），
+  建议开启值 20/30/40（对应最短战斗约 11/7/5.4 秒）。限伤管「单次」、限DPS 管「每秒」，两者互补。
+- 配置总数 58 → 60。
+
 ---
 
 ## 十、构建与运行
@@ -629,3 +639,4 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单，重启后不参与抽签 |
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
 | LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |
+| 打得太快/被秒杀 | `maxHitDamagePercent` / `maxDamagePerSecond` | 前者=单次伤害上限（默认 0.25×216≈54，0=关闭）；后者=滑动 1 秒窗口总量（默认 0=关闭，建议 20/30/40） |
