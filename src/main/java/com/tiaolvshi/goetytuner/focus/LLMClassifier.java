@@ -56,6 +56,27 @@ public class LLMClassifier {
             .connectTimeout(Duration.ofSeconds(15))
             .build();
 
+    /**
+     * 【0.0.6】共享的单线程执行器（守护线程）。
+     *
+     * <p>原实现把 {@code Executors.newSingleThreadExecutor()} 写在 {@link #runAsync} 的方法体里 ——
+     * 每点一次「开始评分」就新建一个线程池且从不 shutdown，**每次点击泄漏一条常驻线程**
+     * （非守护线程还会阻碍 JVM 正常退出）。改为静态单例 + 守护线程。
+     */
+    private static final java.util.concurrent.ExecutorService EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "goetytuner-llm");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 【0.0.6】单次请求的聚晶条数上限：超过就分批，避免一次要 200 条导致响应被输出长度限制截断 */
+    private static final int FOCI_PER_REQUEST = 60;
+    /** 【0.0.6】单次请求的聚晶 JSON 字符预算（双保险：某些聚晶描述特别长时也不会把请求撑爆） */
+    private static final int CHARS_PER_REQUEST = 12000;
+    /** 【0.0.6】每次请求的输出上限（token）：60 条聚晶约 1500 token，4096 有充足余量 */
+    private static final int MAX_TOKENS = 4096;
+
     /** 收集所有已注册聚晶的描述（id + 本地化描述），供提示词使用。客户端调用时可直接I18n；服务端回退到en_us语言文件。 */
     public static List<String[]> collectFocusDescriptions() {
         List<String[]> out = new ArrayList<>();
@@ -82,15 +103,78 @@ public class LLMClassifier {
 
     /**
      * 异步执行自动分类。
+     *
+     * 【0.0.6】改为**分批请求**：实测本环境下有 200 个聚晶，一次性塞进单个请求时
+     * 模型只返回了 25 条（日志 `applied 25 foci`；既无非法 id 告警也无解析失败，
+     * 说明响应本身就是残缺的）。现按 {@link #FOCI_PER_REQUEST} 条 / {@link #CHARS_PER_REQUEST}
+     * 字符切批、**顺序**请求并累计应用数（离线脚本实测：分批后 252/252 全部返回）。
+     *
      * @param apiKey 大模型API Key（来自 focus_classification.json 的输入）
      * @param promptOverride 自定义提示词（含 %s 占位符则替换聚晶列表；为空则用默认模板）
-     * @param onDone 成功回调（已应用条数）；onFail 失败回调（错误信息）
+     * @param onDone 成功回调（累计已应用条数）；onFail 失败回调（错误信息）
      */
     public static CompletableFuture<Integer> runAsync(String apiKey, String promptOverride,
                                                       Consumer<Integer> onDone, Consumer<String> onFail) {
         List<String[]> foci = collectFocusDescriptions();
-        JsonArray arr = new JsonArray();
+        List<List<String[]>> batches = partition(foci);
+
+        String url = TunerCommonConfig.LLM_API_URL.get();
+        String model = TunerCommonConfig.LLM_MODEL.get();
+        String tail = "（model=" + model + "；请检查 llm.apiUrl / llm.model 与网络连通性）";
+        GoetyTuner.LOGGER.info("[Tuner] LLM classify start: {} foci in {} batch(es)", foci.size(), batches.size());
+
+        // 顺序串成一条链：避免并发请求触发服务端限流，也让写回顺序可预测
+        CompletableFuture<Integer> chain = CompletableFuture.completedFuture(0);
+        for (int i = 0; i < batches.size(); i++) {
+            final int index = i + 1;
+            final List<String[]> batch = batches.get(i);
+            chain = chain.thenCompose(acc -> CompletableFuture.supplyAsync(
+                    () -> acc + classifyBatch(apiKey, promptOverride, batch, index, batches.size(), url, model, tail),
+                    EXECUTOR));
+        }
+        return chain.whenComplete((count, err) -> {
+            if (err != null) {
+                Throwable cause = (err.getCause() != null) ? err.getCause() : err;
+                GoetyTuner.LOGGER.error("LLM auto-classify failed", cause);
+                onFail.accept(cause.getMessage());
+                return;
+            }
+            int applied = count == null ? 0 : count;
+            if (applied < foci.size()) {
+                // 明确的"只覆盖了一部分"信号：以后排查不用再翻 HTTP 细节
+                GoetyTuner.LOGGER.warn("[Tuner] LLM classify covered only {}/{} foci —— "
+                        + "模型只返回了部分条目；已应用的结果不会丢失，可再点一次「开始评分」补齐", applied, foci.size());
+            }
+            onDone.accept(applied);
+        });
+    }
+
+    /** 【0.0.6】按条数上限 + 字符预算把聚晶切批 */
+    private static List<List<String[]>> partition(List<String[]> foci) {
+        List<List<String[]>> out = new ArrayList<>();
+        List<String[]> cur = new ArrayList<>();
+        int chars = 0;
         for (String[] f : foci) {
+            int size = (f[0] == null ? 0 : f[0].length()) + (f[1] == null ? 0 : f[1].length()) + 32;
+            if (!cur.isEmpty() && (cur.size() >= FOCI_PER_REQUEST || chars + size > CHARS_PER_REQUEST)) {
+                out.add(cur);
+                cur = new ArrayList<>();
+                chars = 0;
+            }
+            cur.add(f);
+            chars += size;
+        }
+        if (!cur.isEmpty()) {
+            out.add(cur);
+        }
+        return out;
+    }
+
+    /** 【0.0.6】单批：构造提示词 → 请求 → 宽松解析 → 写回；返回本批应用条数 */
+    private static int classifyBatch(String apiKey, String promptOverride, List<String[]> batch,
+                                     int index, int total, String url, String model, String tail) {
+        JsonArray arr = new JsonArray();
+        for (String[] f : batch) {
             JsonObject o = new JsonObject();
             o.addProperty("id", f[0]);
             o.addProperty("description", f[1]);
@@ -98,80 +182,73 @@ public class LLMClassifier {
         }
         String fociJson = arr.toString();
 
-        // 拼接提示词：优先使用用户自定义（含 %s 占位符时替换聚晶列表），否则追加
-        String prompt = (promptOverride == null || promptOverride.trim().isEmpty())
-                ? PROMPT_TEMPLATE
-                : (promptOverride.contains("%s") ? String.format(promptOverride, fociJson)
-                                                 : promptOverride + "\n\n" + fociJson);
+        // 拼接提示词：优先使用用户自定义（含 %s 占位符时替换聚晶列表），否则追加。
+        // 【0.0.6】用 replace 而非 String.format：提示词框现在可由用户编辑，
+        // 若其中含意外的 % 字符（例如写了"100%"），String.format 会抛
+        // UnknownFormatConversionException，导致按钮永久卡在"正在评分…"。
+        String prompt;
+        if (promptOverride == null || promptOverride.trim().isEmpty()) {
+            prompt = PROMPT_TEMPLATE;
+        } else if (promptOverride.contains("%s")) {
+            prompt = promptOverride.replace("%s", fociJson);
+        } else {
+            prompt = promptOverride + "\n\n" + fociJson;
+        }
 
         JsonObject body = new JsonObject();
-        body.addProperty("model", TunerCommonConfig.LLM_MODEL.get());
+        body.addProperty("model", model);
+        body.addProperty("temperature", 0.2);
+        body.addProperty("max_tokens", MAX_TOKENS);
         JsonArray messages = new JsonArray();
         JsonObject msg = new JsonObject();
         msg.addProperty("role", "user");
         msg.addProperty("content", prompt);
         messages.add(msg);
         body.add("messages", messages);
-        body.addProperty("temperature", 0.2);
 
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(TunerCommonConfig.LLM_API_URL.get()))
+                .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(120))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 
-        return CompletableFuture.supplyAsync(() -> {
-            // 【0.0.5】错误信息必须带上目标 URL 与排查提示：
-            // 此前只报 "HTTP connect timed out"，看不出请求发往哪个端点——
-            // 实测踩坑：配置里仍是 api.openai.com（本机不可达），界面只显示连接超时，
-            // 且换任何 API Key 报错都相同（请求根本没到服务器），极难定位。
-            String url = TunerCommonConfig.LLM_API_URL.get();
-            String model = TunerCommonConfig.LLM_MODEL.get();
-            String tail = "（model=" + model + "；请检查 llm.apiUrl / llm.model 与网络连通性）";
+        // 阶段一：只负责发请求——连接类失败（超时/DNS/拒绝）在这里给出可定位的报文
+        HttpResponse<String> resp;
+        try {
+            resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (Exception e) {
+            String netErr = e.getMessage() == null ? e.toString() : e.getMessage();
+            throw new RuntimeException("请求 " + url + " 失败：" + netErr + tail, e);
+        }
+        // 阶段二：HTTP 层错误（401/403/429/5xx…）——带 URL 与截断后的响应体
+        if (resp.statusCode() / 100 != 2) {
+            throw new RuntimeException("请求 " + url + " 返回 HTTP " + resp.statusCode()
+                    + "：" + abbrev(resp.body()) + tail);
+        }
+        // 阶段三：解析与写回
+        try {
+            JsonObject respJson = JsonParser.parseString(resp.body()).getAsJsonObject();
+            String content = respJson.getAsJsonArray("choices")
+                    .get(0).getAsJsonObject()
+                    .getAsJsonObject("message")
+                    .get("content").getAsString();
+            // 【v0.0.3】宽松解析：先剥离 markdown 代码块，再尝试直接解析；
+            // 失败则从文本中提取第一个平衡 {…} 对象（容忍前后多余文字）
+            content = content.replaceAll("(?s)```(json)?", "").trim();
+            JsonArray resultFoci = extractFoci(content);
 
-            // 阶段一：只负责发请求——连接类失败（超时/DNS/拒绝）在这里给出可定位的报文
-            HttpResponse<String> resp;
-            try {
-                resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-            } catch (Exception e) {
-                String netErr = e.getMessage() == null ? e.toString() : e.getMessage();
-                throw new RuntimeException("请求 " + url + " 失败：" + netErr + tail, e);
-            }
-            // 阶段二：HTTP 层错误（401/403/429/5xx…）——带 URL 与截断后的响应体
-            if (resp.statusCode() / 100 != 2) {
-                throw new RuntimeException("请求 " + url + " 返回 HTTP " + resp.statusCode()
-                        + "：" + abbrev(resp.body()) + tail);
-            }
-            // 阶段三：解析与写回
-            try {
-                JsonObject respJson = JsonParser.parseString(resp.body()).getAsJsonObject();
-                String content = respJson.getAsJsonArray("choices")
-                        .get(0).getAsJsonObject()
-                        .getAsJsonObject("message")
-                        .get("content").getAsString();
-                // 【v0.0.3】宽松解析：先剥离 markdown 代码块，再尝试直接解析；
-                // 失败则从文本中提取第一个平衡 {…} 对象（容忍前后多余文字）
-                content = content.replaceAll("(?s)```(json)?", "").trim();
-                JsonArray resultFoci = extractFoci(content);
-
-                FocusClassificationConfig cfg = FocusPoolManager.classification();
-                int applied = cfg.writeLLMResult(resultFoci);
-                FocusPoolManager.reclassify();
-                return applied;
-            } catch (Exception e) {
-                String parseErr = e.getMessage() == null ? e.toString() : e.getMessage();
-                throw new RuntimeException("解析/写回 " + url + " 的响应失败：" + parseErr + tail, e);
-            }
-        }, java.util.concurrent.Executors.newSingleThreadExecutor()).whenComplete((count, err) -> {
-            if (err != null) {
-                GoetyTuner.LOGGER.error("LLM auto-classify failed", err);
-                onFail.accept(err.getMessage());
-            } else {
-                onDone.accept(count);
-            }
-        });
+            FocusClassificationConfig cfg = FocusPoolManager.classification();
+            int applied = cfg.writeLLMResult(resultFoci);
+            FocusPoolManager.reclassify();
+            GoetyTuner.LOGGER.info("[Tuner] LLM batch {}/{}: sent {} foci -> applied {}",
+                    index, total, batch.size(), applied);
+            return applied;
+        } catch (Exception e) {
+            String parseErr = e.getMessage() == null ? e.toString() : e.getMessage();
+            throw new RuntimeException("解析/写回 " + url + " 的响应失败：" + parseErr + tail, e);
+        }
     }
 
     /**

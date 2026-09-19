@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.6 ｜ 整理日期：2026-08-21 ｜ 覆盖轮次：第 1~44 轮
+> 版本：0.0.7 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~45 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -193,6 +193,14 @@ TunerBoss.aiStep ─┐
   （`https://api.openai.com/v1/chat/completions` + `gpt-4o-mini`）；
   **中国大陆环境需改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`**
   （0.0.5 实测：`api.openai.com` 连接超时、`api.deepseek.com` 可达；错误报文现已带目标 URL 与模型名）。
+- **`LLMClassifier` 批量评分的 0.0.7 修复**（聚晶多时的正确性与稳定性，细节见 §3.9）：
+  原先把全部聚晶塞进**单个**请求且**不设 `max_tokens`** → 实测 200 个聚晶只应用了 25 条（模型响应本身残缺，
+  日志既无非法 id 告警也无解析失败）。现改为**分批请求**：`FOCI_PER_REQUEST=60` / `CHARS_PER_REQUEST=12000`
+  双预算切批，**顺序**串成 CompletableFuture 链依次请求并累计应用条数（200 个聚晶 → 4 批；顺序而非并发，
+  避免触发服务端限流、写回顺序也可预测）；并显式 `max_tokens=4096`（`MAX_TOKENS`，60 条约 1500 token，余量充足）。
+  可诊断性：每批结束打 INFO `[Tuner] LLM batch i/n: sent X foci -> applied Y`，全部结束后若 `applied < 总数`
+  打 **WARN** `LLM classify covered only X/Y foci`（提示模型只返回了部分条目，**已应用的结果不会丢失**，可再点一次「开始评分」补齐）。
+  依据：本轮离线脚本 `scripts/llm_score_foci.py` 用同样的分批策略实测 **252/252 全部返回、0 非法 id、0 遗漏、0 幻觉**。
 - `TunerCommonConfig`：common toml，**60 项、10 个 section**——`boss`(19) / `phase2_buffs`(3) /
   `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
   `music`(11) / `llm`(2) / `wand_upgrade`(6)，
@@ -252,10 +260,53 @@ TunerBoss.aiStep ─┐
 | 需要状态 | 无（纯钳制） | 需要（1 秒伤害历史） |
 | 挡得住「一击秒杀」 | ✅ | 只能整段吸收或整段放行，粒度粗、手感突兀 |
 | 挡得住「高频小伤害叠加」 | ❌（100 次 10 点照样打满 1000） | ✅ |
-| 典型用途 | 防爆发 / 防秒杀 | 控制战斗最短时长、压制多段持续爆发 |
+| 典型用途 | 防爆发 / 防秒杀 | 压制多段持续爆发（**在本 Boss 上不改变锁血阶梯的推进速度**，见下方实测） |
+
+**实测：限伤在本 Boss 上作用有限（0.0.7 实证）**
+
+读 `TunerBoss.applyLockHealth()`（L1097-1144）确认了锁血的真实机制（每 tick 执行，`aiStep` 第 7 步）：
+
+```java
+// 每 tick 执行（aiStep 第 7 步）
+if (lockGraceTicks > 0) { lockGraceTicks--; if (getHealth() < lockGraceFloor) setHealth(lockGraceFloor); return; }
+if (lockMark >= maxMark - 1) return;                    // 阶梯耗尽，可正常击杀
+float nextFloor = maxHealth - interval * (lockMark + 1);
+if (getHealth() < nextFloor) { setHealth(nextFloor); lockMark++; onLockTriggered(...); }
+```
+
+**关键点：血量一旦低于本档地板，就被「恢复」到该档地板并进入宽限期**（宽限期内 `hurt()` 直接 `return false` = 完全免疫）
+⇒ **超出该档的伤害被丢弃** ⇒ **打 1000 点和打 18 点在锁血阶梯上都只推进一档**。
+
+日志实证（`versions\测试\logs\latest.log`，同一份 log）：
+
+```
+14:19:54.896 Lock health → lock at 198.0 (mark=1/12)
+14:19:55.545 → 180.0 (mark=2/12)
+14:19:56.097 → 162.0 (mark=3/12)
+14:19:56.697 → 144.0 (mark=4/12)     ... 到 14:19:48 那轮共 11 档约 10 秒
+```
+
+**每档 ≈ 0.5~1.0 秒 = `lockGraceTicks`(10t=0.5s) + 玩家下一次命中的间隔**，与伤害量无关。同一份日志里
+14:18:59→14:19:07、14:19:16→14:19:54、14:20:33→14:21:11、14:23:04→14:24:24、14:30:17→14:30:26
+反复出现同样的阶梯，说明整场战斗约 10~20 秒。
+
+**推论（实测结论，非推测）**：
+
+1. 锁血机制**本身就是一个远比 0.0.6 的限伤更严格的隐式限伤**（把每次命中的有效伤害钳到一档 = `lockHealthInterval`，默认 18 点）；
+2. 因此 **0.0.6 的 `maxHitDamagePercent=0.25`（≈54 点/次）在当前设计下几乎是空转的**——它比锁血的隐式钳制宽松得多，
+   只在**阶梯耗尽后**（血量 ≤18、可正常击杀的那段）才可能起作用，而那时任何一击都能击杀，所以实际影响可忽略；
+3. **真正决定战斗时长的是**：`lockGraceTicks`（每档最短时长，默认 10t=0.5s，**这是主导旋钮**）与**档位数**
+   （`maxHealth / lockHealthInterval`，默认 216/18 = 12 档），而不是任何伤害上限；
+4. 因此**限DPS（`maxDamagePerSecond`）同样不改变阶梯的推进速度**——阶梯是按「宽限窗口」推进而不是按「每秒伤害量」推进的；
+   它只在阶梯耗尽后（≤18 血那段）才可能有意义；
+5. 想让战斗更长，应该调（按有效性排序）：① `lockGraceTicks` 10 → 20/30（每档最短 1s / 1.5s，12 档 ≈ 12~18s 下限）；
+   ② `maxHealth`/`lockHealthInterval` 增加档位数（例：216/12 = 18 档）；③ 若想真正让「伤害量」影响战斗时长，
+   需要改成「锁血不丢弃溢出伤害」或「阶梯按累计伤害推进」的设计——属于机制改动，不在本轮范围。
 
 **（1）限伤**：单次命中最多打掉 `最大生命 × maxHitDamagePercent`；默认 216 血 → **约 54 点/次**，属**相对宽松**
 （只削掉「一击秒杀」式巨额单次伤害，常规武器一击基本触不到）。范围 0.0~1.0，**0 = 关闭**。
+**准确表述**：限伤默认开启，但**在锁血阶梯未耗尽前基本不改变推进速度**（锁血自身的隐式钳制严格得多，见上方实测）；
+它主要作为**一道保险**，避免阶梯耗尽后被单次巨额伤害瞬间带走。
 
 **（2）限DPS**：`TunerBoss` 内有一个 `float[20]` 环形缓冲（槽位 = `gameTime % 20`，槽内只存该 tick 生效的伤害）
 + `damageWindowSum` 总和；每次结算先 `advanceDamageWindow(now)` 把 `(lastTick, now]` 这些 tick 的旧槽位清零，
@@ -310,6 +361,21 @@ protected void actuallyHurt(DamageSource source, float amount) {
 - 限DPS 窗口内若伤害被其它 mod 在 `LivingDamageEvent` 里取消，预算仍已被扣（基础款实现的已知局限）。
 - 新增两个配置项后，配置总数从 **58 → 60**（`boss` 段 17 → 19 项，section 数仍为 10）。
 
+### 3.9 0.0.7 稳定性修复
+
+四项修复，前三项在 `focus/LLMClassifier.java`、第四项在资源侧（起因是排查游玩实例日志时发现的三个可疑点，其中第一项是真 bug）：
+
+| # | 问题 | 处理 |
+|---|---|---|
+| 1 | **LLM 批量评分在大规模下只覆盖一小部分**（真 bug）：原实现把全部聚晶塞进**单个**请求、不设 `max_tokens` → 实测本实例 200 个聚晶点「开始评分」后只 `applied 25 foci`（配置 252 → 277 条），且日志既无 `invalid id ... skipped` 告警也无解析失败 ⇒ **模型返回的响应本身就是残缺的**（被输出长度限制截断/敷衍） | **分批请求**：`FOCI_PER_REQUEST=60` / `CHARS_PER_REQUEST=12000` 双预算切批，**顺序**串成 CompletableFuture 链依次请求并**累计**应用条数（200 个聚晶 → 4 批）；显式 `MAX_TOKENS=4096`（60 条约 1500 token，余量充足，不再依赖服务端默认值）；可诊断性：每批 INFO `[Tuner] LLM batch i/n: sent X foci -> applied Y`，全部结束后 `applied < 总数` 则 WARN `LLM classify covered only X/Y foci`（已应用结果不丢失，可再点一次补齐） |
+| 2 | **线程泄漏**：`Executors.newSingleThreadExecutor()` 原写在 `runAsync` **方法体内** → 每点一次「开始评分」就新建一个线程池且从不 shutdown，泄漏一条常驻线程（且是非守护线程，还会阻碍 JVM 正常退出） | 改为**静态单例 + 守护线程**（线程名 `goetytuner-llm`、`setDaemon(true)`） |
+| 3 | **提示词格式化会抛异常**：原先用 `String.format(promptOverride, fociJson)` 注入聚晶列表，而提示词框自 0.0.5 起是**用户可编辑的多行框**——用户若写了意外的 `%`（如「命中率100%」）会抛 `UnknownFormatConversionException`，该异常发生在 try 之外 → **按钮永久卡在「正在评分…」** | 改用 `promptOverride.replace("%s", fociJson)`（语义等价：替换占位符且不解析其它 `%`） |
+| 4 | **模组自身造成的日志噪声**：`assets/goetytuner/sounds/README-音乐资源说明.txt` 的中文文件名触发原版资源包校验的 `ERROR [net.minecraft.Util]: Invalid path in pack: goetytuner:sounds/README-音乐资源说明.txt, ignoring`（无害但属模组自身造成的 ERROR；同类的 `goetyawaken` 中文贴图名也在报同样错） | 改名为 ASCII 的 **`README-music-resources.txt`**，jar 内已确认旧名不存在 |
+
+**分批策略的依据**：本轮离线脚本 `scripts/llm_score_foci.py` 用同样的分批策略实测 **252/252 全部返回、0 非法 id、0 遗漏、0 幻觉**。
+
+> ⚠️ **注意**：`README-音乐资源说明.txt` 只在「0.0.7 改名前的历史名」语境下出现，jar 内已不存在该文件。
+
 ---
 
 ## 四、关键工程决策与红线（踩坑沉淀）
@@ -349,13 +415,13 @@ protected void actuallyHurt(DamageSource source, float amount) {
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~44 轮浓缩）
+## 五、版本演进时间线（第 1~45 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -386,6 +452,7 @@ protected void actuallyHurt(DamageSource source, float amount) {
 | v0.0.4 | 42 | 施法计数缺陷修复（`startSpell` 异常路径不再误调 `onCastFailed`）+ 死代码/注释卫生 + 4 份文档全面回填 |
 | v0.0.5 | 43 | LLM 错误报文带 URL/模型；提示词改多行并预填标准模板；性能优化（仆从扫描每 tick 缓存、枚举数组克隆、同步包早退、HUD 早退与预计算、RenderType 缓存、语言缓存瘦身） |
 | v0.0.6 | 44 | 限伤（单次伤害上限，默认 25% 最大生命≈54，参照 Goety 本体做法的 actuallyHurt 钳制）+ 限DPS（滑动 1 秒窗口预算，默认关闭） |
+| v0.0.7 | 45 | LLM 批量评分改分批请求（修 200 聚晶只应用 25 条）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；实证「锁血机制已隐含限伤，限伤/限DPS 在当前设计下作用有限」 |
 
 ---
 
@@ -421,9 +488,9 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    代码内带 TODO 注释。
 5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
 
-### 已知缺陷与待办（0.0.5 时点）
+### 已知缺陷与待办（0.0.7 时点）
 
-以下为 0.0.4 复核代码后新确认、到 0.0.5 时点仍未修复的问题：
+以下为 0.0.4 复核代码后新确认、到 **0.0.7** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。
@@ -441,11 +508,12 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 5. `LLMClassifier` 在 common 代码里 import 了客户端类
    `net.minecraft.client.resources.language.I18n`——当前不会崩（服务端不调用该路径），
    但服务端若调用 `collectFocusDescriptions()` 会 `NoClassDefFoundError`。
-6. `focus_classification.json`（FOCUS 分类配置文件）目前只有 3 条示例条目
-   （`goety:soul_bolt_focus` / `goety:iron_hide_focus` / `goety:rotting_focus`），
-   其余聚晶靠启发式兜底；LLM 批量评分尚未真正跑过一轮
-   （0.0.5 发起的评分请求因 `llm.apiUrl` 仍指向不可达的 `api.openai.com`，在连接阶段即超时、
-   请求根本没到服务器——换任何 API Key 报错相同；现已补上带目标 URL/模型名的错误报文，见 §3.5）。
+6. ~~`focus_classification.json` 只有 3 条示例条目、LLM 批量评分尚未真正跑过一轮~~
+   ✅ **已解决**（评分写入在 0.0.6 前完成，0.0.7 又修好大规模覆盖问题）：现已有 **252 条**评分
+   （离线脚本 `scripts/llm_score_foci.py` + 游戏内「开始评分」双路径）。
+   0.0.5 的失败根因是 `llm.apiUrl` 仍指向不可达的 `api.openai.com`——在连接阶段即超时、
+   请求根本没到服务器，换任何 API Key 报错相同（错误报文现已带目标 URL/模型名，见 §3.5）。
+   0.0.7 起游戏内批量评分改为**分批请求**，修复「200 个聚晶只应用 25 条」，见 §3.9。
 7. 联机场景服务器/客户端 common config 不互通——音量取客户端本地配置；
    pitch 以同步包 speed 优先。单人/LAN 无碍。
 

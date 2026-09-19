@@ -5,13 +5,13 @@
 人形无头指挥家「调律师」，以音乐（铺垫/高潮/低谷）驱动战斗节奏，
 轮番演奏诡厄巫法及其附属注册的全部聚晶，并带有自学习式聚晶评分系统。
 
-**当前版本：0.0.6**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
+**当前版本：0.0.7**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
 
 ## 文档索引（按优先级）
 
 | 文档 | 定位 | 时效 |
 |---|---|---|
-| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.6，最新一轮；覆盖轮次口径以该文档为准） |
+| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.7，最新一轮；覆盖轮次口径以该文档为准） |
 | [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | 阶段性开发计划书：完成度/未完成项/配置总览/实测记录 | 进度表可能滞后，以技术摘要为准 |
 | [DESIGN_RITUAL_WAND_UPGRADE.md](DESIGN_RITUAL_WAND_UPGRADE.md) | 单任务设计稿（任务 #118 仪式召唤 + 法杖升级） | 已实施，保留作设计留痕 |
 
@@ -81,10 +81,11 @@ cd ../goety-tuner
 - `client/render/` 原版 HumanoidModel 渲染 + 自定义披风层（无 GeckoLib）
 - 资源：`assets/goetytuner/`（中英 lang、贴图、内置 boss 音乐 ogg）、`data/goety/recipes/tuner_boss_ritual.json`
 
-## 已知事项（0.0.6）
+## 已知事项（0.0.7）
 
-- **限伤默认已开启**：`boss.maxHitDamagePercent = 0.25`，即单次命中最多打掉最大生命的 25%（默认 216 血 → 约 54 点）。这是相对宽松的设定，只削掉一击秒杀式的巨额伤害；**设为 `0` 可关闭**。
-- **限DPS 默认关闭**：`boss.maxDamagePerSecond = 0`；想限制「每秒总吞吐」时再开（建议 20/30/40，分别对应最短战斗约 11/7/5.4 秒）。限伤管「单次」，限DPS 管「每秒」，两者互补。
+- **限伤默认已开启**：`boss.maxHitDamagePercent = 0.25`，即单次命中最多打掉最大生命的 25%（默认 216 血 → 约 54 点）。**实测结论：限伤在锁血阶梯耗尽前基本不改变战斗推进速度**——血量一旦跌破本档地板就会被恢复到该档地板并进入宽限期（宽限期内完全免疫），超出该档的伤害被丢弃，打 1000 点与打 18 点在阶梯上都只推进一档。它主要作为**一道保险**：避免阶梯耗尽后被单次巨额伤害瞬间带走；**设为 `0` 可关闭**。
+- **限DPS 默认关闭**：`boss.maxDamagePerSecond = 0`；它按「每秒总吞吐」节流，**同样不改变锁血阶梯的推进速度**（阶梯是按宽限窗口推进、而非按每秒伤害量推进），只在阶梯耗尽后（血量 ≤18、可正常击杀的那段）才可能有意义。**真正决定战斗时长的是 `lockGraceTicks`（每档最短时长，默认 10 tick = 0.5 秒，这是主导旋钮）与档位数（`maxHealth / lockHealthInterval`，默认 216/18 = 12 档）**——想让战斗更长应调这两项，而不是伤害上限。
+- **LLM 批量评分会分批请求**：聚晶很多时（本机实测 200 个）按 **60 条/批、顺序请求**并累计结果；若日志出现 `covered only X/Y foci`，说明模型只返回了部分条目（**已应用的结果不会丢失**），再点一次「开始评分」即可补齐。
 - 内置音乐 `boss_music_phase1.ogg`（98.27s / BPM120）由 [乌鸦Producer] 提供，音频在原曲基础上有改动；一/二阶段共用同一曲目与同一速度（`music.pitchPhase1`）。
 - `config/goetytuner/focus_classification.json` **首次生成时只有 3 条示例条目**，其余聚晶靠启发式分类兜底。本机已用 LLM 批量评分为 **252 个聚晶**（其中当前游玩实例实际注册的 208 个已覆盖 206 个，仅缺 2 个 `goetyiron:*_focus`，走启发式兜底）。可在游戏内 Mods 菜单 → Config →「开始评分（大模型）」重新批量生成——它会扫描**当前实例实际注册**的聚晶，是让评分表与整合包精确对齐的正规做法（需自备 OpenAI 兼容 API Key；端点见下条）。
 - **LLM 评分的端点默认是 OpenAI**（`llm.apiUrl = https://api.openai.com/v1/chat/completions`）。**中国大陆网络需在配置里改为 `https://api.deepseek.com/v1/chat/completions` 并把 `llm.model` 改为 `deepseek-chat`**，否则会连接超时；失败时界面会显示带目标 URL 的报错，可据此判断端点是否正确。
