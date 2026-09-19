@@ -122,6 +122,20 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     // 共 11 次锁血回弹；第 12 档（lockMark=12）后锁血耗尽，可被正常击杀。
     // 二阶段入口 = 第 6 档（108 血 = 半血），见 phase2LockMark。
     private int lockMark = 0;
+
+    /**
+     * 【0.0.9】/kill 后门标记：管理员用 {@code /kill} 击杀时置位，令锁血体系的一切保护让路。
+     *
+     * <p>字节码实证的调用链：{@code KillCommand} → {@code Entity.kill()} →（虚分派）
+     * {@code LivingEntity.kill()} → {@code hurt(damageSources().genericKill(), Float.MAX_VALUE)}。
+     * 因此只要在 {@code hurt} 里识别 {@code DamageTypes.GENERIC_KILL} 即可精准区分"管理员指令"
+     * 与"玩家伤害"，无需给命令加特殊权限判断。
+     *
+     * <p>置位后：宽限期免疫跳过、致死截断跳过、{@link #maintainDeathState()} 不做回弹、
+     * {@link #canStillRevive()} 返回 false（于是 {@code remove(KILLED)} 也不再拦截）。
+     * 击杀完成（实体被移除）后标记自然失效；若该次伤害被其它模组取消，则下一个正常 tick 会清除标记。
+     */
+    private boolean adminKillPending = false;
     // 【2026-08-18 第十三轮】锁血宽限期：触发锁血后 graceTicks 内血量持续钉在 lockGraceFloor，
     // 让"锁血"有存在感（防高频/多段伤害穿透），窗口结束才继续掉血。0=关闭。
     private int lockGraceTicks = 0;
@@ -332,7 +346,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     private void maintainDeathState() {
         boolean dying = this.isDeadOrDying();
         boolean inDeathAnimation = this.deathTime > 0;
+        // 【0.0.9】/kill 后门：管理员指令造成的死亡不做任何回弹或清理，让死亡流程正常走完
+        // （remove(KILLED) 也会因 canStillRevive() 返回 false 而被放行）。
+        if (this.adminKillPending) {
+            return;
+        }
         if (!dying && !inDeathAnimation) {
+            // 状态正常 → 清掉可能残留的 /kill 标记（例如那次伤害被其它模组取消，Boss 并没死）
+            this.adminKillPending = false;
             return; // 状态正常
         }
 
@@ -397,6 +418,9 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      * 锁血已耗尽或总开关关闭时也不再拦（正常击杀路径保持原样）。
      */
     private boolean canStillRevive() {
+        if (this.adminKillPending) {
+            return false; // 【0.0.9】/kill 后门：不拦 remove(KILLED)，让管理员能真正击杀
+        }
         if (!TunerCommonConfig.LOCK_DEATH_REVIVE.get()) {
             return false;
         }
@@ -1231,6 +1255,15 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public boolean hurt(DamageSource source, float amount) {
+        // 【0.0.9】/kill 后门：管理员指令必须能真正击杀，无视锁血的一切保护。
+        // （KillCommand → Entity.kill() → LivingEntity.kill() → hurt(genericKill, MAX_VALUE)，字节码核实）
+        // 否则 /kill 会被宽限期免疫吞掉、或被致死截断压到剩 1 血，管理员反而杀不死自己的 Boss。
+        if (source.is(DamageTypes.GENERIC_KILL)) {
+            this.adminKillPending = true;
+            GoetyTuner.LOGGER.info("[Tuner] /kill backdoor: bypassing lock-health protection (health={}, mark={})",
+                    this.getHealth(), lockMark);
+            return super.hurt(source, amount);
+        }
         // 【第二十三轮】Boss身份伤害免疫：摔落、原版火焰（含火焰/岩浆/燃烧，
         // 覆盖 DamageTypeTags.IS_FIRE 全部火系）、窒息（卡墙）、溺水。
         // （不免疫魔法/爆炸/普通攻击等玩家可造成/可操作的伤害类型）
@@ -1294,7 +1327,10 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     protected void actuallyHurt(DamageSource source, float amount) {
         // BYPASSES_INVULNERABILITY（/kill 的 generic_kill、掉出世界等）不受任何限伤约束，
         // 否则会出现「管理员杀不死、掉进虚空也不死」的诡异状态。
-        if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
+        // 【0.0.9】额外显式判定 GENERIC_KILL：不依赖 tag 内容的假设（数据包/其它模组可能改动它），
+        // 保证 /kill 这条后门在任何环境下都成立。
+        if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)
+                && !source.is(DamageTypes.GENERIC_KILL)) {
             amount = applyHitDamageCap(amount);
             float allowed = applyDpsCap(amount);
             if (allowed < 0.0F) {

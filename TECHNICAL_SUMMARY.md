@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.8 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~46 轮
+> 版本：0.0.9 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~47 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -40,7 +40,7 @@ com.tiaolvshi.goetytuner
 │   ├── ModEvents.java               # 实体加入拦截 / 掉落 / 召唤物归属等
 │   └── ModBusEvents.java            # MOD 总线：属性、图层、屏幕
 ├── entity/
-│   ├── TunerBoss.java               # Boss 主体（1671 行核心类：AI 状态机 / 阶段 / 战斗数值）
+│   ├── TunerBoss.java               # Boss 主体（1922 行核心类：AI 状态机 / 阶段 / 战斗数值）
 │   ├── BossPhase.java               # 三阶段枚举（铺垫/高潮/低谷）
 │   ├── MusicController.java         # 服务端乐谱推进 / 阶段转换 / 重音触发
 │   └── ai/CastChannel.java          # 施法通道（前摇/高潮并行通道/瞬发）
@@ -437,7 +437,52 @@ protected void actuallyHurt(DamageSource source, float amount) {
    现在「锁血未耗尽 + 总开关开启」时挡下这次移除（`canStillRevive()`，日志 `Blocked KILLED removal — lock tiers remain (mark={}), will revive next tick`），交给下一 tick 回弹。
    该判断**合并进类里原有的 `remove(RemovalReason)` 覆写**（那里还要执行 `CombatEvents.unregisterBoss(this)`）。
    只拦 `KILLED`：区块卸载（UNLOADED_*）、和平模式消失（DISCARDED）照常放行；锁血耗尽时也放行（正常击杀路径不变）。
+   但 **`/kill` 是例外**（管理员指令的 `DamageTypes.GENERIC_KILL`）：0.0.9 起该拦截对 `/kill` 放行，见本节末尾「0.0.9：为 `/kill` 打开后门」。
 4. 保留 `applyLockHealth()` 里的「死亡自愈兜底分支」（注释已说明其在死亡动画期不可达）。
+
+**0.0.9：为 `/kill` 打开后门（0.0.8 两项保护的必要配套）**
+
+**起因（用户要求）**：上面第 1、3 项保护有副作用——**管理员用 `/kill` 也杀不死 Boss 了**：
+会被宽限期免疫吞掉、被致死伤害截断压到剩 1 血、被 `maintainDeathState()` 死亡回弹救活、被 `canStillRevive()` 的 `remove(KILLED)` 拦截挡下。用户要求「为 `/kill` 的击杀打开后门」，即管理员指令必须能真正击杀。
+
+**字节码实证的调用链**（这就是"为什么能在 `hurt` 里识别"的依据）：
+
+```
+KillCommand → Entity.kill() →（虚分派）LivingEntity.kill() → hurt(damageSources().genericKill(), Float.MAX_VALUE)
+```
+
+`javap -c` 实测：`LivingEntity.kill()` 里是 `invokevirtual DamageSources.genericKill()` + `ldc_w float 3.4028235E38f` + `invokevirtual hurt`；`KillCommand` 里是 `invokevirtual net/minecraft/world/entity/Entity.kill:()V`。
+⇒ 只要在 `hurt` 里识别 **`DamageTypes.GENERIC_KILL`** 就能精准区分「管理员指令」与「玩家伤害」，**无需给命令加权限判断**。
+
+**实现（`entity/TunerBoss.java`，本轮只改这一个类）**：
+
+1. 新增字段 `private boolean adminKillPending = false;`（`/kill` 后门标记）；
+2. **`hurt()` 最前面**新增分支：`if (source.is(DamageTypes.GENERIC_KILL)) { adminKillPending = true; 记 INFO 日志; return super.hurt(source, amount); }`
+   —— 直接跳过其后**所有**锁血逻辑（身份免疫检查、近战易伤、**宽限期免疫**、**致死伤害截断**），把原样的 `MAX_VALUE` 交给原版结算；
+3. **`maintainDeathState()` 最前面**：`if (adminKillPending) return;` —— 不做回弹、不做脏状态清理，让死亡流程正常走完；
+4. **`canStillRevive()` 最前面**：`if (adminKillPending) return false;` —— 于是 `remove(KILLED)` 的拦截也放行，Boss 真正死亡；
+5. 状态正常时（既没死也不在死亡动画）清除标记：防止「那次 `/kill` 被其它模组取消」导致保护被永久关闭；
+6. `actuallyHurt()` 的限伤 / 限DPS 跳过条件里**额外显式加上** `!source.is(DamageTypes.GENERIC_KILL)`（原本只靠 `BYPASSES_INVULNERABILITY` tag，见 §3.8）——显式判定不依赖 tag 内容，保证后门在任何数据包 / 模组环境下都成立。
+
+日志串实测原文：`[Tuner] /kill backdoor: bypassing lock-health protection (health={}, mark={})`
+
+**要点**：这是 0.0.8 那个 `remove(KILLED)` 拦截的**必要配套**——凡本文档提到「锁血未耗尽时拦截 `remove(KILLED)`」之处，均应理解为「**`/kill`（`DamageTypes.GENERIC_KILL`）例外**」，即本节第 3 项。
+
+**⚠️ 已知限制 / 代价（必须知晓，不是 bug）**：
+
+1. **无法区分「管理员 `/kill`」与「其它模组调用 `entity.kill()`」**：两者走的是**同一条**调用链
+   （`Entity.kill()` → `LivingEntity.kill()` → `hurt(damageSources().genericKill(), MAX_VALUE)`）。
+   `javap -c` 实测 `DamageSources.genericKill()` 只是返回构造期缓存好的字段，而该字段由
+   `source(ResourceKey)` 生成 = `new DamageSource(Holder)`——**用的是不带 `Entity` 形参的那个构造器**，
+   ⇒ **`getEntity()` / `getDirectEntity()` 恒为 null，`DamageSource` 里没有任何可用于区分调用方的信息**。
+   ⇒ **任何用 `kill()` 杀 Boss 的第三方模组/工具，也会一并绕过锁血阶梯直接真死**。
+   若要只给 `/kill` 开口子，需要改成在 `KillCommand` 侧判定命令来源/权限——**当前架构做不到**，
+   属已知限制（如需收紧，方案是给命令打标记的自定义 `DamageSource`，但那要 mixin 原版命令，代价更大）。
+2. **锁血回弹（情形 B，`Death-revive`）现在极难触发**：走伤害管线的致死伤害会被锁血地板钳住（血量不会到 0），
+   而走 `generic_kill` 的击杀现在直接真死 ⇒ 只剩「**不经伤害管线直接把血量归零**」的外部手段
+   （其它模组直接 `setHealth(0)`）才会触发回弹。这是打开后门的必然结果。
+3. **情形 A（脏状态清理，`stale death animation`）不受影响**，仍然照常生效——那才是用户最初反馈的
+   「血量不为 0 但已在死亡动画」的修复，其触发源是外部回血/复活而非 `/kill`。
 
 ---
 
@@ -478,13 +523,13 @@ protected void actuallyHurt(DamageSource source, float amount) {
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~46 轮浓缩）
+## 五、版本演进时间线（第 1~47 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -517,6 +562,7 @@ protected void actuallyHurt(DamageSource source, float amount) {
 | v0.0.6 | 44 | 限伤（单次伤害上限，默认 25% 最大生命≈54，参照 Goety 本体做法的 actuallyHurt 钳制）+ 限DPS（滑动 1 秒窗口预算，默认关闭） |
 | v0.0.7 | 45 | LLM 批量评分改分批请求（修 200 聚晶只应用 25 条）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；实证「锁血机制已隐含限伤，限伤/限DPS 在当前设计下作用有限」 |
 | v0.0.8 | 46 | 附属模组变化健壮性加固（扫描逐项兜底、beginCast/instantCast/interrupt/finishCast 全流程兜底、returnEntry 幂等）+ 死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不吃档位、拦截 remove(KILLED)） |
+| v0.0.9 | 47 | 为 /kill 打开后门：识别 DamageTypes.GENERIC_KILL 后跳过宽限期免疫/致死截断/死亡回弹/remove 拦截（字节码实证调用链 KillCommand→Entity.kill()→LivingEntity.kill()→hurt(genericKill, MAX_VALUE)） |
 
 ---
 
@@ -530,9 +576,26 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 # 验证（reobf jar 覆写方法显示 SRG 名，字符串检查会漏报 → 用 javap 验证方法表）
 # 部署：删游戏 mods 旧 jar → 放新 jar；大改默认值须删 config/goetytuner-common.toml
-# 同步：D:\tiaolvshi\goety-tuner（同步副本）↔ D:\测试\tiaolvshi\goety-tuner（编译/运行副本）
-# 游戏实例：versions\1.20.1-Forge_47.4.23 已改名 versions\测试（实例内 Goety 2.5.56.5，与开发依赖一致；Forge 47.4.23）
+# 同步：D:\tiaolvshi\goety-tuner（主副本：git 仓库 / 权威源码）
+#       → robocopy src /MIR → D:\测试\tiaolvshi\goety-tuner（编译/运行副本，只用于构建）
+# 游戏实例：versions\测试（Forge 47.4.23，实例内 Goety 2.5.56.5，与开发依赖一致）
+#           versions\灾厄巫咒 是旧实例（Forge 47.4.16 / Goety 2.5.56.3），勿部署
 ```
+
+**当前部署产物**（每次部署后更新本表，便于核对"游戏里跑的到底是哪个构建"）：
+
+| 版本 | 文件 | 大小 | md5 | 部署位置 |
+|---|---|---|---|---|
+| 0.0.9 | `goetytuner-0.0.9.jar` | 1,737,089 B | `75149715D273613A6E750679CC66B29E` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+
+> 部署前务必确认**没有 java 进程在运行**（jar 被占用会导致替换静默失败）；
+> 部署后需**重启游戏**才会加载新 jar。
+
+> ⚠️ **jar 的 md5 不可复现，别把 md5 当成"源码是否一致"的判据**（实证）：
+> Forge 会把构建时刻写进 `META-INF/MANIFEST.MF` 的 `Implementation-Timestamp`，因此**源码一字不改地重建，md5 也会变**。
+> 曾实测：改 5 处**注释文字**（行数不变）后重建，jar 大小 1,737,090 → 1,737,089 B、md5 全变；
+> 但逐条目比对 97 个条目，**除 `MANIFEST.MF`（仅时间戳不同）外 96 个条目字节完全一致**（含 `TunerBoss.class` 的 sha256）。
+> 要判断"部署的 jar 是否对应当前源码"，应比对**条目内容**（或 `Implementation-Version`），而非整体 md5。
 
 工具脚本（scripts/）：`clear_refmaps.py`（清 refmap）、`replace_mixin_classes.py`
 （FG 反混淆 jar 的 mixin 类替换）、`mods-backup/`（原版 jar 备份）、
@@ -552,9 +615,9 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    代码内带 TODO 注释。
 5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
 
-### 已知缺陷与待办（0.0.8 时点）
+### 已知缺陷与待办（0.0.9 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.8** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.9** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。
