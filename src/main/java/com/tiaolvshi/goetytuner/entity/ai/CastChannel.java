@@ -142,14 +142,35 @@ public class CastChannel {
         if (state != State.IDLE) {
             return false;
         }
-        LivingEntity boss = callback.boss();
-        FocusPoolManager pools = callback.pools();
         FocusEntry entry = category.isScored()
-                ? pools.draw(category, minionFill, summonBlocked)
-                : pools.drawUniform(category);
+                ? callback.pools().draw(category, minionFill, summonBlocked)
+                : callback.pools().drawUniform(category);
         if (entry == null) {
             return false;
         }
+        // 【0.0.7 健壮性】把整条施法流程统一兜底。
+        // 附属模组的法术实现（ISpell）可能在 conditionsMet / castDuration / startSpell /
+        // CastingSound / castingVolume 等**任一处**抛异常；原实现只 try 了 startSpell，
+        // 其余几步抛出的异常会沿 tickBuildup/tickClimax → aiStep → serverAiStep 一路冒泡，
+        // **直接崩服**（整合包里换一批附属模组就可能触发）。
+        // 现在任一步抛异常都按"该聚晶不可用"处理：运行期拉黑 + 归还功能池（幂等）+ 复位通道。
+        try {
+            return startCast(level, entry, warmupMultiplier);
+        } catch (Throwable t) {
+            GoetyTuner.LOGGER.error("[Tuner] beginCast failed for focus {} ({}); auto-blacklisting",
+                    entry.getItemId(), t.toString(), t);
+            FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
+            callback.pools().returnEntry(entry); // 幂等：已归还/未锁池时不会重复添加
+            current = null;
+            state = State.IDLE;
+            return false;
+        }
+    }
+
+    /** beginCast 的实际流程（由 beginCast 统一兜底异常） */
+    private boolean startCast(ServerLevel level, FocusEntry entry, double warmupMultiplier) {
+        LivingEntity boss = callback.boss();
+        FocusPoolManager pools = callback.pools();
         var spell = entry.getSpell();
         if (spell == null) {
             return false;
@@ -224,8 +245,17 @@ public class CastChannel {
 
     private void finishCast() {
         LivingEntity boss = callback.boss();
-        int cooldown = current.getSpell().spellCooldown(boss)
-                + TunerCommonConfig.EXTRA_CAST_COOLDOWN.get();
+        // 【0.0.7 健壮性】spellCooldown 也是第三方法术实现；它抛异常时不能让结算中断——
+        // 否则聚晶留在锁池状态（既不在功能池也没进冷却池）永久丢失。失败则退化为纯额外冷却。
+        int cooldown;
+        try {
+            cooldown = current.getSpell().spellCooldown(boss)
+                    + TunerCommonConfig.EXTRA_CAST_COOLDOWN.get();
+        } catch (Throwable t) {
+            GoetyTuner.LOGGER.error("[Tuner] spellCooldown threw for {} (using extra cooldown only).",
+                    current.getItemId(), t);
+            cooldown = TunerCommonConfig.EXTRA_CAST_COOLDOWN.get();
+        }
         callback.pools().moveToCooldown(current, cooldown);
         callback.onCastFinish(current);
         current = null;
@@ -237,9 +267,16 @@ public class CastChannel {
         if (state == State.WARMUP && current != null) {
             LivingEntity boss = callback.boss();
             var spell = current.getSpell();
-            spell.stopSpell(level, boss, boss.getMainHandItem(),
-                    com.Polarice3.Goety.api.items.magic.IWand.getFocus(boss.getMainHandItem()),
-                    castTicksElapsed, WandUtil.getStats(boss, spell));
+            // 【0.0.7 健壮性】stopSpell 也是第三方法术实现，同样可能抛异常；
+            // 打断路径必须无论如何都把聚晶归还、把通道复位（否则聚晶永远锁在池外）。
+            try {
+                spell.stopSpell(level, boss, boss.getMainHandItem(),
+                        com.Polarice3.Goety.api.items.magic.IWand.getFocus(boss.getMainHandItem()),
+                        castTicksElapsed, WandUtil.getStats(boss, spell));
+            } catch (Throwable t) {
+                GoetyTuner.LOGGER.error("[Tuner] Spell {} threw on stopSpell (ignored, cast still released).",
+                        spell == null ? "?" : spell.getClass().getSimpleName(), t);
+            }
             callback.onCastInterrupted(current);
             // 【2026-08-18 第十三轮】归还功能池（无冷却）：打断不应惩罚聚晶
             callback.pools().returnEntry(current);
@@ -254,11 +291,26 @@ public class CastChannel {
         if (state != State.IDLE) {
             return false;
         }
-        LivingEntity boss = callback.boss();
         FocusEntry entry = callback.pools().drawUniform(category);
         if (entry == null) {
             return false;
         }
+        // 【0.0.7 健壮性】同 beginCast：conditionsMet / installFocus / spellCooldown 都可能由
+        // 附属模组的法术实现抛异常，统一兜底而不是让异常冒到 AI tick 上崩服。
+        try {
+            return instantCastInternal(level, entry);
+        } catch (Throwable t) {
+            GoetyTuner.LOGGER.error("[Tuner] instantCast failed for focus {} ({}); auto-blacklisting",
+                    entry.getItemId(), t.toString(), t);
+            FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
+            callback.pools().returnEntry(entry);
+            return false;
+        }
+    }
+
+    /** instantCast 的实际流程（由 instantCast 统一兜底异常） */
+    private boolean instantCastInternal(ServerLevel level, FocusEntry entry) {
+        LivingEntity boss = callback.boss();
         var spell = entry.getSpell();
         if (spell == null || !spell.conditionsMet(level, boss)) {
             return false;
@@ -266,15 +318,7 @@ public class CastChannel {
         BossWandHelper.installFocus(boss.getMainHandItem(), entry, null);
         // 【第三十一轮】瞬发同样钉朝向：重音瞬发常紧跟走位瞬移，直接按当前视线发射会打偏
         snapTowardTarget(boss);
-        try {
-            spell.SpellResult(level, boss, boss.getMainHandItem(), WandUtil.getStats(boss, spell));
-        } catch (Throwable t) {
-            GoetyTuner.LOGGER.error("[Tuner] Spell {} threw on instantCast. Auto-blacklisting focus {}.",
-                    spell.getClass().getSimpleName(), entry.getItemId(), t);
-            FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
-            callback.pools().returnEntry(entry);
-            return false;
-        }
+        spell.SpellResult(level, boss, boss.getMainHandItem(), WandUtil.getStats(boss, spell));
         callback.pools().moveToCooldown(entry, spell.spellCooldown(boss));
         return true;
     }

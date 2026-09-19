@@ -83,25 +83,48 @@ public class FocusPoolManager {
         }
 
         // 扫描所有注册物品中的 IFocus（含诡厄巫法本体与任何附属）
+        // 【0.0.7 健壮性】单个物品的扫描整体兜底：附属模组的 IFocus 实现可能在
+        // getSpell()/构造 FocusEntry 时抛异常（版本不匹配、依赖缺失等）。
+        // 原先这种异常会让整个 initIfNeeded 失败 → 聚晶池为空 + 服务器启动报错；
+        // 现在跳过该物品并记日志，其余聚晶照常可用。
+        int skipped = 0;
         for (Item item : ForgeRegistries.ITEMS) {
-            if (item instanceof IFocus focus && focus.getSpell() != null) {
-                ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
-                if (id != null) {
-                    // 【第二十六轮】跳过配置黑名单中的聚晶（需要玩家来源/会崩溃的）
-                    if (isBlacklisted(id.toString())) {
-                        GoetyTuner.LOGGER.info("[Tuner] Skipping blacklisted focus: {}", id);
-                        continue;
+            try {
+                if (item instanceof IFocus focus && focus.getSpell() != null) {
+                    ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
+                    if (id != null) {
+                        // 【第二十六轮】跳过配置黑名单中的聚晶（需要玩家来源/会崩溃的）
+                        if (isBlacklisted(id.toString())) {
+                            GoetyTuner.LOGGER.info("[Tuner] Skipping blacklisted focus: {}", id);
+                            continue;
+                        }
+                        ALL_ENTRIES.add(new FocusEntry(id, focus));
                     }
-                    ALL_ENTRIES.add(new FocusEntry(id, focus));
                 }
+            } catch (Throwable t) {
+                skipped++;
+                GoetyTuner.LOGGER.error("[Tuner] Skipping focus item {} — scan threw {}",
+                        ForgeRegistries.ITEMS.getKey(item), t.toString());
             }
+        }
+        if (skipped > 0) {
+            GoetyTuner.LOGGER.warn("[Tuner] {} focus item(s) skipped during scan (broken addon implementations)", skipped);
         }
 
         // 应用静态分类与评分（配置文件缺失则生成默认示例）
         classification = FocusClassificationConfig.load();
-        classification.applyTo(ALL_ENTRIES);
+        try {
+            classification.applyTo(ALL_ENTRIES);
+        } catch (Throwable t) {
+            // 分类阶段异常（第三方法术类在 instanceof ISummonSpell / 描述解析时抛错）
+            // 不应让整个池子建不起来：保留默认分类继续
+            GoetyTuner.LOGGER.error("[Tuner] Focus classification failed; keeping default categories", t);
+        }
         for (FocusEntry e : ALL_ENTRIES) {
-            STATIC_POOLS.get(e.getCategory()).add(e);
+            List<FocusEntry> bucket = STATIC_POOLS.get(e.getCategory());
+            if (bucket != null) {
+                bucket.add(e);
+            }
         }
 
         initialized = true;
@@ -216,9 +239,19 @@ public class FocusPoolManager {
         pools.get(entry.getCategory()).remove(entry);
     }
 
-    /** 【2026-08-18 第十三轮】归还功能池（无冷却）：施法被打断时调用 */
+    /**
+     * 【2026-08-18 第十三轮】归还功能池（无冷却）：施法被打断时调用。
+     * 【0.0.7】改为**幂等**：只在池中确实不存在该条目时才放回，
+     * 避免"施法在多个阶段失败"时被重复归还、导致同一聚晶在池里出现多份（抽取权重被人为放大）。
+     */
     public void returnEntry(FocusEntry entry) {
-        pools.get(entry.getCategory()).add(entry);
+        if (entry == null) {
+            return;
+        }
+        List<FocusEntry> pool = pools.get(entry.getCategory());
+        if (pool != null && !pool.contains(entry)) {
+            pool.add(entry);
+        }
     }
 
     // ---- 抽取（轮盘赌） ----

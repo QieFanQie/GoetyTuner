@@ -20,6 +20,7 @@ import com.tiaolvshi.goetytuner.entity.ai.CastChannel;
 import com.tiaolvshi.goetytuner.focus.FocusCategory;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
 import com.tiaolvshi.goetytuner.network.SMusicSyncPacket;
+import com.tiaolvshi.goetytuner.network.SEntityRevivePacket;
 import com.tiaolvshi.goetytuner.network.TunerNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -304,44 +305,105 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      * {@code if (isDeadOrDying()) {清零移动输入} else if (isEffectiveAi()) { serverAiStep() }}——
      * 实体死亡后（血量≤0，死亡动画 20 tick 内）aiStep() 根本不再执行，
      * 原 applyLockHealth 里的死亡自愈分支在死亡期间永远无法触发（死代码）。
-     * 这里覆写 tick()：每 tick（含死亡动画期）最先检测死亡状态，锁血未耗尽即回弹到下一档地板，
-     * 使 deathTime 永远到不了 20（不会触发 remove），平时每 tick 都在检测。
+     * 这里覆写 tick()：每 tick（含死亡动画期）最先维护死亡状态。
      */
     @Override
     public void tick() {
-        if (!this.level().isClientSide && reviveIfDead()) {
-            // 本 tick 已从死亡状态回弹：super.tick() 将按正常存活实体走（血量>0、deathTime=0）
+        if (!this.level().isClientSide) {
+            maintainDeathState();
         }
         super.tick();
     }
 
     /**
-     * 死亡自愈判定（平时每 tick 检测）：锁血未耗尽（lockMark < maxMark-1，最后一档放行正常击杀）
-     * 且处于死亡状态（血量≤0 或死亡动画中）→ 回弹到下一档地板并触发一次锁血处理。
-     * 返回是否发生了回弹。由 {@link TunerCommonConfig#LOCK_DEATH_REVIVE} 控制总开关。
+     * 【0.0.7】死亡状态维护（每 tick，死亡动画期同样运行）。分两种情形：
+     *
+     * <p><b>情形 A —— 脏状态清理（本轮新增）</b>：血量已经 &gt; 0，但死亡动画还挂着
+     * （{@code deathTime > 0}）。实测由多种"特殊手段"造成，例如：
+     * 其它模组直接 {@code setHealth(0)}/{@code kill()}、被 {@code BYPASSES_INVULNERABILITY}
+     * 类伤害打空血量、外部复活/回血手段只补血未清动画，甚至本模组自己的锁血宽限期地板与
+     * 二阶段回血在死亡动画期间把血量拉回正数。
+     * 这种状态**不消耗锁血档位**（否则一次外部救活会白吃一档），只把动画状态重置干净，
+     * 并通知客户端（客户端那份 {@code deathTime} 不是同步数据，见 {@link SEntityRevivePacket}）。
+     *
+     * <p><b>情形 B —— 真的死了（血量 ≤ 0）</b>：锁血未耗尽则回弹到下一档地板（原第三十三轮逻辑）。
+     * 锁血耗尽（{@code lockMark >= maxMark-1}）时放行正常击杀。
      */
-    private boolean reviveIfDead() {
-        if (!TunerCommonConfig.LOCK_DEATH_REVIVE.get()) {
-            return false;
+    private void maintainDeathState() {
+        boolean dying = this.isDeadOrDying();
+        boolean inDeathAnimation = this.deathTime > 0;
+        if (!dying && !inDeathAnimation) {
+            return; // 状态正常
         }
-        if (!this.isDeadOrDying() && this.deathTime <= 0) {
-            return false; // 未处于死亡状态
+
+        // ---- 情形 A：血量 > 0 却仍在死亡动画 → 脏状态，只清动画、不吃档位 ----
+        if (!dying && this.getHealth() > 0.0F) {
+            this.resetDeathAnimation("stale death animation (health=" + this.getHealth() + " > 0)");
+            return;
+        }
+
+        // ---- 情形 B：真的死了，按锁血档位回弹 ----
+        if (!TunerCommonConfig.LOCK_DEATH_REVIVE.get()) {
+            return;
         }
         int interval = TunerCommonConfig.LOCK_HEALTH_INTERVAL.get();
         float maxHealth = TunerCommonConfig.BOSS_MAX_HEALTH.get();
         int maxMark = (int) (maxHealth / interval);
         if (lockMark >= maxMark - 1) {
-            return false; // 锁血耗尽，可被正常击杀
+            return; // 锁血耗尽，可被正常击杀
         }
         float reviveHp = Math.max(maxHealth - interval * (float) (lockMark + 1), 1.0F);
-        this.deathTime = 0;
         this.setHealth(reviveHp);
         lockMark++;
+        this.resetDeathAnimation("death-revive");
         GoetyTuner.LOGGER.info("[Tuner] Death-revive → {} HP (mark={}/{})", reviveHp, lockMark, maxMark);
         if (this.level() instanceof ServerLevel serverLevel) {
             onLockTriggered(serverLevel, reviveHp, maxMark, "Revived from death");
         }
-        return true;
+    }
+
+    /**
+     * 【0.0.7】把服务端与客户端的死亡/受伤动画状态一起清零。
+     *
+     * <p>必须三样都清（原因见 {@code ClientDeathAnimation}）：
+     * {@code deathTime}（倒下旋转）、{@code hurtTime}/{@code hurtDuration}（红色受伤叠加层）、
+     * 以及万一被置成 {@code Pose.DYING} 的姿态；随后把复位指令发给所有追踪者——
+     * 1.20.1 的 {@code deathTime} **不是同步数据**（全游戏只有 {@code LocalPlayer.resetPos} 会归零），
+     * 不通知客户端的话，服务端活了、客户端模型还躺着。
+     */
+    private void resetDeathAnimation(String reason) {
+        this.deathTime = 0;
+        this.hurtTime = 0;
+        this.hurtDuration = 0;
+        if (this.getPose() == Pose.DYING) {
+            this.setPose(Pose.STANDING);
+        }
+        if (this.level() instanceof ServerLevel) {
+            TunerNetwork.sendToTracking(new SEntityRevivePacket(this.getId()), this);
+        }
+        GoetyTuner.LOGGER.debug("[Tuner] Death animation reset ({})", reason);
+    }
+
+    /**
+     * 【0.0.7】拦住在"锁血未耗尽"时发生的 {@code remove(KILLED)}。
+     *
+     * <p>某些特殊手段会绕过 {@code hurt()} 直接把血量打到 0（{@code /kill} 的 genericKill、
+     * 其它模组的 {@code setHealth(0)}/{@code kill()}）。死亡动画跑满 20 tick 后原版会执行
+     * {@code remove(KILLED)}——**一旦移除就无法回弹**（实体已不在世界里，血量再高也没用）。
+     * 这里把这一次移除挡下，交给下一 tick 的 {@link #maintainDeathState()} 回弹。
+     *
+     * <p>此判断被合并在原有 {@code remove} 覆写里（那里还要注销 CombatEvents 注册），
+     * 只拦 {@code KILLED}：区块卸载（UNLOADED_*）、和平模式消失（DISCARDED）等一律放行；
+     * 锁血已耗尽或总开关关闭时也不再拦（正常击杀路径保持原样）。
+     */
+    private boolean canStillRevive() {
+        if (!TunerCommonConfig.LOCK_DEATH_REVIVE.get()) {
+            return false;
+        }
+        int interval = TunerCommonConfig.LOCK_HEALTH_INTERVAL.get();
+        float maxHealth = TunerCommonConfig.BOSS_MAX_HEALTH.get();
+        int maxMark = (int) (maxHealth / interval);
+        return lockMark < maxMark - 1;
     }
 
     @Override
@@ -1557,6 +1619,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public void remove(RemovalReason reason) {
+        // 【0.0.7】锁血未耗尽时挡住 KILLED 移除：死亡动画跑满 20 tick 后原版会 remove(KILLED)，
+        // 一旦移除就再也回弹不了（实体已不在世界里）。挡下这一次，由下一 tick 的
+        // maintainDeathState() 负责复活；锁血耗尽/总开关关闭时照常放行。
+        if (reason == RemovalReason.KILLED && !this.level().isClientSide && canStillRevive()) {
+            GoetyTuner.LOGGER.info(
+                    "[Tuner] Blocked KILLED removal — lock tiers remain (mark={}), will revive next tick", lockMark);
+            return;
+        }
         super.remove(reason);
         if (!this.level().isClientSide) {
             CombatEvents.unregisterBoss(this);
