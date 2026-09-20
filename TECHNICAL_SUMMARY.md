@@ -1,8 +1,8 @@
 # Goety Tuner（调律师）技术摘要
 
-> **0.0.11 修复**：修掉「每 tick 检测死亡状态」的真 bug —— `applyLockHealth()` 里那段与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（原注释误称其不可达），它击败了 `/kill` 后门（Boss 死后约 48 ms 带 18 血复活，管理员得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 而不复位客户端动画（「血量不为 0 但已是死亡动画」复发）。现已删除该分支、改为死亡时直接早退，死亡回弹的**唯一**实现是 `tick()` 里的 `maintainDeathState()`。本轮只改 2 个文件（`gradle.properties` 版本号 + `TunerBoss`），**无新增类/贴图/配置**（仍 61 项 / 10 段，`music` 12 项）。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.12 修复**：本轮三件事 —— 功能改动落在 3 个 Java 文件（`client/AccentWaveRenderer`、`client/MusicBarHud`、`entity/ai/CastChannel`），另 `entity/TunerBoss` **只动了一处方法 javadoc**（无行为变化），加版本号；**无新增类/贴图/配置项**（仍 61 项 / 10 段，`music` 12 项；`.java` 文件数仍 45；jar 条目 101 → 102，多出 `AccentWaveRenderer$Wave` 内部类）。① **径向声波涟漪锚定在触发瞬间的坐标**：原实现只存 `startTick`、渲染时每帧读 Boss 当前位置 ⇒ 涟漪**跟着 Boss 跑**；而调律师**每次锁血都会强制瞬移**（`onLockTriggered` → `tryTeleportNear`），跟着跑会让「由内向外荡开的声波」被拖着走，观感完全不对。现触发时记录脚下世界坐标（新增私有 `record Wave(long startTick, double x, double y, double z)`），整条波在这个固定点上播完；清理**只按时间**（`DURATION = 34 tick`），**不再**因为 Boss 死亡/被移除/离开视野就提前掐掉波（波已与实体无关，应当播完）。② **音乐条 HUD 外观重做**（用户反馈「太突兀」，四项一起改）：`260×6` → **`204×8`**（底距 64 → 62）、硬边纯色块 → **逐行混色**渐变 + 2px 半透明过渡缝、单一硬矩形底 → **三层柔和投影**（最外层四角留空模拟圆角）、阶段**文字** → **像素符号**（`● ● ●`/`●`/`- - - - - -`），刻度与闪烁一并调淡。③ **`CastChannel` 回调成对性修复**（此前本文档 §七 记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别位掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 兜底补发 `onCastFailed`。详见 §3.13。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> 版本：0.0.11 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~49 轮
+> 版本：0.0.12 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~50 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -18,7 +18,7 @@
 | 依赖 mod | goety 2.5.56.5、patchouli、curios-forge、configured（均为 dev 坐标式依赖） |
 | 作者 | toniat0, vibe-coding（https://github.com/QieFanQie/） |
 | 协议 | MIT |
-| 源码规模 | 45 个 Java 源文件（约 360 KB / 368,475 B），包根 `com.tiaolvshi.goetytuner` |
+| 源码规模 | 45 个 Java 源文件（约 369 KB / 377,926 B），包根 `com.tiaolvshi.goetytuner` |
 
 **定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss **主手常驻一把实体法杖**
 `goety:dark_wand`（`TunerBoss` 构造函数 `setItemInHand(MAIN_HAND, ModItems.DARK_WAND)`；
@@ -42,7 +42,7 @@ com.tiaolvshi.goetytuner
 │   ├── ModEvents.java               # 实体加入拦截 / 掉落 / 召唤物归属等
 │   └── ModBusEvents.java            # MOD 总线：属性、图层、屏幕
 ├── entity/
-│   ├── TunerBoss.java               # Boss 主体（1998 行核心类：AI 状态机 / 阶段 / 战斗数值）
+│   ├── TunerBoss.java               # Boss 主体（2001 行核心类：AI 状态机 / 阶段 / 战斗数值）
 │   ├── BossPhase.java               # 三阶段枚举（铺垫/高潮/低谷）
 │   ├── MusicController.java         # 服务端乐谱推进 / 阶段转换 / 重音触发
 │   └── ai/CastChannel.java          # 施法通道（前摇/高潮并行通道/瞬发）
@@ -61,13 +61,13 @@ com.tiaolvshi.goetytuner
 ├── client/
 │   ├── BossMusicManager.java        # 客户端循环音乐实例（FORGE 总线）
 │   ├── MusicStateClient.java        # 音乐进度本地平滑推进（×speed）
-│   ├── MusicBarHud.java             # 音乐条 HUD（分段色块/重音刻度/指针）
+│   ├── MusicBarHud.java             # 音乐条 HUD 204×8（逐行混色分段 + 2px 过渡缝 / 三层柔和投影 / 重音刻度 / 指针 / 像素阶段符号）
 │   ├── ClientCameraShake.java       # 重音镜头震动
 │   ├── TunerConfigScreen.java       # Configured 配置屏入口（多行提示词框，预填标准模板）
 │   ├── TunerToast.java              # 客户端 Toast（LLM 评分/命令结果提示）
 │   ├── ClientSetup.java             # 图层定义注册 / 渲染器绑定
 │   ├── ClientDeathAnimation.java    # 客户端死亡动画复位（deathTime/hurtTime/姿态，由 SEntityRevivePacket 触发）
-│   ├── AccentWaveRenderer.java      # 世界空间声波涟漪渲染（0.0.10 新增，AFTER_PARTICLES）
+│   ├── AccentWaveRenderer.java      # 世界空间声波涟漪渲染（0.0.10 新增，AFTER_PARTICLES；0.0.12 起锚定触发瞬间坐标、只按时间清理）
 │   └── render/                      # TunerRenderer/TunerModel/TunerCape*/TunerOrb*（悬浮立方体层，0.0.10）
 ├── network/
 │   ├── TunerNetwork.java            # 通道注册（id 0/1/2/3，协议 2.0 严格匹配）
@@ -172,9 +172,11 @@ TunerBoss.aiStep ─┐
 - **速度化时间轴**：`MusicController.progressF` 浮点推进 ×=pitch（getSpeed）；
   speed 随 SMusicSyncPacket 下发，客户端 `smoothed()` 本地推进 ×speed；
   跨多 tick 时 `crossedAccent` 逐 tick 查重音（Set，含翻页回绕两段检查）。
-- **HUD**：260×6 音乐条，分段配色（铺垫蓝 0xFF5B9BE0 / 高潮橙 0xFFF26A4B / 低谷紫 0xFFB068E8）；
-  指针与二阶段判定线 5px；重音刻度分阶段样式（铺垫细线 / 高潮「中」字 / 低谷加粗）；
-  本地越线检测触发亮黄描边闪烁 8 帧渐隐（免额外网络包）。
+- **HUD**（0.0.12 外观重做，见 §3.13(2)）：**204×8** 音乐条（底距屏幕底 62），分段配色（铺垫蓝 0xFF5B9BE0 / 高潮橙 0xFFF26A4B / 低谷紫 0xFFB068E8）
+  改为**逐行混色**渐变（上半向白提亮、下半向黑压暗）+ 分段交界 2px 半透明过渡缝，底色为**三层由外向内渐深的柔和投影**（最外层四角留空模拟圆角）；
+  指针与二阶段判定线 5px；重音刻度分阶段样式（铺垫细线 / 高潮「中」字 / 低谷加粗，改半透明白 `0xB8FFFFFF`）；
+  阶段提示改为**像素符号** `● ● ●`（高潮）/ `●`（铺垫）/ `- - - - - -`（低谷）——本客户端字体无 U+26AA 字形，故不用 `⚪` 字符；
+  本地越线检测触发亮黄描边闪烁 8 帧渐隐（峰值 alpha 0xC0 → 0x88，免额外网络包）。
 - **重音特效**（服务端 onAccent）：非对称径向声波涟漪（0.0.10 起默认开启 `accentWave=true`，
   参数与渲染实证见 §3.12） + 原版紫水晶音（阶段差异化音调 0.9/1.4/0.6）；旧的 END_ROD 冲击环 +
   NOTE 音符粒子默认关闭（`accentParticles=false`，键保留作手动兼容选项）；二阶段进场连发 6 次
@@ -208,7 +210,7 @@ TunerBoss.aiStep ─┐
   SEntityRevivePacket（id 2，0.0.8）、SAccentWavePacket（id 3，0.0.10，声波涟漪触发，
   注册时显式限 `PLAY_TO_CLIENT`）。**0.0.10 起网络协议版本由 `"1.0"` 提升为 `"2.0"`，且从宽松匹配
   改为严格匹配**（注册处写 `"2.0"::equals`）——因为本轮新增了实体同步字段（施法分类位掩码，见 §3.12）
-  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10 及以上版本**（协议号 `2.0` 在 0.0.11 未再变动），否则协议不匹配、连接被拒。
+  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10 及以上版本**（协议号 `2.0` 自 0.0.10 起未再变动，0.0.11 / 0.0.12 均为 `2.0`），否则协议不匹配、连接被拒。
   0.0.5 起 `SMusicSyncPacket` 改为**先检测 128 格内有无玩家，无人接收时不构造、不发送**
   （原先先构造包体——`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组——再判断；
   Boss 设了 `setPersistenceRequired`，附近无玩家时仍会空跑）。
@@ -598,9 +600,10 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 即 **`add`/`remove` 真的成功了才动计数**（首次加入才算开始、真正移除才算结束），
 失败的重复回调直接返回。用**身份**而非 `equals`，是因为池的锁池/归还可能出现等价副本，
 只有对象身份才对应「这一次施法实例」。
-> ⚠️ 它**只解决"重复递减"，不解决"缺失递减"**：若某次施法 start 之后 finish/interrupted/failed **一个都没来**
-> （见 §七 的 `CastChannel` 回调不平衡边界），该分类计数会卡在 > 0、立方体一直高亮。
-> 根治需要让 `CastChannel` 保证回调严格成对。
+> ✅ **0.0.12 已修**：原先那条「某次施法 start 之后 finish/interrupted/failed **一个都没来**」的路径
+> （`CastChannel.startCast` 里 `logCast` 排在 `onCastStart` 之后并抛异常 → 逃逸到 `beginCast` 的兜底 `catch`，
+> 而该 `catch` 不补发结束回调）**已消除**：`logCast` 提到 `onCastStart` 之前 + `startEmitted` 兜底补发 `onCastFailed`，
+> 见 §3.13(3)。身份集合幂等仍是必要的第二层保护——它挡的是「重复递减」，与「缺失递减」互补，两者都需要。
 
 **（3）两条渲染实证（省掉不必要的代码）**
 
@@ -615,16 +618,88 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 
 - 触发链：`TunerBoss.accentKnockbackPulse()` 在 `music.accentWave` 开关下
   `sendToTracking(new SAccentWavePacket(id))`（**通道 id 3**，限 `PLAY_TO_CLIENT`）→ 客户端
-  `AccentWaveRenderer.trigger()` 记下「实体 id → 起始 gameTime」→ 渲染钩子
+  `AccentWaveRenderer.trigger()` 记下「实体 id → (起始 gameTime, **触发瞬间的脚下坐标**)」（0.0.12 起带坐标）→ 渲染钩子
   `RenderLevelStageEvent.Stage.AFTER_PARTICLES` 逐环画环。**网络里没有任何顶点/几何数据**。
 - 参数：**10 环 × 32 角分段**，半径 0.6~6.0 格（间距 0.6），相邻环延迟 **2 tick**，每环升 8 / 落 8 tick
   （`LIFE=16`），总时长 **34 tick**（`(RINGS-1)*DELAY+LIFE`）；淡白半透明（顶部 alpha 峰值 0.32，
   底部取顶部的 0.35 倍）。
 - 高度函数 `h = 0.56*sin(πp)*(1 + sin(3θ + 0.10t − 0.28i)*a)`，**峰侧 a=0.40、谷侧 a=0.27**（非对称，
   两侧不等高）；地面偏移 0.01 ⇒ 绝对最高 **0.794 格**（设计要求 ≤0.8 格）。
-- 生命周期：每次重音**覆盖同实体旧波、不叠加**；实体死亡/移除/换世界或超时都会清理；
-  **无活跃波时渲染器立即返回、不扫描世界实体**（活跃表是有界 `Map<实体id, 起始tick>`，
-  自然支持多个调律师同时播放且互不干扰）。
+- 生命周期：每次重音**覆盖同实体旧波、不叠加**；**无活跃波时渲染器立即返回、不扫描世界实体**
+  （活跃表是有界 `Map<实体id, 起始tick>`，自然支持多个调律师同时播放且互不干扰）。
+  ⚠️ **0.0.12 起这两条变了**：活跃表的 value 改为「起始 tick + **触发瞬间的脚下世界坐标**」，渲染锚点固定、
+  **不再读 Boss 当前位置**；清理也**只按时间**（`DURATION = 34 tick`），不再因实体死亡/移除/换世界提前掐掉 —— 见 §3.13(1)。
+
+### 3.13 0.0.12：涟漪锚定 / 音乐条外观重做 / `CastChannel` 回调成对性
+
+本轮是**表现层重做 + 一个回调成对性修复**，不改战斗数值与施法流程（回调顺序除外）。改动文件与实测行数：
+`client/AccentWaveRenderer.java`（**124 行**）、`client/MusicBarHud.java`（**453 行**）、`entity/ai/CastChannel.java`（**408 行**），
+外加 `entity/TunerBoss.java`（**2001 行**，比 0.0.11 的 1998 行多 3 行）**仅一处方法 javadoc**（见 (4)）。
+**无新增类/贴图/配置项**；`.java` 文件数仍 **45**，配置仍 **61 项 / 10 段**（`music` 12 项）；jar 条目 **101 → 102**
+（多出 `AccentWaveRenderer$Wave` 内部类）。
+
+**（1）声波涟漪锚定在触发瞬间的坐标（为什么必须锚定）**
+
+- 原实现（0.0.10）只存 `startTick`，渲染时**每帧去读 Boss 当前位置** ⇒ 涟漪**跟着 Boss 跑**；
+  而调律师**每次锁血触发都会强制瞬移**（`onLockTriggered` → `tryTeleportNear`），
+  跟着跑会让「由内向外荡开的声波」被实体拖着走，观感完全不对。
+- 现改为触发时记录**脚下的世界坐标**（取 `boss.getX()/getY()/getZ()`），新增私有
+  `record Wave(long startTick, double x, double y, double z)` 作为活跃表的 value；整条波在这个固定点上播完。
+- **清理只按时间**：`ACTIVE.entrySet().removeIf(e -> now - e.getValue().startTick() >= DURATION)`，
+  `DURATION = (RINGS-1)*DELAY + LIFE = 34 tick`。**不再**因为 Boss 死亡 / 被移除 / 离开视野就提前掐掉波
+  ——波已与实体无关，应当播完（否则 Boss 一死，波就凭空消失）。
+- 渲染锚点写法 `worldPos − cameraPos`（`pose.translate(wave.x()-camera.x, …)`）与 Goety 本体
+  `PrismaBeamRenderer` 一致。
+- 波本身仍不读实体、不发网络包（几何在客户端解析式生成）；改动只是把「参考原点」从实体换成固定坐标，
+  **网络里依旧没有任何顶点/几何数据**（见 §3.12(4)）。
+
+**（2）音乐条 HUD 外观重做（用户反馈「太突兀」，四项一起改）**
+
+| 项 | 0.0.11 及以前 | 0.0.12 |
+|---|---|---|
+| 尺寸 | `260×6`（又长又薄） | **`204×8`**（改短加厚；底距 64 → **62**） |
+| 分段填充 | 硬边纯色块 | **逐行混色**（`fillSegment`：上半向白提亮、下半向黑压暗）+ 交界 **2px 半透明过渡缝**（`drawSeam`） |
+| 边框 | 单一硬矩形底 `0xAA000000` | **三层由外向内渐深的柔和投影**（`drawSoftBackdrop`），最外层**四角留空**以模拟圆角 |
+| 阶段提示 | 条上方画「铺垫/高潮/低谷」**文字** | **像素绘制**（`drawPhaseIndicator` + `drawDot`）：`● ● ●`（高潮）/ `●`（铺垫）/ `- - - - - -`（低谷） |
+| 重音刻度 / 闪烁 | 纯白 `0xFFFFFFFF` / 峰值 `0xC0` | 半透明白 `0xB8FFFFFF` / 峰值 `0x88` |
+
+- **为什么阶段提示不用 `⚪` 字符（实测结论）**：本客户端字体只有拉丁/希腊/西里尔等**位图字形**
+  （`include/unifont.json` 的 providers 是**空数组**、jar 内**无任何 ttf**、也无 unicode 字形页；
+  `options.txt` 只启用 `vanilla` + `mod_resources`，mods 里也没有任何 jar 提供字形页）
+  ⇒ **U+26AA 没有字形，直接写会显示成空白方块**。像素画必定可见，且更符合「隐晦」的要求。
+- **副作用**：lang 里 `info.goetytuner.music.buildup / .climax / .valley` 三个键**当前已无任何代码引用**
+  （保留未删，注释已说明：它们是三个阶段的地道中/英名称，将来若要改回文字提示可直接复用）。
+- 8px 高度适配：高潮的「中」字样式方框改为**上下各留 2px**（`y+2 … y+BAR_HEIGHT-2`），
+  否则在 8px 条高上会被压成一根线。
+- **一阶段的分段内容按条宽做了 scissor 裁剪**：分段像素宽由浮点换算取整而来，总和可能比 `BAR_WIDTH` 多 1~2px，
+  不裁剪会溢出到右侧边框上（1px 缝）⇒ 画分段前 `enableScissor(x, y, x+BAR_WIDTH, y+BAR_HEIGHT)`、画完解除，
+  **再画指针**（指针要上下探出条外，不能被裁）。二阶段条带本来就有 scissor 裁剪，不受影响。
+
+**（3）`CastChannel` 回调成对性修复（消除「立方体永久高亮 / 蹲姿卡住」）**
+
+- **根因**：`startCast` 尾部原本是
+  `callback.onCastStart(entry); BossWandHelper.logCast(level, boss, entry); return true;`
+  ——`logCast` 排在 `onCastStart` **之后**且**会抛异常**（它要调第三方/IO）；异常逃逸到 `beginCast` 的兜底 `catch`，
+  而该 `catch` **不补发结束回调** ⇒ `onCastStart` 成为**孤儿回调**：
+  `TunerBoss` 的施法状态计数（`DATA_CAST_STATE`，驱动的施法蹲姿）与 0.0.10 新增的**立方体类别位掩码**
+  会**永久 > 0** ⇒ 对应立方体一直高亮、蹲姿卡住；
+  又因 `TunerBoss` 用 `FocusEntry` **身份集合**（`IdentityHashMap`）做幂等去重，该聚晶之后**再也无法计入**，
+  状态**无法自愈**（这正是 §3.12(2) 注里「只解决重复递减、不解决缺失递减」那条的具体触发路径）。
+- **修复（两道防线）**：
+  ① **把 `logCast` 调到 `onCastStart` 之前**，使 `onCastStart` 成为 `return` 前**最后一步**——**结构上不可能**
+     再被后续代码打断；
+  ② 新增 `startEmitted` 标志（`beginCast` 开头重置为 false、在 `onCastStart` 之后置 true），
+     在 `beginCast` 的兜底 `catch` 里检测「已发过 start 却异常逃逸」时**补发一次 `onCastFailed`**让计数平衡
+     （补发调用自身也 try-catch 包裹）——这是防将来有人在 `onCastStart` 之后加代码的**第二道保险**。
+- 与 0.0.4 那次修复（`startSpell` 异常路径**不得**误调 `onCastFailed`，因为那时 `onCastStart` 还没发出去）方向相反、
+  互不冲突：判断依据始终是「**`onCastStart` 到底发出去没有**」。
+
+**（4）顺手修正 `applyLockHealth()` 的方法 javadoc（仅注释）**
+
+- 该 javadoc 此前仍在描述 **0.0.11 已删除**的「死亡状态自愈 / 复活到下一档地板」行为，与同方法内的新注释自相矛盾
+  （由上一轮的文档同步复核指出）。现改为明确写：**本方法只负责"活着时的锁血地板与宽限期"，不做任何死亡回弹**；
+  死亡回弹的**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`。
+- **无行为变化**（纯 javadoc），`TunerBoss.java` 因而从 1998 行变为 2001 行。§3.11 的死亡逻辑本轮**未再改动**。
 
 ---
 
@@ -665,13 +740,13 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10→0.0.11`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10→0.0.11→0.0.12`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~49 轮浓缩）
+## 五、版本演进时间线（第 1~50 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -707,6 +782,7 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 | v0.0.9 | 47 | 为 /kill 打开后门：识别 DamageTypes.GENERIC_KILL 后跳过宽限期免疫/致死截断/死亡回弹/remove 拦截（字节码实证调用链 KillCommand→Entity.kill()→LivingEntity.kill()→hurt(genericKill, MAX_VALUE)） |
 | v0.0.10 | 48 | 美术交付：身体贴图按参考图重画（头部区逐像素不变）+ 8 阶色带披风 + 红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）+ 非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）+ 刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；网络协议 1.0→**2.0 严格匹配**，联机需双方同版本 |
 | v0.0.11 | 49 | 修「每 tick 检测死亡状态」的真 bug：`applyLockHealth()` 里与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（反编译实证 `LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用、`tickDeath()` 由 `baseTick()` 把关；原注释把它与 `serverAiStep()` 混为一谈），它击败 `/kill` 后门（日志：`/kill` 后 48 ms 带 18 血复活）、白吃一档锁血、且不复位客户端死亡动画 ⇒ 已删除该分支并改为死亡时早退，死亡回弹唯一实现为 `tick()`/`maintainDeathState()`。只改版本号 + `TunerBoss`，无新增类/贴图/配置 |
+| v0.0.12 | 50 | ① **径向声波涟漪锚定触发瞬间的坐标**（`AccentWaveRenderer` 新增私有 `record Wave(startTick,x,y,z)`；原实现每帧读 Boss 当前位置 ⇒ 涟漪跟着 Boss 跑，而锁血会强制瞬移；清理改为**只按 34 tick 计时**，不再因实体死亡/移除/视野外提前掐掉）。② **音乐条 HUD 外观重做**（`MusicBarHud`：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示空白方块）、刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡；一阶段分段内容按条宽做 scissor 裁剪防溢出）。③ **`CastChannel` 回调成对性修复**（`logCast` 提到 `onCastStart` 之前 + `startEmitted` 兜底补发 `onCastFailed`，消除「立方体永久高亮 / 蹲姿卡住」隐患）。另修 `applyLockHealth()` 的 javadoc（仍在描述 0.0.11 已删行为，纯注释）。无新增类/贴图/配置项 |
 
 ---
 
@@ -732,7 +808,10 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
-| 0.0.11 | `goetytuner-0.0.11.jar` | 1,750,088 B | `14B6ABD6EDE84786ED125DB6B10EB8D1` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar；旧 0.0.10 已删） |
+| 0.0.12 | `goetytuner-0.0.12.jar` | 1,752,068 B | `66F14DFD926A068AA3284360976B78BB` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar；旧 0.0.11 已删） |
+
+> 本轮（0.0.12）jar 内共 **102 条目**（比 0.0.11 的 101 多出 `AccentWaveRenderer$Wave` 内部类）；
+> 构建在主副本就地 `gradlew build` 成功（45 s，仍只有原有 3 条 Forge 弃用警告）。
 
 > 部署前务必确认**没有 java 进程在运行**（jar 被占用会导致替换静默失败）；
 > 部署后需**重启游戏**才会加载新 jar。
@@ -741,6 +820,11 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 > Forge 会把构建时刻写进 `META-INF/MANIFEST.MF` 的 `Implementation-Timestamp`，因此**源码一字不改地重建，md5 也会变**。
 > 曾实测：改 5 处**注释文字**（行数不变）后重建，jar 大小 1,737,090 → 1,737,089 B、md5 全变；
 > 但逐条目比对 97 个条目，**除 `MANIFEST.MF`（仅时间戳不同）外 96 个条目字节完全一致**（含 `TunerBoss.class` 的 sha256）。
+> **0.0.12 又复现一次，而且更直白——本轮连构三次、三个 md5**：
+> `5A63F73F13C102AAD9249F8B49A9763A`（1,752,059 B）→ `148F359EFD69102FC87971D1B9249270`（1,752,059 B）
+> → `66F14DFD926A068AA3284360976B78BB`（1,752,068 B）；
+> **前两次源码完全相同、连 jar 大小都一模一样，md5 却不同**（只有 `MANIFEST.MF` 的时间戳变了）；
+> 第三次确实又改了一处 HUD 裁剪（一阶段分段加 scissor），故大小也变了。
 > 要判断"部署的 jar 是否对应当前源码"，应比对**条目内容**（或 `Implementation-Version`），而非整体 md5。
 
 工具脚本（scripts/）：`clear_refmaps.py`（清 refmap）、`replace_mixin_classes.py`
@@ -764,12 +848,16 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    透明声波与地形/水面/着色器的交互、原版刷怪蛋并排观感，均**尚未进游戏实测**——
    离线脚本只证明了尺寸/参数/逐像素一致与代码编译通过，不能替代画面验收
    （详见 `ART_ASSETS_REPORT.md`「验证与待验收」）。
-   另**发现但未改动**的既有边界（0.0.10 轮发现，0.0.11 轮同样未触碰施法流程，故保留现状）：`CastChannel` 在开始回调之后仍有日志调用，
-   异常路径下外层兜底的回调可能不配平。
+   ✅ **0.0.12 新增同期待验收项**：音乐条新外观（204×8 / 逐行混色 / 三层柔和投影 / 像素阶段符号）
+   与**涟漪锚定触发点坐标**的观感同样**未进游戏画面验收**（本轮只做到编译通过 + `javap` 字节码核对）。
+   ~~另**发现但未改动**的既有边界（0.0.10 轮发现，0.0.11 轮同样未触碰施法流程，故保留现状）：`CastChannel` 在开始回调之后仍有日志调用，
+   异常路径下外层兜底的回调可能不配平。~~
+   ⇒ **本条已于 0.0.12 修复**：`BossWandHelper.logCast` 移到 `onCastStart` **之前**（使其成为 `return` 前最后一步），
+   并在 `beginCast` 的兜底 `catch` 里用 `startEmitted` 标志补发 `onCastFailed` 让计数平衡，详见 §3.13(3)。
 
-### 已知缺陷与待办（0.0.11 时点）
+### 已知缺陷与待办（0.0.12 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.11** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.12** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。

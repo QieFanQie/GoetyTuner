@@ -43,6 +43,11 @@
   - **配置迁移已执行**：游玩实例 toml 由 `accentParticles=true` 改为 `false` 并新增 `accentWave=true`
     （`accentParticles` 是**已存在键**，Forge 不会用新默认值回填，不改会导致新旧特效同现；备份 `.bak-before-0.0.10-migration`）。
 - **尚未进行游戏画面验收**：披风摆动、三颗立方体轨道与夜间高亮、高潮多通道实战、透明波与地形/水面/着色器交互、原版蛋并排效果需进入游戏验证。离线验证不能替代这些实测。
-- 发现但未修改的既有边界：`CastChannel` 的开始回调之后仍有日志调用，异常时外层兜底不平衡回调；实际第三方法术错误大多发生在开始回调前。本轮没有改动施法流程。
+- 发现但未修改的既有边界：`CastChannel` 的开始回调之后仍有日志调用，异常时外层兜底不平衡回调；实际第三方法术错误大多发生在开始回调前。本轮（0.0.10）没有改动施法流程。
+  > **后续状态（0.0.12 补记）**：该边界**已修**——把 `BossWandHelper.logCast(...)` 调到 `callback.onCastStart(entry)` **之前**，
+  > 使 `onCastStart` 成为 `return` 前最后一步（结构上不可能再被后续代码打断）；并新增 `startEmitted` 标志，
+  > 由 `beginCast` 的兜底 `catch` 在"已发过 start 却异常逃逸"时**补发 `onCastFailed`** 让计数平衡。
+  > 起因是 0.0.10 新增的立方体类别位掩码会因此**永久 > 0**（立方体一直高亮），且身份集合幂等会让该聚晶之后再也无法计入。
+  > 详见 `TECHNICAL_SUMMARY.md` §3.13(3)。
 
 游戏验收：`/summon goetytuner:tuner`、`/give @p goetytuner:tuner_spawn_egg`。分别观察闲置、单通道、高潮并行与中断；从正背/侧/仰角观察披风；旧配置若未迁移，手动设置 accentWave=true、accentParticles=false 后重启。
