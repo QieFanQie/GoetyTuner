@@ -15,8 +15,8 @@ import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Bounded active-event list; never scans the world's entities. */
 @Mod.EventBusSubscriber(modid = GoetyTuner.MOD_ID, value = Dist.CLIENT)
@@ -38,7 +38,19 @@ public final class AccentWaveRenderer {
     private record Wave(long startTick, double x, double y, double z) {
     }
 
-    private static final Map<Integer, Wave> ACTIVE = new HashMap<>();
+    /**
+     * 【0.0.13】活跃涟漪**列表**（同一实体可同时存在多条）。
+     *
+     * <p>0.0.12 用 `Map<entityId, Wave>` 存，语义是"同一实体重复触发就**覆盖**旧的"。
+     * 但二阶段进场的**重音连发**（每 5 tick 一发、连发多次）会让后一发**顶掉**前一发，
+     * 玩家只看到一条波反复重播，而不是"一波接一波荡开"。
+     * 改为列表后每发各成一条波、各自计时，连发会呈现层叠外扩的观感。
+     * 数量天然有界：单发波活 34 tick、触发最快 5 tick 一次 ⇒ 同时最多 ~7 条；
+     * 另加 {@link #MAX_WAVES} 硬上限兜底，超了丢最旧的，避免任何极端情形下无限增长。
+     */
+    private static final List<Wave> ACTIVE = new ArrayList<>();
+    /** 并发波数的硬上限（防御性；正常连发远达不到）。 */
+    private static final int MAX_WAVES = 32;
     private static ClientLevel activeLevel;
 
     private static void checkLevel(ClientLevel level) {
@@ -52,8 +64,11 @@ public final class AccentWaveRenderer {
         ClientLevel level = Minecraft.getInstance().level;
         checkLevel(level);
         if (level != null && level.getEntity(entityId) instanceof TunerBoss boss) {
-            // Retrigger replaces, never stacks. 坐标取"触发瞬间"的脚下位置（实体位置=脚底）。
-            ACTIVE.put(entityId, new Wave(level.getGameTime(), boss.getX(), boss.getY(), boss.getZ()));
+            // 每发各成一条波（不再覆盖旧的）。坐标取"触发瞬间"的脚下位置（实体位置=脚底）。
+            if (ACTIVE.size() >= MAX_WAVES) {
+                ACTIVE.remove(0);
+            }
+            ACTIVE.add(new Wave(level.getGameTime(), boss.getX(), boss.getY(), boss.getZ()));
         }
     }
 
@@ -66,7 +81,7 @@ public final class AccentWaveRenderer {
         // 【0.0.12】只按时间清理。**不再**因为 Boss 死亡/被移除/离开视野就掐掉涟漪：
         // 波已经锚定在固定坐标上，与实体无关，应当把 34 tick 播完（否则 Boss 一死波就凭空消失）。
         long now = level.getGameTime();
-        ACTIVE.entrySet().removeIf(entry -> now - entry.getValue().startTick() >= DURATION);
+        ACTIVE.removeIf(wave -> now - wave.startTick() >= DURATION);
     }
 
     @SubscribeEvent
@@ -81,8 +96,7 @@ public final class AccentWaveRenderer {
         var camera = event.getCamera().getPosition();
         float partial = event.getPartialTick();
         long now = mc.level.getGameTime();
-        for (var entry : ACTIVE.entrySet()) {
-            Wave wave = entry.getValue();
+        for (Wave wave : ACTIVE) {
             float elapsed = now - wave.startTick() + partial;
             if (elapsed < 0 || elapsed >= DURATION) continue;
             pose.pushPose();

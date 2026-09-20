@@ -704,14 +704,33 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     private void tickValley(ServerLevel level) {
         this.getNavigation().stop();
         // boss：侵蚀12 + 黑暗
-        this.addEffect(new MobEffectInstance(GoetyEffects.SAPPED.get(), 30, 11, true, false));
-        this.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 30, 0, true, false));
+        // 【0.0.13】注意：这两个效果原本就是 `visible=false`（无粒子），所以玩家**看不出**它们生效——
+        // 机制上确实每 tick 都在刷新（常驻），只是没有任何视觉反馈。见 applySelfEffect 的日志。
+        applySelfEffect(new MobEffectInstance(GoetyEffects.SAPPED.get(), 30, 11, true, false));
+        applySelfEffect(new MobEffectInstance(MobEffects.DARKNESS, 30, 0, true, false));
         // 仆从：生命恢复1、伤害吸收1、缓慢3、虚弱2
         for (Mob minion : ownedMinions(level)) {
             minion.addEffect(new MobEffectInstance(MobEffects.REGENERATION, 30, 0, true, false));
             minion.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 30, 0, true, false));
             minion.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 30, 2, true, false));
             minion.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 30, 1, true, false));
+        }
+    }
+
+    /**
+     * 【0.0.13】给**自身**施加药水效果，并在被拒绝时打 WARN。
+     *
+     * <p>起因：审计「药水效果是否真的在生效」时发现，全类 8 处 {@code addEffect(...)} 的
+     * **boolean 返回值都被丢弃**——而 `LivingEntity.addEffect` 的第一步就是 {@link #canBeAffected}
+     * （本类覆写它来拒绝 SummonDown），Forge 的 `MobEffectEvent.Applicable` 也会在这一步否掉。
+     * 一旦被拒，效果**静默失效**、日志里一个字都没有 ⇒ 只能进游戏靠肉眼猜。
+     * 现在失败会留下 `[Tuner] addEffect rejected: ...` 痕迹，一次实测即可判定。
+     */
+    private void applySelfEffect(MobEffectInstance inst) {
+        if (!this.addEffect(inst)) {
+            GoetyTuner.LOGGER.warn("[Tuner] addEffect rejected: {} amp={} (被 canBeAffected / MobEffectEvent.Applicable 拦下)",
+                    net.minecraft.core.registries.BuiltInRegistries.MOB_EFFECT.getKey(inst.getEffect()),
+                    inst.getAmplifier());
         }
     }
 
@@ -1599,8 +1618,8 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
                 : TunerCommonConfig.PHASE2_STRENGTH_LEVEL_LOW.get();
         int rallyAmp = (highTier ? 8 : 5) - 1;  // 重振：档位<10→等级5(amp4)；≥10→等级8(amp7)
         int duration = 60; // 3秒
-        this.addEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, duration, strengthLevel - 1, false, true, true));
-        this.addEffect(new MobEffectInstance(GoetyEffects.RALLYING.get(), duration, rallyAmp, false, true, true));
+        this.applySelfEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, duration, strengthLevel - 1, false, true, true));
+        this.applySelfEffect(new MobEffectInstance(GoetyEffects.RALLYING.get(), duration, rallyAmp, false, true, true));
         // 【第三十七轮】核心修复：力量(RANGE_BOOST)只加近战伤害，Boss 是法系输出，药水粒子"不奏效"。
         // 额外挂 SPELL_POTENCY 属性 modifier（MULTIPLY_TOTAL），通过 Goety 原生施法通道真正提升法术伤害。
         // 数值 = strengthLevel * 0.1（等级2=20%、等级5=50%），与力量等级联动配置。

@@ -15,6 +15,7 @@ import com.tiaolvshi.goetytuner.entity.TunerBoss;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.client.gui.overlay.VanillaGuiOverlay;
@@ -310,40 +311,49 @@ public class MusicBarHud {
                 if (accentTick < 0 || accentTick >= s.totalDuration) {
                     continue;
                 }
-                int ax = x + (int) (accentTick * pxPerTick) - (int) scrollX;
-                if (ax >= x - 4 && ax <= x + BAR_WIDTH + 4) { // 可视区内才画（scissor也兜底）
+                float ax = x + accentTick * pxPerTick - scrollX;
+                if (ax >= x - 6 && ax <= x + BAR_WIDTH + 6) { // 可视区内才画（scissor也兜底）
                     drawAccentMark(gfx, ax, y,
-                            pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick));
+                            pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick), 1.0F);
                 }
             }
         }
     }
 
     /**
-     * 重音刻度分阶段样式：
-     * - 铺垫/未知：普通细线（1px）
-     * - 高潮："中"字——贯通竖线 + 中间细线空心方框（视觉如汉字"中"）
-     * - 低谷：略加粗（2px）
-     * 【0.0.12】整体改为半透明白（原先纯白 `0xFFFFFFFF` 在深色条上过于扎眼）。
+     * 【0.0.13】重音刻度：三种阶段**都是"小长条"**，竖向居中、整体更细更整齐。
+     *
+     * <p>0.0.12 之前高潮用的是贯通竖线 + 中间空心方框拼成的"中"字，在一个 8px 高的细条上
+     * 又粗又花、还占了整条高度，与另外两种细线完全不是一套语言。现在统一为居中的小长条，
+     * 只用「宽 × 高 × 亮度」三个维度区分强度（高潮最粗最高最亮），观感干净得多。
+     *
+     * <p>**【滚动不平滑的根因与修法】**：`fill()` 只能落在整数像素上，而重音刻度是 1~2px 宽的细条，
+     * 位置取整后会**逐像素跳动**（相邻帧要么不动、要么猛跳 1px），滚动时看着就是一顿一顿的。
+     * 这里改用**亚像素覆盖**：把刻度的小数部分按比例分摊到相邻两列（如 x=10.3 ⇒ 第 10 列画 70% 透明度、
+     * 第 11 列画 30%），视线感受到的亮度重心就随浮点位置连续移动，滚动自然平滑。
+     *
+     * @param fx 刻度的浮点横坐标（**不要先取整**）
+     * @param alphaScale 整体透明度系数（0~1，用于统一压淡）
      */
-    private static void drawAccentMark(GuiGraphics gfx, int ax, int y, BossPhase phase) {
-        final int c = 0xB8FFFFFF;
-        if (phase == BossPhase.CLIMAX) {
-            // "中"字：贯通竖线
-            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, c);
-            // 中部细线方框（上/下/左/右四条边，1px描边）
-            int bx0 = ax - 2, bx1 = ax + 3;             // 5px宽，竖线居中
-            int by0 = y + 2, by1 = y + BAR_HEIGHT - 2;  // 8px 高时上下各留 2px
-            gfx.fill(bx0, by0, bx1, by0 + 1, c);        // 上边
-            gfx.fill(bx0, by1 - 1, bx1, by1, c);        // 下边
-            gfx.fill(bx0, by0, bx0 + 1, by1, c);        // 左边
-            gfx.fill(bx1 - 1, by0, bx1, by1, c);        // 右边
-        } else if (phase == BossPhase.VALLEY) {
-            // 低谷：加粗 2px
-            gfx.fill(ax - 1, y, ax + 1, y + BAR_HEIGHT, c);
-        } else {
-            // 铺垫/未知：普通 1px
-            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, c);
+    private static void drawAccentMark(GuiGraphics gfx, float fx, int y, BossPhase phase, float alphaScale) {
+        int width;
+        int height;
+        int baseAlpha;
+        switch (phase) {
+            case CLIMAX -> { width = 2; height = 6; baseAlpha = 0xCC; } // 高潮：最粗最高最亮
+            case VALLEY -> { width = 1; height = 6; baseAlpha = 0xB4; } // 低谷：高而细
+            default -> { width = 1; height = 4; baseAlpha = 0x99; }     // 铺垫/未知：短细
+        }
+        int top = y + (BAR_HEIGHT - height) / 2; // 竖向居中 → 读作"轨道上的刻度"而非整条分隔线
+        int i0 = Mth.floor(fx);
+        float frac = fx - i0;
+        int a0 = Math.round(baseAlpha * alphaScale * (1.0F - frac));
+        int a1 = Math.round(baseAlpha * alphaScale * frac);
+        if (a0 > 0) {
+            gfx.fill(i0, top, i0 + width, top + height, argb(a0, 0xFFFFFF));
+        }
+        if (a1 > 0) {
+            gfx.fill(i0 + 1, top, i0 + 1 + width, top + height, argb(a1, 0xFFFFFF));
         }
     }
 
@@ -441,10 +451,10 @@ public class MusicBarHud {
                     if (accentTick < 0 || accentTick >= s.totalDuration) {
                         continue;
                     }
-                    int ax = x + Math.round(basePx + accentTick * pxPerTick);
-                    if (ax >= clipL && ax <= clipR) {
+                    float ax = x + basePx + accentTick * pxPerTick;
+                    if (ax >= clipL - 2 && ax <= clipR + 2) {
                         drawAccentMark(gfx, ax, y,
-                                pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick));
+                                pre != null && i < pre.length ? pre[i] : s.phaseAtTick(accentTick), 1.0F);
                     }
                 }
             }

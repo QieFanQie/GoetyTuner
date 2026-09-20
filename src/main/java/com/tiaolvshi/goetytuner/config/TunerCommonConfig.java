@@ -106,6 +106,8 @@ public class TunerCommonConfig {
     public static final ForgeConfigSpec.BooleanValue ACCENT_PARTICLES;  // 粒子冲击环+音符爆发
     public static final ForgeConfigSpec.BooleanValue ACCENT_WAVE;
     public static final ForgeConfigSpec.BooleanValue ACCENT_SOUND;      // 阶段差异化提示音
+    /** 【0.0.13】重音抽稀系数：从乐谱重音表里"每 N 个保留 1 个"。 */
+    public static final ForgeConfigSpec.IntValue ACCENT_DENSITY_DIVISOR;
 
     // ---- 音乐播放（第十九轮）----
     public static final ForgeConfigSpec.DoubleValue MUSIC_VOLUME;        // 播放音量
@@ -310,6 +312,9 @@ public class TunerCommonConfig {
                 .define("accentWave", true);
         ACCENT_SOUND = b.comment("重音特效-提示音：阶段差异化音调的紫水晶音（铺垫0.9/高潮1.4/低谷0.6，使用原版音效无需音频资源）")
                 .define("accentSound", true);
+        ACCENT_DENSITY_DIVISOR = b.comment("重音抽稀系数：从乐谱重音表里每 N 个只保留 1 个（1=不抽稀，3=数量与频率约为原来的 1/3）。",
+                        "抽稀在服务端加载乐谱时进行，因此 HUD 刻度、击退、涟漪、提示音会一起变稀疏，且客户端无需改动。")
+                .defineInRange("accentDensityDivisor", 3, 1, 9);
         MUSIC_VOLUME = b.comment("boss战音乐播放音量（0-8，0=静音；客户端循环实例的增益，1=原音量）")
                 .defineInRange("volume", 4.0, 0.0, 8.0);
         MUSIC_PITCH_PHASE1 = b.comment("音乐播放速度pitch（1.0=原速，1.2=快20%同时音调升高，0.8=慢20%同时音调降低。"

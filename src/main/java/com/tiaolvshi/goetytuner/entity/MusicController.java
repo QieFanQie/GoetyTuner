@@ -98,6 +98,23 @@ public class MusicController {
         }
         accentSet.clear();
         accentSet.addAll(accents);
+        // 【0.0.13】重音抽稀：每 N 个只保留 1 个（默认 3 ⇒ 数量与频率约为原来的 1/3）。
+        // 放在这里统一处理的好处：乐谱只加载一次，抽稀后**所有**依赖重音的玩法一起变稀疏
+        // （HUD 刻度经 SMusicSyncPacket 全量同步、重音击退、涟漪、提示音、无前摇施法），
+        // 客户端不需要任何改动，也不会出现"HUD 密、实际触发疏"的不一致。
+        int divisor = Math.max(1, TunerCommonConfig.ACCENT_DENSITY_DIVISOR.get());
+        if (divisor > 1 && accents.size() > 1) {
+            List<Integer> thinned = new ArrayList<>(accents.size() / divisor + 1);
+            for (int i = 0; i < accents.size(); i += divisor) {
+                thinned.add(accents.get(i));
+            }
+            GoetyTuner.LOGGER.info("[Tuner] Accent thinning x{}: {} -> {} accents",
+                    divisor, accents.size(), thinned.size());
+            accents.clear();
+            accents.addAll(thinned);
+            accentSet.clear();
+            accentSet.addAll(accents);
+        }
         totalDuration = segments.stream().mapToInt(s -> s.ticks).sum();
         if (totalDuration <= 0) {
             segments.add(new Segment(BossPhase.BUILDUP, 1200));
