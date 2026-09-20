@@ -1,8 +1,8 @@
 # 《仪式召唤 + 法杖升级》设计方案（任务 #118）
 
-> 当前工作版本：**0.0.16**。「逐渐学习」：给动态评分加一个随**该调律师个体**施法次数爬升的权重系数，开局由**初始评分**主导、随实战逐次交棒给**动态反馈**；详见 `TECHNICAL_SUMMARY.md` §3.16。下文旧版本说明保留为历史记录。
+> 当前工作版本：**0.0.17**。索命聚晶后门（`goety:death` 可无视锁血直接处决调律师）＋ 修客户端死亡动画残留（血量回正后自愈复位）；详见 `TECHNICAL_SUMMARY.md` §3.17。下文旧版本说明保留为历史记录。
 
-> **【实施状态】已完成。** 本方案已于第 36 轮落地（当时版本 v0.7.0），当前版本 0.0.16（第 54 轮）。
+> **【实施状态】已完成。** 本方案已于第 36 轮落地（当时版本 v0.7.0），当前版本 0.0.17（第 55 轮）。
 > 实际落地的类名与本文稿略有差异，见文末「实施差异」一节。
 > 本文稿保留作为设计留痕（含反编译实证依据），**技术现状请以 `TECHNICAL_SUMMARY.md` 为准**。
 
@@ -430,7 +430,7 @@ public static void onLivingDamage(LivingDamageEvent event) {
 | 6 | 40% 魔法伤害加成落地（LivingDamageEvent） | 同上 | ⚠️ **同文件**（`ritual/WandUpgradeEvents.java`） |
 | 7 | 配置项 + 注释 | `config/TunerCommonConfig.java`（改） | ⚠️ 落地 **6 项**（非 7 项），见第六节 |
 | 8 | 文档：README 仪式流程说明 | `README.md`（改） | ✅ 已改 |
-| 9 | 编译验证 + 双副本同步 + 版本号 bump（0.7.0） | 构建流程（沿用红线） | ✅ 第 36 轮落地（该版号 v0.7.0，现 0.0.16） |
+| 9 | 编译验证 + 双副本同步 + 版本号 bump（0.7.0） | 构建流程（沿用红线） | ✅ 第 36 轮落地（该版号 v0.7.0，现 0.0.17） |
 
 ---
 
@@ -463,6 +463,6 @@ public static void onLivingDamage(LivingDamageEvent event) {
 | 注册类文件名 | RitualRegistration.java | **ModRituals.java** |
 | 加成事件类 | WandBonusHandler.java + CombatEvents.java | 合并为 **WandUpgradeEvents.java** |
 | 魔法伤害判定 | `DamageSource.isMagic()` | 1.20.1 无此 API → **`forge:is_magic` 伤害标签 + msgId `magic`/`indirectMagic` 兜底** |
-| 日期/状态 | "编写日期 2026-08-19 / 待审阅"，正文 5.1 又写"2026-08-20 修订" | 均已实施（第 35~37 轮），状态见文首横幅 |
+| 日期/状态 | "编写日期 2026-08-19 / 待审阅"，正文 5.1 又写"2026-08-20 修订" | 均已实施（第 35~37 轮），当前版本 **0.0.17（第 55 轮）**；状态见文首「实施状态」块 |
 
 **验证情况**：仪式注册表 key 与 Goety 本体一致（jar 字节码核实 `Goety.location("ritual_factory")`）；`RitualRecipe$Serializer` 的 JSON 键名全部匹配；`craftType:"magic"` 合法（Goety 自带 83 条配方使用）；`data/goety/tags/items/wands.json` 存在。刷怪蛋/指令路径无原始法杖快照 → 不掉落升级法杖（预期行为）。

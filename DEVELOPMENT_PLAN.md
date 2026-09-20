@@ -1,22 +1,24 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> 当前工作版本：**0.0.16**。「逐渐学习」：给动态评分加一个随**该调律师个体**施法次数爬升的权重系数，开局由**初始评分**主导、随实战逐次交棒给**动态反馈**；详见 `TECHNICAL_SUMMARY.md` §3.16。下文旧版本说明保留为历史记录。
+> 当前工作版本：**0.0.17**。索命聚晶后门（`goety:death` 可无视锁血直接处决调律师）＋ 修客户端死亡动画残留（血量回正后自愈复位）；详见 `TECHNICAL_SUMMARY.md` §3.17。下文旧版本说明保留为历史记录。
 
-> **0.0.16 发布（第 54 轮）**：「逐渐学习」——给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数爬升的权重系数，开局用低权重让**初始评分**（配置 / LLM 分类）主导，随实战逐次把话语权交棒给**动态反馈**。改 **3 个 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，无新增/删除类与资源）；**新增 3 个配置键** ⇒ 配置 **63 → 66 项**（`scoring` 段 **3 → 6**，其余段**未变**，section 数仍 **10**）。① **`FocusEntry.rouletteWeight(...)` 新增第 4 参数 `dynamicScale`**：权重由 `|静态评分 + 动态偏移| + 保底基数` 改为 `|静态评分 + 动态偏移 × dynamicScale| + 保底基数` —— **只缩动态部分，静态评分（初始分类）完全不受影响**；攻击类与召唤类两条公式都改（召唤类是生存分 / 输出分**两处**偏移各乘一次）。② **`FocusPoolManager` 新增每实例学习状态**：`castCount`（该个体施法次数；存在**实例字段而非 static** —— `createFightPools()` 每只 Boss 各建一份、`FocusEntry` 也是实例级复制 ⇒ 学习进度**天然是个体私有**的，与动态偏移生命周期一致）、`noteCast()`（由 `TunerBoss.onCastStart` 每次成功施法调用，按 `w = start + (max − start) × min(1, castCount / ramp)` **线性**重算，**每跨 10% 里程碑打一条 INFO** `[Tuner] Learning weight ...`）、`learningWeight()` / `castCount()` getter；`draw()` 把系数作为**第 4 实参**喂给 `rouletteWeight`（**已用 `javap` 验证调用链**：偏移 178 `learningWeight()` → 局部变量 14 → 偏移 234 `dload 14` → 偏移 236 `invokevirtual rouletteWeight:(D[DZD)D`）。**`drawUniform()`（防御 / 其他类）本来就不走评分，不受影响**。③ `entity/TunerBoss.onCastStart` 里调 `pools.noteCast()`（**只统计"用聚晶施法"的前摇起手**；瞬发 / 重音不经过该回调，故**不计入**）。④ **新增 3 个配置键**（`scoring` 段）：`learningWeightStart`（默认 **0.15**，0~1）、`learningWeightMax`（默认 **1.0**，0~2）、`learningWeightRampCasts`（默认 **60**，1~1000）。**默认曲线**：施法 0 次→**0.150**、10→0.292、20→0.433、30→0.575、40→0.717、50→0.858、60→**1.000**（之后封顶）⇒ 开局由**初始分类**主导、随实战逐次交棒给**动态反馈**。⚠️ **`FocusEntry.getEffectiveAttackScore()` / `getEffectiveSurvivalScore()` 现为"未缩权的"视角**（原先正是轮盘权重的输入），**保留作诊断用、不再被抽取路径调用**（**未删除**）。⚠️ **尚未进游戏实测手感**。部署：`goetytuner-0.0.16.jar`（**1,756,720 B / md5 `816C6640E9486FFAFE3B88FA5B2C6D0E` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.15 已删）。详见 `TECHNICAL_SUMMARY.md` §3.16。
+> **0.0.17 发布（第 55 轮）**：改 **2 个 Java 文件**（`entity/TunerBoss`、`config/TunerCommonConfig`）+ 版本号，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，无新增类/贴图）；**新增 1 个配置键** ⇒ 配置 **66 → 67 项**（`boss` 段 **19 → 20**，其余段未变，section 数仍 **10**）。**用户反馈**：玩家用**索命聚晶**打中调律师时，Boss 会进入"动画已经死了、血量却回弹"的破状态（索命造成的是"等同于目标当前生命值"的致死伤害，被锁血体系拦住后复活，客户端动画却留在原地）。用户说「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」——**两个都做了**。① **索命聚晶后门**（`entity/TunerBoss` + `config/TunerCommonConfig`）：**先做实证再动手** —— 反编译 Goety 的 `KillingSpell.SpellResult` 得调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(source, amount)`（**走 `hurt()`，我们的覆写能看到**）；`ModDamageSource.DEATH` 的键名在静态初始化里是 `create("death")`，jar 内亦有 `data/goety/damage_type/death.json`（`message_id` = `goety.death`）⇒ 伤害类型是 **`goety:death`**；**全 jar 扫描 `deathCurse` 的引用只有 `KillingSpell` 一处**（外加其在 `ModDamageSource` 的定义）⇒ 用该伤害类型匹配**恰好等价于"索命聚晶"**，不会误伤别的法术。**实现**：新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`（`ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation("goety","death"))` —— **不需要编译期依赖 Goety 的类**，未装 Goety 时该键永不匹配）；`hurt()` 识别后置标记 + 打 INFO + `return super.hurt(...)`（跳过身份免疫 / 宽限期免疫 / 致死截断）；`maintainDeathState()` 见标记直接 `return`（不回弹）；`canStillRevive()` 返回 false（不拦 `remove(KILLED)`）⇒ **索命能真正处决，无视剩余锁血档位**。**关键坑**：`actuallyHurt()` 的限伤 / 限DPS 也必须为它开口子 —— `goety:death` **不在任何 `BYPASSES_*` tag 里**，不显式列出的话"等同于目标当前生命值"的致死伤害会被限伤削掉、后门等于失效。状态正常时清除标记；新增开关 **`boss.deathCurseExecution`**（默认 **true**，false = 关闭后门回到旧行为）。**代价**：索命会对施法者反噬"目标当前生命值 125%"，所以这是**有代价的处决手段**。② **修「动画死了血量回弹」的根因（客户端残留）**：`deathTime` **不是同步数据**（0.0.8 已实证）—— 客户端的 `deathTime` 由客户端自己的 `LivingEntity.tickDeath()` 递增，而它只看**客户端本地血量**；服务端复活时只发**一次** `SEntityRevivePacket`，若那一刻客户端的血量同步还没落地，客户端会在复位后**又自己把 deathTime 加上去**，此后血量虽变正、动画再没人清 ⇒ **永久躺着**；服务端侧的"情形 A"治不了这一侧。修法：在 `tick()` 的**客户端分支**加一条**对称自愈** —— 客户端同样知道血量（`DATA_HEALTH_ID` 是同步数据），`deathTime > 0 && getHealth() > 0` 即视为脏状态、直接 `resetDeathAnimation(...)`（该方法只在服务端发包，客户端调用不产生网络流量）⇒ **至多残留 1~2 tick**。⚠️ **尚未进游戏实测**（本轮只做到编译通过 + jar 条目核对）。部署：`goetytuner-0.0.17.jar`（**1,757,576 B / md5 `B68C4D4FF9FC650796EDB003D2C53009` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.16 已删）。详见 `TECHNICAL_SUMMARY.md` §3.17。
 >
-> **上一轮（0.0.15，第 53 轮）发布**：**只有贴图精修 + 版本号 + 文档，零 Java 改动、无新增/删除资源、配置项数不变（仍 63 项 / 10 段）**。精修 `src/main/resources/assets/goetytuner/textures/entity/tuner.png`（64×64 RGBA，2520 → **2676 B**）：保留紫黑礼服 / 紫色袖口裤靴 / 浅色领巾 / 青色胸饰，精修**翻领边缘、衣袖明暗、袖口细边、裤缝、靴口层次**；原稿由 imagegen 生成，再**按最近邻采样重新装配回原有 UV**（生成图未严格保持矩形位置，故重新测量图块）。**已独立核验（以 0.0.14 为基准逐像素差分，不依赖其自带脚本）**：头部区 **y0..15 全宽 64 列 0 个像素差异**、全图 **alpha 蒙版完全一致**（未增删不透明像素）、身体区改动 **1247 像素**、6 个主要 UV 面无透明空洞。制作过程入库：`art/REFINEMENT.md`（报告 + 最终提示词）、`art/assemble-refinement.ps1`（可复现装配）、`art/body-refined-source.png`（原稿）、`art/tuner-before-refinement.png`（精修前备份）、更新后的 `art/preview.png`。⚠️ **未做游戏内画面验收**——观感仍待人类 / 能读图的模型确认；`art/preview.png` 是**平面正背面拼接图，不是游戏截图**。部署：`goetytuner-0.0.15.jar`（**1,755,456 B / md5 `1865ECF4EB22989319FD746806320776` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.14 已删）。
+> **上一轮（0.0.16，第 54 轮）发布**：「逐渐学习」——给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数爬升的权重系数，开局用低权重让**初始评分**（配置 / LLM 分类）主导，随实战逐次把话语权交棒给**动态反馈**。改 **3 个 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，无新增/删除类与资源）；**新增 3 个配置键** ⇒ 配置 **63 → 66 项**（`scoring` 段 **3 → 6**，其余段**未变**，section 数仍 **10**）。① **`FocusEntry.rouletteWeight(...)` 新增第 4 参数 `dynamicScale`**：权重由 `|静态评分 + 动态偏移| + 保底基数` 改为 `|静态评分 + 动态偏移 × dynamicScale| + 保底基数` —— **只缩动态部分，静态评分（初始分类）完全不受影响**；攻击类与召唤类两条公式都改（召唤类是生存分 / 输出分**两处**偏移各乘一次）。② **`FocusPoolManager` 新增每实例学习状态**：`castCount`（该个体施法次数；存在**实例字段而非 static** —— `createFightPools()` 每只 Boss 各建一份、`FocusEntry` 也是实例级复制 ⇒ 学习进度**天然是个体私有**的，与动态偏移生命周期一致）、`noteCast()`（由 `TunerBoss.onCastStart` 每次成功施法调用，按 `w = start + (max − start) × min(1, castCount / ramp)` **线性**重算，**每跨 10% 里程碑打一条 INFO** `[Tuner] Learning weight ...`）、`learningWeight()` / `castCount()` getter；`draw()` 把系数作为**第 4 实参**喂给 `rouletteWeight`（**已用 `javap` 验证调用链**：偏移 178 `learningWeight()` → 局部变量 14 → 偏移 234 `dload 14` → 偏移 236 `invokevirtual rouletteWeight:(D[DZD)D`）。**`drawUniform()`（防御 / 其他类）本来就不走评分，不受影响**。③ `entity/TunerBoss.onCastStart` 里调 `pools.noteCast()`（**只统计"用聚晶施法"的前摇起手**；瞬发 / 重音不经过该回调，故**不计入**）。④ **新增 3 个配置键**（`scoring` 段）：`learningWeightStart`（默认 **0.15**，0~1）、`learningWeightMax`（默认 **1.0**，0~2）、`learningWeightRampCasts`（默认 **60**，1~1000）。**默认曲线**：施法 0 次→**0.150**、10→0.292、20→0.433、30→0.575、40→0.717、50→0.858、60→**1.000**（之后封顶）⇒ 开局由**初始分类**主导、随实战逐次交棒给**动态反馈**。⚠️ **`FocusEntry.getEffectiveAttackScore()` / `getEffectiveSurvivalScore()` 现为"未缩权的"视角**（原先正是轮盘权重的输入），**保留作诊断用、不再被抽取路径调用**（**未删除**）。⚠️ **尚未进游戏实测手感**。部署：`goetytuner-0.0.16.jar`（**1,756,720 B / md5 `816C6640E9486FFAFE3B88FA5B2C6D0E` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.15 已删）。详见 `TECHNICAL_SUMMARY.md` §3.16。
+>
+> **更早（0.0.15，第 53 轮）发布**：**只有贴图精修 + 版本号 + 文档，零 Java 改动、无新增/删除资源、配置项数不变（仍 63 项 / 10 段）**。精修 `src/main/resources/assets/goetytuner/textures/entity/tuner.png`（64×64 RGBA，2520 → **2676 B**）：保留紫黑礼服 / 紫色袖口裤靴 / 浅色领巾 / 青色胸饰，精修**翻领边缘、衣袖明暗、袖口细边、裤缝、靴口层次**；原稿由 imagegen 生成，再**按最近邻采样重新装配回原有 UV**（生成图未严格保持矩形位置，故重新测量图块）。**已独立核验（以 0.0.14 为基准逐像素差分，不依赖其自带脚本）**：头部区 **y0..15 全宽 64 列 0 个像素差异**、全图 **alpha 蒙版完全一致**（未增删不透明像素）、身体区改动 **1247 像素**、6 个主要 UV 面无透明空洞。制作过程入库：`art/REFINEMENT.md`（报告 + 最终提示词）、`art/assemble-refinement.ps1`（可复现装配）、`art/body-refined-source.png`（原稿）、`art/tuner-before-refinement.png`（精修前备份）、更新后的 `art/preview.png`。⚠️ **未做游戏内画面验收**——观感仍待人类 / 能读图的模型确认；`art/preview.png` 是**平面正背面拼接图，不是游戏截图**。部署：`goetytuner-0.0.15.jar`（**1,755,456 B / md5 `1865ECF4EB22989319FD746806320776` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.14 已删）。
 >
 > **更早（0.0.14，第 52 轮）发布**：该轮两件事，改 **4 个 Java 文件**（`client/TunerConfigScreen`、`focus/FocusPoolManager`、`entity/TunerBoss`、`config/TunerCommonConfig`）+ **2 个 lang** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `phase2_buffs.phase2EffectImmunity`（Boolean，默认 **true**）⇒ 配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**，`boss` 段仍 **19**，section 仍 10 个）。① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**、只能手改文件；现补一个单行 `EditBox`（预填当前值，提示「namespace:path，英文逗号分隔；留空=不屏蔽」），**点「完成」关屏时保存**（最自然的"改完了"信号），点「开始评分」时也**顺带保存**；保存动作 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效 ⇒ 下一次抽取就过滤）。**新增 `FocusPoolManager.refreshBlacklist()`**：`initIfNeeded()` 扫描时是**直接 `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`），所以"**新增**拉黑"能靠 `draw()/drawUniform()` 的实时过滤立刻生效，但"**取消**拉黑"必须重扫才会回来；而重扫若 `new` 出全新 `FocusEntry`，会让实体侧那些**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒ 出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题。故新方法按 `namespace:path` 建索引**复用已有 `FocusEntry` 对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），然后重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。限制：连他人的服务器时改的是**本地**那份 common toml，服务器侧不受影响（单机/局域网主机同进程，正常生效）。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有的 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定，在这里返回 false 就是真正的免疫，而不是"加完再清"）；免疫名单 = **抗性提升** `DAMAGE_RESISTANCE` / **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，**仅当 `music.isPhase2()`** 时生效。**刻意只列这 5 项而不是"所有 beneficial"**：Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后要加（例如某个附属的自定义减伤）加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（Boolean，**默认 true**），false = 回到旧行为；不影响玩家的同类效果，也不影响 Boss 自己的二阶段自施。详见 `TECHNICAL_SUMMARY.md` §3.15。
 >
 > **更早（0.0.13，第 51 轮）修复**：该轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 仍 10 个）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**（`BossMusicManager`）：原先只以静态字段 `music != null` 当作「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**，且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（症状「整个 BGM 都没了」）；改为每 tick 用 **`SoundManager.isActive(music)`** 核实 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑 + 高潮改细小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、刻度只有 1~2px ⇒ 取整后逐像素跳动；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮「中」字改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音数量与频率降为 1/3**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9），在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮更明显 + 发光**（`TunerOrbLayer`）：高亮改为额外叠加 `glow*0.4` 逐通道**向白靠拢**（原先 `min(1, color*(1+glow*0.8))` 被 `min` 截断、几乎看不出变化），发光用**两层 `entityTranslucentEmissive` 自发光外壳**——**不能用原版发光描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，只能整只 Boss 一起描边，无法只描一颗立方体）。⑥ **药水效果可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（用于 boss 自身 4 处），并完成药水现状审计。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶，对施法者反噬 125%）** 加入 `focus.blacklist`——**配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 toml）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.16
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.17
 > 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 54 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 55 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -25,10 +27,10 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.16 / 第 54 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；**第 54 轮（0.0.16）成果：「逐渐学习」** —— 给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数**线性爬升**的权重系数（默认 `0.15 → 1.0` / 60 次施法），使**初始评分**（配置 / LLM 分类）在**开局主导**、随实战**逐步交棒**给动态反馈（此前动态偏移与静态评分同权，开局没打几下初始分类就基本失效）；改 **3 个既有 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**无新增类/贴图**，配置 **63 → 66 项**（`scoring` 段 **3 → 6**）；⚠️ **手感待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.16）；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。第 53 轮（0.0.15）成果：**只有本体贴图精修** —— `tuner.png` **2520 → 2676 B**（翻领边缘 / 衣袖明暗 / 袖口细边 / 裤缝 / 靴口层次），**零 Java 改动、无新增/删除资源**（`.java` 仍 45、配置仍 63 项 / 10 段、jar 仍 102 条目）；**独立核验**：头部区逐像素 0 差异、alpha 蒙版完全一致、身体区改 1247 像素、6 个主要 UV 面无透明空洞；⚠️ **观感仍待游戏内画面验收**。
+当前状态（0.0.17 / 第 55 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；**第 55 轮（0.0.17）成果：索命聚晶后门 + 客户端死亡动画残留自愈** —— 用户反馈「用索命聚晶打中调律师时，Boss 会进入"动画已经死了、血量却回弹"的破状态」，并说「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」——**两个都做了**：① **索命后门**：反编译 Goety 的 `KillingSpell.SpellResult` 实证调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(source, amount)`（**走 `hurt()`**），并确认伤害类型是 **`goety:death`**（`create("death")` + `data/goety/damage_type/death.json`）、且**全 jar 只有 `KillingSpell` 一处引用 `deathCurse`** ⇒ 按该伤害类型匹配**恰好等价于"索命聚晶"**；新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`（纯资源位置字符串构造，**不需编译期依赖 Goety 类**），四处联动（`hurt()` 置标记跳过身份/宽限期免疫与致死截断、`maintainDeathState()` 不回弹、`canStillRevive()` 不拦 `remove(KILLED)`、**`actuallyHurt()` 的限伤/限DPS 必须显式开口子** —— `goety:death` 不在任何 `BYPASSES_*` tag 里，漏了后门就形同虚设）⇒ **索命能真正处决、无视剩余锁血档位**；新配置 `boss.deathCurseExecution`（默认 **true**，false = 回到旧行为）；**代价**：索命会对施法者反噬"目标当前生命值 125%"。② **客户端动画自愈**：`deathTime` **不是同步数据**，服务端只发**一次**复位包，若那一刻客户端血量同步还没落地，客户端会**自己再把 `deathTime` 加上去** ⇒ 永久躺着（服务端侧"情形 A"治不了这一侧）；在 `tick()` 的**客户端分支**加**对称自愈**（`deathTime > 0 && getHealth() > 0` 即直接 `resetDeathAnimation`，客户端调用**不发包**）⇒ **至多残留 1~2 tick**。改 **2 个既有 Java 文件**（`entity/TunerBoss`、`config/TunerCommonConfig`）+ 版本号，**无新增类/贴图**，配置 **66 → 67 项**（`boss` 段 **19 → 20**）；⚠️ **仍待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.17）；**第 54 轮（0.0.16）成果：「逐渐学习」** —— 给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数**线性爬升**的权重系数（默认 `0.15 → 1.0` / 60 次施法），使**初始评分**（配置 / LLM 分类）在**开局主导**、随实战**逐步交棒**给动态反馈（此前动态偏移与静态评分同权，开局没打几下初始分类就基本失效）；改 **3 个既有 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**无新增类/贴图**，配置 **63 → 66 项**（`scoring` 段 **3 → 6**）；⚠️ **手感待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.16）；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。第 53 轮（0.0.15）成果：**只有本体贴图精修** —— `tuner.png` **2520 → 2676 B**（翻领边缘 / 衣袖明暗 / 袖口细边 / 裤缝 / 靴口层次），**零 Java 改动、无新增/删除资源**（`.java` 仍 45、配置仍 63 项 / 10 段、jar 仍 102 条目）；**独立核验**：头部区逐像素 0 差异、alpha 蒙版完全一致、身体区改 1247 像素、6 个主要 UV 面无透明空洞；⚠️ **观感仍待游戏内画面验收**。
 > **更早（0.0.13，第 51 轮）成果：音乐自愈 + 重音减密 + 表现层微调 + 药水可观测性** —— ① **修「玩家被击杀复活后（未走出索敌范围）Boss 背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 时静默返回），字段却仍非 null ⇒ 服务端 `playing` 为 true 时 `startMusic` **永不重入** = **永久静音**；`onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**（症状「整个 BGM 都没了」）。现每 tick 用 `SoundManager.isActive(music)` 核实 + 10 tick 防抖，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑**（`MusicBarHud` 亚像素覆盖：小数部分按比例摊到相邻两列，亮度重心连续移动）+ **高潮「中」字改小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map`→`List`，二阶段进场连发不再互相顶掉；`MAX_WAVES=32` 兜底）。④ **新增配置 `music.accentDensityDivisor`（默认 3、范围 1~9）**：服务端加载乐谱时「每 N 个保留 1 个」，HUD 刻度/击退/涟漪/提示音一起变稀疏、客户端零改动（默认乐谱 37 → 13 个重音）；配置 **61 → 62 项**（`music` 段 12 → 13）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳**（`entityTranslucentEmissive`；原版发光描边是整实体级 `OutlineBufferSource`，无法只描一颗立方体）。⑥ **药水可观测性**：8 处 `addEffect` 返回值原先全被丢弃（被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时静默失效），新增 `applySelfEffect` 打 WARN（boss 自身 4 处）+ 药水现状审计（低谷效果仅一阶段且 `visible=false` 无粒子、二阶段自施可达且不受亡灵免疫、`SUMMON_DOWN` 免疫确认真实生效）。⑦ 配置侧把 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）加入 `focus.blacklist`（**不在 jar 内**；该 toml **无法在游戏内修改**）。
 
-> **上一轮（0.0.14，第 52 轮）成果：配置界面补上「聚晶黑名单」入口 + 二阶段免疫回复/减伤类效果** —— ① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**（0.0.13 的「拉黑索命聚晶」因此只能靠改文件落地）；现补一个单行 `EditBox`（预填当前值，hint「namespace:path，英文逗号分隔；留空 = 不屏蔽」），**点「完成」关屏时保存**、点「开始评分」时也顺带保存，保存 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效）。**新增 `FocusPoolManager.refreshBlacklist()`** 的理由：`initIfNeeded()` 扫描时**直接 `continue` 跳过**黑名单聚晶（不进 `ALL_ENTRIES`）⇒"**新增**拉黑"靠实时过滤即可生效，但"**取消**拉黑"必须重扫；而重扫若 `new` 出新 `FocusEntry`，会让实体侧**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒「立方体高亮卡住 / 施法收尾回调对不上」。故新方法按 `namespace:path` 建索引**复用已有对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），再重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。⚠️ 连他人的服务器时改的是**本地** toml、服务器侧不受影响。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 返回 false 是**真正的免疫**，不是"加完再清"），名单 = 抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升，**仅当 `music.isPhase2()`** 生效；**刻意只列这 5 项而非"所有 beneficial"**——Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（默认 **true**，false = 回旧行为）；**不影响玩家**、也**不影响 Boss 自己的二阶段自施**。配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**）。
+> **更早（0.0.14，第 52 轮）成果：配置界面补上「聚晶黑名单」入口 + 二阶段免疫回复/减伤类效果** —— ① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**（0.0.13 的「拉黑索命聚晶」因此只能靠改文件落地）；现补一个单行 `EditBox`（预填当前值，hint「namespace:path，英文逗号分隔；留空 = 不屏蔽」），**点「完成」关屏时保存**、点「开始评分」时也顺带保存，保存 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效）。**新增 `FocusPoolManager.refreshBlacklist()`** 的理由：`initIfNeeded()` 扫描时**直接 `continue` 跳过**黑名单聚晶（不进 `ALL_ENTRIES`）⇒"**新增**拉黑"靠实时过滤即可生效，但"**取消**拉黑"必须重扫；而重扫若 `new` 出新 `FocusEntry`，会让实体侧**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒「立方体高亮卡住 / 施法收尾回调对不上」。故新方法按 `namespace:path` 建索引**复用已有对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），再重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。⚠️ 连他人的服务器时改的是**本地** toml、服务器侧不受影响。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 返回 false 是**真正的免疫**，不是"加完再清"），名单 = 抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升，**仅当 `music.isPhase2()`** 生效；**刻意只列这 5 项而非"所有 beneficial"**——Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（默认 **true**，false = 回旧行为）；**不影响玩家**、也**不影响 Boss 自己的二阶段自施**。配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**）。
 
 ---
 
@@ -325,11 +327,11 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（66项 / 10个 section，第54轮实况）
+### `run/config/goetytuner-common.toml`（67项 / 10个 section，第55轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
-| **boss**（19项，0.0.14 **未变**） | maxHealth | 216 | Boss血量 |
+| **boss**（20项，0.0.17 由 19 项增至 20 项） | maxHealth | 216 | Boss血量 |
 | | lockHealthInterval | 18 | 锁血档距（12档阶梯锁血：216/18） |
 | | lockGraceTicks | 10 | 每次锁血后的宽限期免疫（tick） |
 | | lockDeathRevive | true | 致死伤害被截断后的死亡自愈开关 |
@@ -348,6 +350,7 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2EntryBurstCount | 6 | 二阶段进场重音连发次数 |
 | | maxHitDamagePercent | 0.25 | 限伤：单次伤害上限 = 最大生命×该值（0=关闭） |
 | | maxDamagePerSecond | 0.0 | 限DPS：滑动 1 秒窗口伤害上限（0=关闭；建议 20/30/40） |
+| | **deathCurseExecution** | **true** | **0.0.17 新增**：**索命聚晶后门开关** —— `true` = 玩家用索命聚晶（Goety 的 Killing Focus）命中 Boss 时，它造成的 **`goety:death`** 致死伤害**不再被锁血体系拦截**（跳过身份免疫 / 宽限期免疫 / 致死截断 / 限伤·限DPS / 死亡回弹 / `remove(KILLED)` 拦截）⇒ **索命能真正处决调律师，无视剩余锁血档位**；`false` = 关闭后门，索命重新受锁血保护（回到 0.0.17 之前的旧行为）。**为何限定"恰好是索命"**：反编译实证 Goety 侧调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(...)`，且**全 jar 只有 `KillingSpell` 一处引用 `deathCurse`** ⇒ 按 `goety:death` 匹配不会误伤别的法术。**代价**：索命会对施法者反噬「目标当前生命值 **125%**」⇒ 这是**有代价的处决手段**。⚠️ 本键在 **`[boss]` 段**（与 `maxDamagePerSecond` / `lockDeathRevive` 同段，不是 `[phase2_buffs]` 段）；属**新增键**（Forge 自动补进老 toml），但**配置界面没有入口 ⇒ 改完需手改 `goetytuner-common.toml` 并重启游戏**。详见 `TECHNICAL_SUMMARY.md` §3.17 |
 | **phase2_buffs**（4项） | phase2BuffsEnabled | true | 二阶段强化药水开关 |
 | | phase2StrengthLevelLow | 2 | 低档力量等级 |
 | | phase2StrengthLevelHigh | 5 | 高档力量等级 |
@@ -424,6 +427,11 @@ AI自动初评分**已完整实现**。两条路径：
 > ⚠️ 但**这三个键在游戏内配置界面没有入口**（界面只有 LLM API Key / 提示词 / 聚晶黑名单三个输入框）
 > ⇒ 想调"逐渐学习"的曲线**只能手改 `goetytuner-common.toml` 后重启游戏**；重启同时会把该 Boss 的施法计数
 > （学习进度）**一起归零**（不落盘，见 `TECHNICAL_SUMMARY.md` §3.16）。
+>
+> ⚠️ **0.0.17 新增键**：`boss.deathCurseExecution`（默认 `true`）同样是**新增键** ⇒ Forge 会**自动补进**老 toml、**无需手改**
+> （老 toml 在下次启动写入该行之前查不到它属正常 —— 默认值在代码里）。
+> ⚠️ 它**也没有配置界面入口** ⇒ 想关掉索命后门**只能手改 `goetytuner-common.toml` 后重启游戏**
+> （common 配置在 mod 加载时读入内存，手改文件不会热生效）。详见 `TECHNICAL_SUMMARY.md` §3.17。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
@@ -446,7 +454,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.16 / 54 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.17 / 55 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -512,6 +520,28 @@ AI自动初评分**已完整实现**。两条路径：
   `getEffectiveSurvivalScore()` **未删除**，现在是"**未缩权的诊断视角**"、不再被抽取路径调用。
   ⚠️ **手感待游戏实测验证**（本轮只做到编译通过 + `javap` 字节码核对 + jar 条目核对）
   （第 54 轮 / 0.0.16，详见 `TECHNICAL_SUMMARY.md` §3.16）
+- [x] ~~**用索命聚晶打中调律师会「动画已经死了、血量却回弹」**~~：用户说「如果可以的话给索命的成功伤害直接开个后门；
+  如果麻烦的话修一下动画问题」——**两个都做了**。① **索命后门**：**先实证再动手** —— 反编译 Goety 的
+  `KillingSpell.SpellResult` 得调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` →
+  `target.hurt(source, amount)`（**走 `hurt()`**，我们的覆写能看到）；确认伤害类型是 **`goety:death`**
+  （`ModDamageSource` 静态初始化里 `create("death")` + jar 内 `data/goety/damage_type/death.json`，
+  `message_id` = `goety.death`）；**全 jar 扫描 `deathCurse` 只有 `KillingSpell` 一处引用** ⇒ 按该伤害类型匹配
+  **恰好等价于"索命聚晶"**、不会误伤别的法术。实现：新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`
+  （`ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation("goety","death"))` —— **不需要编译期依赖
+  Goety 的类**，未装 Goety 时该键永不匹配），四处联动：`hurt()` 置标记 + INFO + `return super.hurt(...)`
+  （跳过身份免疫 / 宽限期免疫 / 致死截断）、`maintainDeathState()` 见标记直接 return（不回弹）、
+  `canStillRevive()` 返回 false（不拦 `remove(KILLED)`）；**关键坑**：`actuallyHurt()` 的限伤 / 限DPS
+  **也必须为它开口子**（`goety:death` **不在任何 `BYPASSES_*` tag 里**，不显式列出的话"等同于目标当前生命值"
+  的致死伤害会被限伤削掉、后门等于失效）⇒ **索命能真正处决、无视剩余锁血档位**。新增配置
+  `boss.deathCurseExecution`（默认 **true**，false = 回旧行为）；**代价**：索命对施法者反噬「目标当前生命值 **125%**」。
+  ② **客户端死亡动画自愈**：根因是 `deathTime` **不是同步数据** —— 客户端的 `deathTime` 由客户端自己的
+  `LivingEntity.tickDeath()` 递增、只看**客户端本地血量**；服务端复活只发**一次** `SEntityRevivePacket`，
+  若那一刻客户端血量同步还没落地，客户端会在复位后**又自己把 `deathTime` 加上去** ⇒ 血量变正、动画**永久**留着
+  （服务端侧"情形 A"治不了这一侧）。修法：`tick()` 的**客户端分支**加**对称自愈** ——
+  `deathTime > 0 && getHealth() > 0` 即视为脏状态、直接 `resetDeathAnimation(...)`
+  （该方法只在服务端发包，**客户端调用不产生网络流量**）⇒ **至多残留 1~2 tick**。
+  配置 **66 → 67 项**（`boss` 段 **19 → 20**）。⚠️ **仍待游戏实测**
+  （第 55 轮 / 0.0.17，详见 `TECHNICAL_SUMMARY.md` §3.17）
 
 ### 仍待办
 1. **A3 剩余粒子**：传送 / 净化环 / 二阶段碎裂+天空盒 / 施法前摇聚能
@@ -540,6 +570,14 @@ AI自动初评分**已完整实现**。两条路径：
     "点完成关屏保存"与"点开始评分顺带保存"两条路径）；② 改完黑名单后**取消拉黑是否真的立即回到池里**
     （`refreshBlacklist()` 的重扫 + 对象复用路径）；③ 二阶段免疫**实际生效**（给 Boss 丢抗性提升/生命恢复
     应完全不上身；配置改 `false` 后应恢复可施加）
+13. **0.0.17 待验收**：① **索命后门**（`boss.deathCurseExecution`，默认 true）—— 战斗中索命聚晶命中 Boss
+    应**真正处决**（日志出现 `Death-curse backdoor (goety:death)`），不再"动画已死、血量回弹"、
+    也不再"血量不为 0 却躺着"；**边界**：索命**未命中**（被闪避/免伤/被其它模组取消）时 Boss 状态应正常
+    （`deathCursePending` 标记被清除，**不会**从此对任何致死伤害都免疫）；**对照**：把该键改成 `false` 重启
+    应回到旧行为。② **客户端死亡动画自愈**（无开关、始终生效）—— 任何"血量 > 0 但 `deathTime > 0`"的客户端
+    残留应**至多 1~2 tick** 内自动复位（走 DEBUG 日志）。本轮只做到**编译通过 + jar 条目核对**，**均未进游戏实测**。
+    另需实测确认**代价侧**：索命对施法者反噬「目标当前生命值 125%」是否让玩家自己也被打死（设计内代价，非 bug）。
+    详见 `TECHNICAL_SUMMARY.md` §3.17
 
 ---
 
@@ -1086,6 +1124,67 @@ AI自动初评分**已完整实现**。两条路径：
   → `versions\测试\mods\`（旧 0.0.15 已删）。⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`），
   判断"部署的 jar 对应哪份源码"要**逐条目比对**，别看整体 md5。
 
+### 第 55 轮（0.0.17）
+- **本轮范围**：**索命聚晶后门**（`goety:death` 可无视锁血直接处决）+ **修客户端死亡动画残留**（血量回正后自愈复位）。
+  改 **2 个既有 Java 文件**（`entity/TunerBoss.java`、`config/TunerCommonConfig.java`）+ 版本号，
+  **只改代码、不动任何贴图/资源**（`.java` 文件数仍 **45**、jar 条目仍 **102**，无新增/删除类与贴图）。
+- **动机（用户反馈）**：玩家用**索命聚晶**打中调律师时，Boss 会进入「**动画已经死了、血量却回弹**」的破状态
+  —— 索命造成的是"等同于目标当前生命值"的致死伤害，本该是处决；被锁血体系拦下后又回弹复活，
+  **客户端动画却留在原地**。用户原话：「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」
+  ⇒ **两个都做了**（后门治本、动画自愈治残留，二者各自独立可用）。
+- **实证依据（先实证、再动手 —— 这是"精确限定在索命"的来源）**：
+  - **调用链**（反编译 Goety 的 `KillingSpell.SpellResult`）：`ModDamageSource.deathCurse(target)`
+    → `MobUtil.hurtCalculation(...)` → **`target.hurt(source, amount)`** ⇒ 索命**走 `hurt()`**，
+    我们的覆写能看到它（这是后门能成立的前提）。
+  - **伤害类型确认**：`ModDamageSource.DEATH` 在**静态初始化**里由 **`create("death")`** 生成
+    （`invokestatic create` → `putstatic DEATH`）；jar 内亦有 **`data/goety/damage_type/death.json`**
+    （`message_id` = **`goety.death`**）⇒ 伤害类型就是 **`goety:death`**。
+  - **"只认索命"的关键实证**：**全 jar 扫描 `deathCurse` 的引用，只有 `KillingSpell` 一处**
+    （外加它在 `ModDamageSource` 里的定义）⇒ 按 `goety:death` 匹配**恰好等价于"索命聚晶"**、
+    **不会误伤别的法术**。
+  - **不需要编译期依赖 Goety 的类**：常量只用资源位置字符串构造
+    —— `ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation("goety", "death"))`；
+    **未装 Goety 时该键永不匹配**（`source.is(...)` 恒 false），后门自然失效、退回旧行为。
+- **实现：四处联动**（语义与 §3.11 的 `/kill` 后门同一套 —— 置标记后本次伤害原样交给原版结算）：
+  1. 新增字段 `private boolean deathCursePending = false;` + 常量 `GOETY_DEATH_CURSE`；
+  2. **`hurt()`**：`if (DEATH_CURSE_EXECUTION.get() && source.is(GOETY_DEATH_CURSE))` → 置标记 + **INFO** +
+     `return super.hurt(source, amount)` ⇒ **跳过**身份免疫（摔落/火/窒息/溺水）、**宽限期免疫**、**致死伤害截断**
+     （日志：`[Tuner] Death-curse backdoor (goety:death): bypassing lock-health protection (health={}, mark={}, amount={})`）；
+  3. **`maintainDeathState()` 最前面**：`if (this.adminKillPending || this.deathCursePending) return;` ⇒ **不回弹**、
+     也不做脏状态清理，让死亡流程正常走完；
+  4. **`canStillRevive()` 最前面**：`if (this.deathCursePending) return false;` ⇒ **不拦 `remove(KILLED)`**。
+     ⇒ 合起来：**索命能真正处决，无视剩余锁血档位**。
+- **⚠️ 关键坑（最容易漏、漏了后门就等于失效）**：**`actuallyHurt()` 的限伤 / 限DPS 也必须为它开口子**。
+  `goety:death` **不在任何 `BYPASSES_*` tag 里**（不像 `/kill` 的 `generic_kill` 天然被
+  `DamageTypeTags.BYPASSES_INVULNERABILITY` 放行）⇒ 必须**显式列出**。不这么写的话，
+  索命"等同于目标当前生命值"的致死伤害会被 `maxHitDamagePercent`（默认 25% 最大生命）削掉、**打不死 Boss**，
+  而且日志里看不出异常（只看到一次被限伤的命中）。
+- **状态清理**：`maintainDeathState()` 的"既没死也不在死亡动画"分支里与 `adminKillPending` 一起清掉
+  `deathCursePending` —— 防止"那次索命被其它模组取消"导致保护被**永久**关闭（那会让 Boss 此后对任何致死伤害都不再回弹）。
+- **新增配置**：**`boss.deathCurseExecution`**（`Boolean`，**默认 `true`**；`false` = 关闭后门、索命重新受锁血保护）
+  ⇒ 配置 **66 → 67 项**（`boss` 段 **19 → 20**，其余九段未变，section 仍 **10**）。
+  ⚠️ 键在 **`[boss]` 段**（`b.push("boss")` 块内，与 `maxDamagePerSecond` / `lockDeathRevive` 同段）。
+  属**新增键**（Forge 自动补进老 toml），但**配置界面没有入口** ⇒ 想关掉只能**手改 toml 后重启游戏**。
+- **代价（设计内，非 bug）**：索命会**对施法者反噬「目标当前生命值 125%」** ⇒ 它是**有代价的处决手段**，
+  不是"免费秒杀"。这也是把它做成可关闭配置项的理由。
+- **客户端死亡动画自愈（第 ② 件事）**：根因是 **`deathTime` 不是同步数据**（0.0.8 已实证）——
+  客户端的 `deathTime` 由**客户端自己**的 `LivingEntity.tickDeath()` 递增，而它**只看客户端本地的血量**；
+  服务端复活时只发**一次** `SEntityRevivePacket`，**若那一刻客户端的血量同步还没落地**，
+  客户端会在复位后**又自己把 `deathTime` 加上去** ⇒ 此后血量虽变正、动画**再没人清** = **永久躺着**。
+  服务端侧的"情形 A"（`maintainDeathState()`）在 `if (!level().isClientSide)` 分支里，**治不了这一侧**。
+  修法：`tick()` 的**客户端分支**加一条**对称自愈** —— 客户端**同样知道血量**（`DATA_HEALTH_ID` 是同步数据），
+  `if (this.deathTime > 0 && this.getHealth() > 0.0F) this.resetDeathAnimation("client stale death animation (...)")`
+  ⇒ **至多残留 1~2 tick**。**安全**：`resetDeathAnimation()` 只在 `level() instanceof ServerLevel` 时才发包，
+  **客户端调用不产生任何网络流量**，只把本地 `deathTime` / `hurtTime` / `hurtDuration` / `Pose.DYING` 清干净。
+- **实测行数核对**：`entity/TunerBoss.java` **2111 行**（0.0.16 为 2053）、
+  `config/TunerCommonConfig.java` **466 行**（0.0.16 为 456）；`.java` 总数仍 **45**；
+  配置 `.define` / `.defineInRange` 共 **67** 处 / `push(...)` **10** 段 / `[boss]` 段 **20** 处。
+- **未做**：**游戏内实测** —— 本轮只做到编译通过（主副本就地 `gradlew clean build` 成功，**1m9s**，
+  仍只有原有 3 条 Forge 弃用警告）+ jar 条目核对。
+- **部署产物**：`goetytuner-0.0.17.jar`（**1,757,576 B / md5 `B68C4D4FF9FC650796EDB003D2C53009` / jar 内 102 条目**）
+  → `versions\测试\mods\`（旧 0.0.16 已删）。⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`），
+  判断"部署的 jar 对应哪份源码"要**逐条目比对**，别看整体 md5（详见 `TECHNICAL_SUMMARY.md` §六）。
+
 ---
 
 ## 十、构建与运行
@@ -1138,5 +1237,6 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
 | LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |
 | 打得太快/被秒杀 | **`lockGraceTicks` / 档位数（`maxHealth` ÷ `lockHealthInterval`）**；`maxHitDamagePercent` / `maxDamagePerSecond`（仅作保险） | **实测结论：战斗时长主要由 `lockGraceTicks`（每档最短时长，默认 10t=0.5s）与档位数（默认 216/18 = 12 档）决定**——锁血阶梯把每次命中的有效伤害钳到一档，超出部分被丢弃，所以伤害上限不改变阶梯推进速度。`maxHitDamagePercent`（默认 0.25×216≈54，0=关闭）与 `maxDamagePerSecond`（默认 0=关闭）都只在**阶梯耗尽后**（血量 ≤18 那段）才可能起作用，主要作为防「秒杀式巨额伤害」的保险 |
-| Boss 卡在死亡动画不动 | `lockDeathRevive`（默认 true） | 0.0.8 已修（新增 `SEntityRevivePacket` 同步复位客户端死亡动画 + 脏状态只清动画不吃档位 + 锁血未耗尽时拦截 `remove(KILLED)`，**但 `/kill` 例外**）；若仍出现，先确认 `lockDeathRevive` 未被关闭 |
-| 想直接击杀 Boss（跳过锁血阶梯） | —（无对应配置） | 用 `/kill`（**0.0.9 起可用**：管理员指令识别 `DamageTypes.GENERIC_KILL`，无视锁血体系的全部保护）；常规输出仍受锁血阶梯约束 |
+| Boss 卡在死亡动画不动 | `lockDeathRevive`（默认 true） | 0.0.8 已修（新增 `SEntityRevivePacket` 同步复位客户端死亡动画 + 脏状态只清动画不吃档位 + 锁血未耗尽时拦截 `remove(KILLED)`，**但 `/kill` 例外**）；若仍出现，先确认 `lockDeathRevive` 未被关闭。**0.0.17 补充**：还有一类"**血量已回正、动画却永久留着**"的形态——根因是 `deathTime` **不是同步数据**，服务端只发**一次**复位包，若那一刻客户端血量同步还没落地，客户端会**自己再把 `deathTime` 加上去**（服务端侧治不了）。0.0.17 已在 `tick()` 的**客户端分支**加**对称自愈**（`deathTime > 0 && getHealth() > 0` 即直接复位，**无配置开关、始终生效**）⇒ 至多残留 1~2 tick。若仍长时间躺着，请开 DEBUG 日志看是否有 `client stale death animation` |
+| 想直接击杀 Boss（跳过锁血阶梯） | —（无对应配置） | 用 `/kill`（**0.0.9 起可用**：管理员指令识别 `DamageTypes.GENERIC_KILL`，无视锁血体系的全部保护）；**0.0.17 起「索命聚晶」也是一条路**（`goety:death` 同套后门语义，见下面一行）。常规输出仍受锁血阶梯约束 |
+| **被索命秒杀太强 / 想关掉索命后门** | **`boss.deathCurseExecution`** | **0.0.17 新增**，默认 **true** = 玩家用**索命聚晶**命中 Boss 时，`goety:death` 的致死伤害**无视剩余锁血档位直接处决**（跳过宽限期免疫 / 致死截断 / 限伤·限DPS / 死亡回弹 / `remove(KILLED)` 拦截）。**觉得"被索命一发秒掉太强"** ⇒ 改成 **`false`** = 关闭后门、索命重新受锁血保护（回到 0.0.17 之前的旧行为）。⚠️ 键在 **`[boss]` 段**（与 `maxDamagePerSecond` / `lockDeathRevive` 同段）；属**新增键**（Forge 会自动补进老 toml），但**配置界面没有入口** ⇒ **只能手改 `goetytuner-common.toml`，改完需重启游戏**。**取舍提示**：关掉后门后，索命打中 Boss 会回到"被锁血拦下 → 复活"的路径（同时仍可能留下动画残留，不过 0.0.17 的客户端自愈已处理残留）；另一条路是把 `goety:killing_focus` 加进 `focus.blacklist`（**拉黑** = Boss 干脆不抽这张聚晶）。**代价侧**：索命对施法者反噬「目标当前生命值 **125%**」，所以它是有代价的处决手段 |
