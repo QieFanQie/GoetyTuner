@@ -1,12 +1,14 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.9
-> 更新日期：2026-09-19
+> **0.0.10 美术交付**：参考身体贴图（头部原样）、8 阶披风、红/蓝/灰悬浮立方体与并行施法高亮、非对称径向声波、原版紫/亮蓝刷怪蛋已实现。配置 61 项，`accentWave=true`、`accentParticles=false`；已有配置需迁移旧粒子开关。网络协议 2.0，联机双方须同时更新。参数、预览、验证及游戏待验项见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.10
+> 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 47 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 48 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -15,7 +17,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.9 / 第 47 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；剩余美术资源、Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；上一轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；本轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）。
+当前状态（0.0.10 / 第 48 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；本轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；上一轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；本轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）。
 
 ---
 
@@ -41,13 +43,13 @@
 | 重音系统 | ✅ | 分阶段斥力+无前摇瞬发施法 |
 | 仆从管理 | ✅ | 数量上限+迟滞恢复+伤害归因 |
 | 客户端HUD | ✅ | 260×6 音乐条，三色分段（铺垫 0xFF5B9BE0 / 高潮 0xFFF26A4B / 低谷 0xFFB068E8）、分阶段重音样式（细线/「中」字/加粗）、二阶段锚定坠落条带 + scissor 裁剪 + wrap 补位、越线亮黄闪烁 |
-| 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段 |
-| 占位纹理 | ✅ | 64x64 PNG（黑立方头+紫眼+紫领带） |
-| 占位渲染器 | ✅ | HumanoidMobRenderer + PLAYER模型层 |
-| 配置系统 | ✅ | 60 项 / 10 个 section（toml） |
+| 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段；共 4 个通道（含 0.0.10 新增 `SAccentWavePacket` id 3，限 `PLAY_TO_CLIENT`），协议 2.0 严格匹配 |
+| 正式纹理 | ✅ | `tuner.png` 64x64 身体按参考图服装重画、头部仍是黑立方+蓝渐变（0.0.10）；另有 8 阶披风、立方体与声波贴图，自定义蛋贴图已删（改走原版模板） |
+| 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10） |
+| 配置系统 | ✅ | 61 项 / 10 个 section（toml） |
 | 实测验证 | ✅ | quickPlay自动进档验证通过（第 9/11 轮） |
 | 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮） |
-| 重音特效 | ✅ | 三波 END_ROD 同心冲击环 + 12 个 NOTE 音符爆发 + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮） |
+| 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮） |
 | 披风渲染层 | ✅ | `TunerCapeModel` + `TunerCapeLayer`（第 19 轮） |
 | 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮） |
 | 分类三层防线 | ✅ | 手动配置 → `instanceof ISummonSpell` 权威判定 → `describe()` 兼容 `.info`/`.desc` 双后缀 → 关键词兜底（第 29 轮） |
@@ -79,23 +81,23 @@ GeoEntity/GeoEntityRenderer，依赖已彻底移除（build.gradle + libs jar + 
 
 #### A1. 原版渲染方案（已实现第十九轮初版）
 - [x] `TunerRenderer`：HumanoidMobRenderer + 64x64 humanoid 贴图
-  - 全身（躯干/四肢）深紫色
+  - 身体按参考图制作紫黑外套、浅紫领口、紫色内衬与青蓝链饰（0.0.10）
   - 头部：内亮外深渐变淡蓝色（贴图径向渐变）
   - 帽子(hat)覆盖层贴图透明，不显示
-- [x] `TunerCapeLayer`：深紫色披风 RenderLayer（独立 64x32 贴图，独立模型层定义，
+- [x] `TunerCapeLayer`：8 阶紫黑到淡紫披风 RenderLayer（独立 64x32 贴图，独立模型层定义，
   跟随身体朝向 + 行走/时间摆动）
 - [ ] 后续打磨：施法抬臂姿态、二阶段破碎形态变体贴图、传送粒子
 
 #### A2. 资源文件
 ```
 assets/goetytuner/
-├── textures/entity/tuner.png       ← humanoid 64x64（深紫身体+渐变蓝头）
-├── textures/entity/tuner_cape.png  ← 披风 64x32（深紫）
+├── textures/entity/tuner.png       ← humanoid 64x64（参考服装+原样蓝头）
+├── textures/entity/tuner_cape.png  ← 披风 64x32（8 阶紫色）
 └── textures/gui/music_bar.png       ← 节奏条底图（可选，当前为纯色fill渲染）
 ```
 
 #### A3. 视觉特效
-- [x] 重音触发（第十九轮已实现）：三波 END_ROD 冲击环 + NOTE 音符爆发 + 阶段差异化
+- [x] 重音触发（0.0.10 更新）：10 环非对称径向声波，旧粒子默认关闭 + 阶段差异化
   紫水晶提示音（铺垫0.9/高潮1.4/低谷0.6）+ 客户端 HUD 亮黄描边闪烁
 - [ ] 传送：紫色烟雾粒子（替代Enderman紫色粒子或自定义）
 - [ ] 效果清除：净化粒子环
@@ -312,7 +314,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（60项 / 10个 section，第46轮实况）
+### `run/config/goetytuner-common.toml`（61项 / 10个 section，第48轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
@@ -357,14 +359,15 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2BuildupArcEveryN | 3 | 每 N 次铺垫攻击触发一次弧形瞬移 |
 | **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，实时解析不缓存） |
 | **wand_whitelist**（1项） | whitelist | "" | 法杖白名单（格式同上，供未加入 `goety:wands` 标签的附属法杖激活仪式） |
-| **music**（11项） | syncInterval | 20 | 音乐同步间隔 |
+| **music**（12项） | syncInterval | 20 | 音乐同步间隔 |
 | | accentKnockbackBase | 0.4 | 普通重音斥力 |
 | | accentKnockbackValley | 0.8 | 低谷重音斥力 |
 | | accentKnockbackClimax | 1.2 | 高潮重音斥力 |
 | | phase2ValleyKnockbackMultiplier | 2.0 | 二阶段低谷斥力倍率（注意：二阶段低谷被替换为铺垫，故该键在二阶段不可达） |
 | | accentShakeTicks | 10 | 重音镜头抖动持续 tick |
 | | accentShakeStrength | 2.0 | 重音镜头抖动强度 |
-| | accentParticles | true | 重音粒子开关 |
+| | accentParticles | false | 旧重音粒子开关（兼容选项） |
+| | accentWave | true | 非对称径向声波涟漪 |
 | | accentSound | true | 重音音效开关 |
 | | volume | 4.0 | Boss 音乐音量 |
 | | pitchPhase1 | 1.0 | 音乐播放速度（一/二阶段共用同一速度） |
@@ -382,6 +385,13 @@ AI自动初评分**已完整实现**。两条路径：
 > `[llm]` 端点默认面向国际（OpenAI：`https://api.openai.com/v1/chat/completions` + `gpt-4o-mini`）；
 > **中国大陆环境请改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`**
 > （0.0.5 实测：`api.openai.com` 连接超时、`api.deepseek.com` 可达；评分失败提示现已带目标 URL 与模型名）。
+>
+> ⚠️ **0.0.10 迁移提示（必须告知老玩家）**：`music.accentParticles` 是**已存在的键**，本轮只是把默认值
+> 由 `true` 改成 `false`（键保留为手动兼容选项）——**Forge 按 key 合并配置，不会用新默认值覆盖已有 toml**，
+> 所以老配置里它仍写着 `true`，会出现「旧粒子冲击环/音符 + 新声波涟漪」同时播放，需**手动改成 `false`**；
+> 而本次新增的 `music.accentWave`（默认 `true`）会被 Forge **自动补进**老 toml。
+> **⇒「新增键会自动补齐、无需删 toml」与「改默认值不会回填老 toml」是两件事，不要混为一谈。**
+> 本次已在用户实例 `versions\测试` 的 toml 手工迁移完毕（`accentParticles=false` + `accentWave=true`）。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
@@ -392,21 +402,23 @@ AI自动初评分**已完整实现**。两条路径：
 ### `run/config/goetytuner/focus_classification.json`
 - 结构为 `{apiKey, prompt, foci{<id>:{category,attackScore,survivalScore}}}`
 - 静态聚晶分类+评分表；LLM API Key 存储于此（不在 toml）
-- 当前实际只有 3 条示例条目，其余由启发式分类器兜底
+- 首次生成时只有 **3 条示例条目**（本仓库外的编译副本 `...\run\config\` 目前仍是这 3 条），其余由启发式分类器兜底；
+  而**游玩实例**里已用 LLM 批量评分写入 **277 条**（252 条离线 + 25 条游戏内，见 README 与
+  `TECHNICAL_SUMMARY.md` §七.6）——两处数字不同是因为**看的不是同一个文件**，不是矛盾
 - 运行时自动生成，可手动编辑覆盖
 
 ---
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.9 / 47 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.10 / 48 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
 - [x] ~~**B1-B2 音乐接入+标注**~~：曲目转码 + 分段/重音标注（第 20 轮）
 - [x] ~~**B3-B4 音乐播放控制完善+重音HUD**~~：客户端循环实例彻底解决重叠/不停（第 21 轮）
 - [x] ~~**A1-A2 原版渲染打磨**~~：初版贴图 + `TunerCapeModel`/`TunerCapeLayer`（第 19 轮）
-- [x] ~~**重音特效**~~：冲击环 + 音符爆发 + 阶段差异化音效（第 19/31 轮）
+- [x] ~~**重音特效**~~：冲击环 + 音符爆发 + 阶段差异化音效（第 19/31 轮；**0.0.10 改为 10 环非对称径向声波涟漪，旧粒子默认关闭**）
 - [x] ~~实测验证效果清除、锁血V2、传送间隔手感~~（数值已于第 25~34 轮重调）
 
 ### 仍待办
@@ -417,6 +429,7 @@ AI自动初评分**已完整实现**。两条路径：
 5. **E4 / E5**：DoT 伤害归因、召唤物 owner 识别
 6. **E7 音效**：死亡/受击/环境音效
 7. **A4 护甲显示确认**：确认与其他护甲显示 mod 无冲突
+8. **0.0.10 美术项游戏验收**：披风摆动、三颗立方体轨道与高潮并行高亮、透明声波与地形/水面/着色器交互、原版刷怪蛋观感（离线校验不能替代画面验收）
 
 ---
 
@@ -639,6 +652,41 @@ AI自动初评分**已完整实现**。两条路径：
   宽限期免疫/致死截断）；maintainDeathState() 与 canStillRevive() 均先看该标记（不回弹、不拦 remove(KILLED)）；
   状态正常时清除标记；限伤/限DPS 也显式跳过 GENERIC_KILL（不依赖 BYPASSES_INVULNERABILITY tag 内容）。
 
+### 第 48 轮（0.0.10）
+- **本轮是美术/表现层交付，不改战斗数值与施法流程**（新增 Java 4 个、改动 6 个、贴图 2 改 2 增 1 删）：
+  - 身体贴图 `tuner.png`（64×64）按用户参考图重画：紫黑外套、浅紫 V 领、紫色内衬/手套/裤靴、青蓝链饰；
+    **头部区（y 0..15 全宽）与 0.0.9 逐像素完全一致**（独立脚本验证 0 像素差异）。
+  - 披风 `tuner_cape.png`（64×32）改为 **8 条 × 每条 2 像素高**的色带
+    `#1E0D32 #38204D #523367 #6C4882 #875E9E #A078BA #BA96D8 #D4B6F2`，自上而下亮度单调递增。
+  - 悬浮立方体（新增 `TunerOrbLayer`/`TunerOrbModel`，模型层 `goetytuner:tuner_orb`）：3 颗边长 **0.30 格**、
+    公转半径 **1.05 格**、离脚约 **1.20 格**、上下浮动 ±0.06 格；三颗相位差 120°，公转 80 tick(4s)、
+    自转 Y 40 tick(2s) / X 60 tick(3s)；红 `#FF3B30`(攻击)/蓝 `#2FA8FF`(防御)/灰 `#C8C8C8`(召唤)，
+    施法时 RGB 增益至 1.8 并叠加 1.15 倍壳体（峰值 alpha 0.25），**3 tick 过渡**。
+  - 声波涟漪（新增 `AccentWaveRenderer`）：**10 环 × 32 角分段**，半径 0.6~6.0 格（间距 0.6），相邻环延迟
+    **2 tick**，每环升 8 / 落 8 tick（LIFE=16），总 **34 tick**；淡白半透明（顶部 alpha 峰值 0.32，
+    底部为顶部的 0.35 倍）；高度 `h=0.56*sin(πp)*(1+sin(3θ+0.10t−0.28i)*a)`，**峰侧 a=0.40 / 谷侧 a=0.27**
+    （非对称），地面偏移 0.01，**绝对最高 0.794 格**（设计 ≤0.8 格）；每次重音覆盖同实体旧波不叠加，
+    实体死亡/移除/换世界或超时清理，无活跃波时渲染器立即返回、不扫描世界实体。
+  - 刷怪蛋改走原版 `{"parent": "minecraft:item/template_spawn_egg"}`（主色 `0x8A2BE2` 紫 / 副色 `0x2FA8FF` 亮蓝），
+    自定义蛋贴图 `textures/item/tuner_spawn_egg.png` **已删除**。
+- **代码要点**：`TunerBoss` 新增 `DATA_CAST_CATEGORIES`（INT 位掩码，bit0=ATTACK/bit1=DEFENSE/bit2=SUMMON/bit3=OTHER）
+  驱动立方体高亮——**高潮是三通道并行施法，必须能同时点亮多颗**，单值「最后一次施法分类」会被后到的包覆盖；
+  计数用 `IdentityHashMap` 身份集合做**幂等**，避免「finish 之后又 failed」重复递减打穿并行通道计数
+  （详见 `TECHNICAL_SUMMARY.md` §3.12）。
+- **渲染实证**：`RenderType.entityTranslucent` **自带 NO_CULL**（圆柱面双面可见，无需手动 `disableCull`）；
+  顶点必须按 `NEW_ENTITY` 顺序写入 POSITION→COLOR→UV→OVERLAY→LIGHT→NORMAL（顺序错位不报错、只静默错乱）。
+- **配置与网络**：新增 `music.accentWave`（默认 **true**），并把**已有键** `music.accentParticles` 的默认值由
+  `true` 改为 `false`（键保留作手动兼容选项）；配置总数 **61 项 / 10 section**（`music` 段 11→12）。
+  网络协议 `1.0` → **`2.0` 且改严格匹配**（`"2.0"::equals`），注册第 4 个包 `SAccentWavePacket`（**通道 id 3**，
+  显式限 `PLAY_TO_CLIENT`）⇒ **联机双方必须同时更新到 0.0.10**，否则连接被拒。
+- ⚠️ **迁移（与「新增键自动补齐」是两件事）**：`accentParticles` 是**已有键**，Forge 按 key 合并、**不会用新默认值
+  覆盖已有 toml** → 老玩家文件里仍是 `true`（旧粒子与新声波同时出现），需**手动改成 `false`**；`accentWave`
+  是新增键，会自动补进老 toml。本次已在用户实例 `versions\测试` 的 toml 手工迁移
+  （`accentParticles=false` + `accentWave=true`）。
+- 部署产物：`goetytuner-0.0.10.jar`（1,750,152 B / md5 `5C05779CEC4CD4765BD2510EB4D4A6ED`）→ `versions\测试\mods\`。
+- **待验收**：披风摆动、立方体轨道与高潮并行高亮、声波与地形/水面/着色器交互、原版刷怪蛋观感均**尚未进游戏实测**
+  （离线校验只证明参数/逐像素/编译正确），见 `ART_ASSETS_REPORT.md`。
+
 ---
 
 ## 十、构建与运行
@@ -681,6 +729,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 高潮太难/太易 | `climaxWarmupMultiplier` | 0.5=前摇减半（更快施法），1.0=正常；施法窗口上限见 `maxCastWindowTicks`（当前 50） |
 | 重音推力太强/弱 | `accentKnockback*` | 0.4/0.8/1.2 = 普通/低谷/高潮；二阶段低谷已替换为铺垫，`phase2ValleyKnockbackMultiplier` 不可达 |
 | 重音手感 | `accentShakeTicks` / `accentShakeStrength` | 当前 10 tick / 2.0，调低可减轻镜头晃动 |
+| 重音特效（声波/粒子） | `accentWave` / `accentParticles` | 0.0.10 起声波 `accentWave=true`（10 环非对称径向涟漪，最高 0.794 格）、旧粒子 `accentParticles=false`；**老 toml 的 `accentParticles` 仍是 `true`，需手改**（见 §六迁移提示） |
 | 动态评分变化太慢/快 | `dpsAdjustRate` / `dynamicScoreCap` | rate=修正速率，cap=偏移上限 |
 | 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单，重启后不参与抽签 |
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |

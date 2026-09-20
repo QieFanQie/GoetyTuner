@@ -40,6 +40,7 @@ public class TunerRenderer extends HumanoidMobRenderer<TunerBoss, TunerModel> {
         super(ctx, new TunerModel(ctx.bakeLayer(ModelLayers.PLAYER)), 0.5F);
         // 深紫披风渲染层（模型层定义注册见 ClientSetup#onRegisterLayers）
         this.addLayer(new TunerCapeLayer(this, ctx.getModelSet()));
+        this.addLayer(new TunerOrbLayer(this, ctx.getModelSet()));
     }
 
     @Override

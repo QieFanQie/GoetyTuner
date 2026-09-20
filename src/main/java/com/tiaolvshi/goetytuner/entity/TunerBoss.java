@@ -21,6 +21,7 @@ import com.tiaolvshi.goetytuner.focus.FocusCategory;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
 import com.tiaolvshi.goetytuner.network.SMusicSyncPacket;
 import com.tiaolvshi.goetytuner.network.SEntityRevivePacket;
+import com.tiaolvshi.goetytuner.network.SAccentWavePacket;
 import com.tiaolvshi.goetytuner.network.TunerNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -85,6 +86,32 @@ import java.util.List;
  * 无限灵魂能量：不接SoulEnergy capability，耗蓝对非玩家施法本就不生效。
  */
 public class TunerBoss extends Monster implements CastChannel.TunerCastCallback {
+
+    private static final EntityDataAccessor<Integer> DATA_CAST_CATEGORIES =
+            SynchedEntityData.defineId(TunerBoss.class, EntityDataSerializers.INT);
+    private final int[] activeByCategory = new int[FocusCategory.values().length];
+    private final java.util.Set<com.tiaolvshi.goetytuner.focus.FocusEntry> activeVisualCasts =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final float[] orbHighlight = new float[3];
+    private final float[] previousOrbHighlight = new float[3];
+
+    public int getActiveCastCategories() { return entityData.get(DATA_CAST_CATEGORIES); }
+
+    public float getOrbHighlight(int category, float partialTick) {
+        return net.minecraft.util.Mth.lerp(partialTick, previousOrbHighlight[category], orbHighlight[category]);
+    }
+
+    private void changeCastCategory(com.tiaolvshi.goetytuner.focus.FocusEntry entry, int delta) {
+        // A finish callback may itself fail and be followed by onCastFailed. Count it only once.
+        if (delta > 0 ? !activeVisualCasts.add(entry) : !activeVisualCasts.remove(entry)) return;
+        int index = entry.getCategory().ordinal();
+        activeByCategory[index] = Math.max(0, activeByCategory[index] + delta);
+        int mask = 0;
+        for (int i = 0; i < activeByCategory.length; i++) {
+            if (activeByCategory[i] > 0) mask |= 1 << i;
+        }
+        if (getActiveCastCategories() != mask) entityData.set(DATA_CAST_CATEGORIES, mask);
+    }
 
     // ---- 同步数据（客户端动画/HUD用） ----
     private static final EntityDataAccessor<Integer> DATA_PHASE = SynchedEntityData.defineId(TunerBoss.class, EntityDataSerializers.INT);
@@ -292,6 +319,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         this.entityData.define(DATA_PHASE, BossPhase.BUILDUP.ordinal());
         this.entityData.define(DATA_PHASE2, false);
         this.entityData.define(DATA_CAST_STATE, 0);
+        this.entityData.define(DATA_CAST_CATEGORIES, 0);
     }
 
     @Override
@@ -323,6 +351,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      */
     @Override
     public void tick() {
+        if (this.level().isClientSide) {
+            int mask = isAlive() ? getActiveCastCategories() : 0;
+            for (int i = 0; i < 3; i++) {
+                previousOrbHighlight[i] = orbHighlight[i];
+                orbHighlight[i] = net.minecraft.util.Mth.clamp(orbHighlight[i]
+                        + ((mask & (1 << i)) != 0 ? 1F / 3 : -1F / 3), 0, 1);
+            }
+        }
         if (!this.level().isClientSide) {
             maintainDeathState();
         }
@@ -741,6 +777,9 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
                 level.sendParticles(net.minecraft.core.particles.ParticleTypes.NOTE,
                         px, py + 1.2D, pz, 1, 0.4D, 0.5D, 0.4D, noteSpeed);
             }
+        }
+        if (TunerCommonConfig.ACCENT_WAVE.get()) {
+            TunerNetwork.sendToTracking(new SAccentWavePacket(this.getId()), this);
         }
         // 3) 提示音：阶段差异化音调（原版紫水晶音，无需音频资源；铺垫0.9/高潮1.4/低谷0.6）
         if (TunerCommonConfig.ACCENT_SOUND.get()) {
@@ -1681,6 +1720,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public void onCastStart(com.tiaolvshi.goetytuner.focus.FocusEntry entry) {
+        changeCastCategory(entry, 1);
         // 【第三十一轮】计数器化：并行高潮通道下"任一通道前摇中"即施法中（见 castEnded 注释）
         castStarted();
         // 【2026-08-19 第十七轮】二阶段铺垫期：攻击法术开始前瞬移至 boss 身前半圆弧
@@ -1701,6 +1741,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public void onCastFinish(com.tiaolvshi.goetytuner.focus.FocusEntry entry) {
+        changeCastCategory(entry, -1);
         castEnded();
         if (!(this.level() instanceof ServerLevel level)) {
             return;
@@ -1746,12 +1787,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     @Override
     public void onCastInterrupted(com.tiaolvshi.goetytuner.focus.FocusEntry entry) {
+        changeCastCategory(entry, -1);
         // 【第三十一轮】阶段切换打断：此前未覆写导致 DATA_CAST_STATE 不清（旧bug）
         castEnded();
     }
 
     @Override
     public void onCastFailed(com.tiaolvshi.goetytuner.focus.FocusEntry entry) {
+        changeCastCategory(entry, -1);
         // 【第三十一轮】CastChannel 异常自愈（聚晶需玩家来源等）：施法已开始过，需递减计数。
         // 注意 beginCast 的 startSpell 异常路径不触发本回调（施法尚未开始，见 CastChannel）。
         castEnded();

@@ -1,6 +1,8 @@
 # Goety Tuner（调律师）技术摘要
 
-> 版本：0.0.9 ｜ 整理日期：2026-09-19 ｜ 覆盖轮次：第 1~47 轮
+> **0.0.10 美术交付**：参考身体贴图（头部原样）、8 阶披风、红/蓝/灰悬浮立方体与并行施法高亮、非对称径向声波、原版紫/亮蓝刷怪蛋已实现。配置 61 项，`accentWave=true`、`accentParticles=false`；已有配置需迁移旧粒子开关。网络协议 2.0，联机双方须同时更新。参数、预览、验证及游戏待验项见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+
+> 版本：0.0.10 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~48 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -16,7 +18,7 @@
 | 依赖 mod | goety 2.5.56.5、patchouli、curios-forge、configured（均为 dev 坐标式依赖） |
 | 作者 | toniat0, vibe-coding（https://github.com/QieFanQie/） |
 | 协议 | MIT |
-| 源码规模 | 41 个 Java 源文件（约 303 KB），包根 `com.tiaolvshi.goetytuner` |
+| 源码规模 | 45 个 Java 源文件（约 357 KB），包根 `com.tiaolvshi.goetytuner` |
 
 **定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss **主手常驻一把实体法杖**
 `goety:dark_wand`（`TunerBoss` 构造函数 `setItemInHand(MAIN_HAND, ModItems.DARK_WAND)`；
@@ -40,7 +42,7 @@ com.tiaolvshi.goetytuner
 │   ├── ModEvents.java               # 实体加入拦截 / 掉落 / 召唤物归属等
 │   └── ModBusEvents.java            # MOD 总线：属性、图层、屏幕
 ├── entity/
-│   ├── TunerBoss.java               # Boss 主体（1922 行核心类：AI 状态机 / 阶段 / 战斗数值）
+│   ├── TunerBoss.java               # Boss 主体（1964 行核心类：AI 状态机 / 阶段 / 战斗数值）
 │   ├── BossPhase.java               # 三阶段枚举（铺垫/高潮/低谷）
 │   ├── MusicController.java         # 服务端乐谱推进 / 阶段转换 / 重音触发
 │   └── ai/CastChannel.java          # 施法通道（前摇/高潮并行通道/瞬发）
@@ -65,14 +67,16 @@ com.tiaolvshi.goetytuner
 │   ├── TunerToast.java              # 客户端 Toast（LLM 评分/命令结果提示）
 │   ├── ClientSetup.java             # 图层定义注册 / 渲染器绑定
 │   ├── ClientDeathAnimation.java    # 客户端死亡动画复位（deathTime/hurtTime/姿态，由 SEntityRevivePacket 触发）
-│   └── render/                      # TunerRenderer/TunerModel/TunerCape*
+│   ├── AccentWaveRenderer.java      # 世界空间声波涟漪渲染（0.0.10 新增，AFTER_PARTICLES）
+│   └── render/                      # TunerRenderer/TunerModel/TunerCape*/TunerOrb*（悬浮立方体层，0.0.10）
 ├── network/
-│   ├── TunerNetwork.java            # 通道注册（id 0/1/2）
+│   ├── TunerNetwork.java            # 通道注册（id 0/1/2/3，协议 2.0 严格匹配）
 │   ├── SMusicSyncPacket.java        # 乐谱/进度/speed 同步（服务端→客户端）
 │   ├── SShakePacket.java            # 镜头震动同步
-│   └── SEntityRevivePacket.java     # 死亡动画复位同步（0.0.8 新增，通道 id 2，发给所有追踪者）
+│   ├── SEntityRevivePacket.java     # 死亡动画复位同步（0.0.8 新增，通道 id 2，发给所有追踪者）
+│   └── SAccentWavePacket.java       # 声波涟漪触发同步（0.0.10 新增，通道 id 3，限 PLAY_TO_CLIENT）
 ├── config/
-│   └── TunerCommonConfig.java       # 全部可调参数（common toml，60 项 / 10 个 section）
+│   └── TunerCommonConfig.java       # 全部可调参数（common toml，61 项 / 10 个 section）
 ├── command/
 │   └── TunerCommands.java           # /goetytuner 命令（tune 等）
 └── ritual/
@@ -88,7 +92,8 @@ com.tiaolvshi.goetytuner
 TunerBoss.aiStep ─┐
   ├─ 乐谱推进 MusicController.tick ──→ SMusicSyncPacket(进度/speed/分段) ──→ MusicStateClient.smoothed()
   ├─ 重音命中 onAccent ──────────────→ 击退+粒子+音效（服务端）  ／        └─→ MusicBarHud 渲染
-  │                                   └→ SShakePacket(震动) ──→ ClientCameraShake
+  │                                   ├→ SShakePacket(震动) ──→ ClientCameraShake
+  │                                   └→ SAccentWavePacket(声波, id3) ──→ AccentWaveRenderer
   ├─ 抽签 CastChannel ── FocusPoolManager.draw → spell.mobSpellResult ─→ Goety 法术生效
   └─ 阶段转换 enterPhase2 ── 自buff/回血/进场连发 ──→ 客户端阶段切换（HUD 分段配色；音频不换速）
 ```
@@ -170,24 +175,40 @@ TunerBoss.aiStep ─┐
 - **HUD**：260×6 音乐条，分段配色（铺垫蓝 0xFF5B9BE0 / 高潮橙 0xFFF26A4B / 低谷紫 0xFFB068E8）；
   指针与二阶段判定线 5px；重音刻度分阶段样式（铺垫细线 / 高潮「中」字 / 低谷加粗）；
   本地越线检测触发亮黄描边闪烁 8 帧渐隐（免额外网络包）。
-- **重音特效**（服务端 onAccent）：三波 END_ROD 同心冲击环 + 12 个 NOTE 音符爆发 +
-  原版紫水晶音（阶段差异化音调 0.9/1.4/0.6）；二阶段进场连发 6 次
+- **重音特效**（服务端 onAccent）：非对称径向声波涟漪（0.0.10 起默认开启 `accentWave=true`，
+  参数与渲染实证见 §3.12） + 原版紫水晶音（阶段差异化音调 0.9/1.4/0.6）；旧的 END_ROD 冲击环 +
+  NOTE 音符粒子默认关闭（`accentParticles=false`，键保留作手动兼容选项）；二阶段进场连发 6 次
   `accentKnockbackPulse`（击退+冲击环+音效，每 5tick 一发，音调递升 0.8+0.15i）。
 
 ### 3.4 渲染（原版模型方案，无 GeckoLib）
 
-- Boss 用原版 `HumanoidMobRenderer` + 自定义贴图（PIL 生成，anaconda python 才有 PIL）：
-  tuner.png 64×64（深紫渐变躯干 + 头部径向渐变 + 透明帽子层）、tuner_cape.png 64×32。
+- Boss 用原版 `HumanoidMobRenderer` + 自定义贴图（PIL / 图像脚本生成，anaconda python 才有 PIL）：
+  - `textures/entity/tuner.png` 64×64：身体按用户参考图重画——紫黑外套、浅紫 V 领、紫色内衬/手套/裤靴、
+    青蓝链饰（**0.0.10**）；**头部区（y 0..15 全宽）与 0.0.9 逐像素完全一致**（已独立脚本验证 0 像素差异），
+    帽子(hat)层贴图透明、不显示。
+  - `textures/entity/tuner_cape.png` 64×32：**0.0.10** 改为 **8 条、每条 2 像素高**的逐层色带
+    `#1E0D32 #38204D #523367 #6C4882 #875E9E #A078BA #BA96D8 #D4B6F2`，自上而下亮度单调递增。
 - 自定义披风层：`TunerCapeModel`（EntityModel 子类，`LAYER_LOCATION` 必须
   **ModelLayerLocation**，须实现 renderToBuffer 委托）；`TunerCapeLayer` 用
   `body.translateAndRotate` 跟随躯干，`Axis.XP` 正角度 = 下摆向身后(+z)摆。
-- 刷怪蛋：16×16 圆润椭圆蛋形贴图（黑紫渐变 + 双紫斑 + 高光阴影）+ 无 tintindex 的
-  `models/item/tuner_spawn_egg.json`（不被 ForgeSpawnEggItem 自动染色）。
+- **悬浮立方体层（0.0.10 新增）**：`TunerOrbModel`（`ModelLayerLocation` = `goetytuner:tuner_orb`，
+  模型层定义由 `ClientSetup#onRegisterLayers` 注册）+ `TunerOrbLayer`（由 `TunerRenderer` 挂载）。
+  3 颗边长 **0.30 格**的立方体，贴图 `textures/entity/tuner_orb.png` 16×16（中性灰白，颜色由代码乘算）；
+  公转半径 1.05 格、离脚约 1.20 格、上下浮动 ±0.06 格；三颗相位差 120°，公转 80 tick(4s)、
+  自转 Y 40 tick(2s) / X 60 tick(3s)；颜色红 `#FF3B30`(攻击)/蓝 `#2FA8FF`(防御)/灰 `#C8C8C8`(召唤)，
+  施法高亮由实体同步的**位掩码**驱动（见 §3.12）。
+- 刷怪蛋（0.0.10 改）：模型 JSON 只写 `{"parent": "minecraft:item/template_spawn_egg"}`（方案 1），
+  直接复用原版的轮廓/斑点/染色机制；`ModItems` 颜色改为主色 `0x8A2BE2`（紫）+ 副色 `0x2FA8FF`（亮蓝）；
+  原先 16×16 的自定义蛋贴图 `textures/item/tuner_spawn_egg.png` **已删除**（不再需要 tintindex 特判）。
 - HUD 裁剪：`enableScissor(GuiGraphics)` 裁剪音乐条可视区。
 
 ### 3.5 网络与配置
 
-- `TunerNetwork` 通道：SMusicSyncPacket（进度/speed/分段/演奏实体集）、SShakePacket。
+- `TunerNetwork` 通道（id 0~3）：SMusicSyncPacket（进度/speed/分段/演奏实体集）、SShakePacket、
+  SEntityRevivePacket（id 2，0.0.8）、SAccentWavePacket（id 3，0.0.10，声波涟漪触发，
+  注册时显式限 `PLAY_TO_CLIENT`）。**0.0.10 起网络协议版本由 `"1.0"` 提升为 `"2.0"`，且从宽松匹配
+  改为严格匹配**（注册处写 `"2.0"::equals`）——因为本轮新增了实体同步字段（施法分类位掩码，见 §3.12）
+  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10**，否则协议不匹配、连接被拒。
   0.0.5 起 `SMusicSyncPacket` 改为**先检测 128 格内有无玩家，无人接收时不构造、不发送**
   （原先先构造包体——`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组——再判断；
   Boss 设了 `setPersistenceRequired`，附近无玩家时仍会空跑）。
@@ -203,10 +224,17 @@ TunerBoss.aiStep ─┐
   可诊断性：每批结束打 INFO `[Tuner] LLM batch i/n: sent X foci -> applied Y`，全部结束后若 `applied < 总数`
   打 **WARN** `LLM classify covered only X/Y foci`（提示模型只返回了部分条目，**已应用的结果不会丢失**，可再点一次「开始评分」补齐）。
   依据：本轮离线脚本 `scripts/llm_score_foci.py` 用同样的分批策略实测 **252/252 全部返回、0 非法 id、0 遗漏、0 幻觉**。
-- `TunerCommonConfig`：common toml，**60 项、10 个 section**——`boss`(19) / `phase2_buffs`(3) /
+- `TunerCommonConfig`：common toml，**61 项、10 个 section**——`boss`(19) / `phase2_buffs`(3) /
   `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
-  `music`(11) / `llm`(2) / `wand_upgrade`(6)，
+  `music`(12) / `llm`(2) / `wand_upgrade`(6)，
   Configured 中文分类引导；`music_score.json`、`focus_classification.json` 运行时双写。
+- **⚠️ 0.0.10 配置迁移（务必告知玩家）**：`music.accentWave`（默认 **true**）是**本次新增的键**，
+  Forge 合并配置时会**自动补进**已有 toml；但 `music.accentParticles` 是**已存在的键**，本轮只是把
+  **默认值由 `true` 改成 `false`**（键保留为手动兼容选项）——**Forge 不会用新默认值覆盖已有 toml**，
+  所以老玩家文件里它仍然写着 `true`，会出现「旧粒子冲击环/音符 + 新声波」同时播放。
+  ⇒ 必须**手动改成 `false`**（本次已在用户实例 `versions\测试` 的 toml 手工迁移：
+  `accentParticles=false` + 新增 `accentWave=true`）。**口径：「新增键会自动补齐、无需删 toml」
+  与「改默认值不会回填老 toml」是两件事**，不要混为一谈。
 
 ### 3.6 战斗数值（v0.5.0 / v0.6.0 调整后）
 
@@ -484,6 +512,66 @@ KillCommand → Entity.kill() →（虚分派）LivingEntity.kill() → hurt(dam
 3. **情形 A（脏状态清理，`stale death animation`）不受影响**，仍然照常生效——那才是用户最初反馈的
    「血量不为 0 但已在死亡动画」的修复，其触发源是外部回血/复活而非 `/kill`。
 
+### 3.12 0.0.10 美术交付的技术要点（立方体高亮 / 声波涟漪 / 渲染实证）
+
+本轮是**表现层交付，不改战斗数值与施法流程**：新增 Java 文件 4 个（`client/AccentWaveRenderer`、
+`client/render/TunerOrbLayer`、`client/render/TunerOrbModel`、`network/SAccentWavePacket`），
+改动 `entity/TunerBoss`、`config/TunerCommonConfig`、`network/TunerNetwork`、`client/ClientSetup`、
+`client/render/TunerRenderer`、`init/ModItems`（刷怪蛋配色）；贴图 2 改（`tuner.png`、`tuner_cape.png`）
++ 2 增（`tuner_orb.png`、`accent_wave.png`）+ 1 删（`item/tuner_spawn_egg.png`）。
+贴图与预览参数见 `ART_ASSETS_REPORT.md`；下面只记与代码设计有关的四条。
+
+**（1）立方体高亮用「位掩码」而不是「最后一次施法的分类」**
+
+`TunerBoss` 新增同步数据 `DATA_CAST_CATEGORIES`（`SynchedEntityData` 的 **INT 位掩码**：
+bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定点亮哪几颗立方体
+（红 `#FF3B30` 攻击 / 蓝 `#2FA8FF` 防御 / 灰 `#C8C8C8` 召唤）。
+
+- 服务端维护 `activeByCategory[]`（长度 = `FocusCategory.values().length`）计数，计数 > 0 时置对应位；
+  **只在掩码真正变化时写 `entityData`**（沿用 §3.7「无变化不写同步数据」的原则）。
+- **为什么不能只存"最后一次施法的分类"**：高潮是**三通道并行**施法，同一 tick 可能攻击+防御+召唤
+  同时在施法中；单值字段只能表达其中一个，后到的包会把先到的覆盖掉，观感就是「只亮一颗」。
+  位掩码天然表达「同时点亮多颗」，而 4 个分类用一个 INT 就够，同步开销与单值字段完全一样。
+
+**（2）计数的幂等去重（`IdentityHashMap` 身份集合）**
+
+并行通道会重复进入同一次施法的收尾回调（典型：`finish` 之后异常路径又走一次 `failed`）。
+若只按「回调次数」增减计数，同一条通道会被减两次 → 把仍在施法的其它通道计数打穿、客户端高亮提前熄灭。
+⇒ `TunerBoss` 持有**一个**按对象身份的「当前活跃聚晶」集合
+（`Collections.newSetFromMap(new IdentityHashMap<>())`，**全实体共用一个即可**——一个 `FocusEntry` 只属于一个分类），
+`changeCastCategory(entry, ±1)` 的逻辑是：
+`if (delta > 0 ? !set.add(entry) : !set.remove(entry)) return;`——
+即 **`add`/`remove` 真的成功了才动计数**（首次加入才算开始、真正移除才算结束），
+失败的重复回调直接返回。用**身份**而非 `equals`，是因为池的锁池/归还可能出现等价副本，
+只有对象身份才对应「这一次施法实例」。
+> ⚠️ 它**只解决"重复递减"，不解决"缺失递减"**：若某次施法 start 之后 finish/interrupted/failed **一个都没来**
+> （见 §七 的 `CastChannel` 回调不平衡边界），该分类计数会卡在 > 0、立方体一直高亮。
+> 根治需要让 `CastChannel` 保证回调严格成对。
+
+**（3）两条渲染实证（省掉不必要的代码）**
+
+- **`RenderType.entityTranslucent(texture)` 自带 `NO_CULL`**——本轮实证确认（含延迟批次提交路径），
+  所以声波圆柱面**天然双面可见**，**不需要**再手工翻 `disableCull`/额外状态开关（也避免破坏合批）。
+- **顶点必须按 `NEW_ENTITY`（`DefaultVertexFormat.NEW_ENTITY`）的顺序写入**：
+  **POSITION → COLOR → UV → OVERLAY → LIGHT → NORMAL**，即 `vertex(...)` → `color(...)` → `uv(...)` →
+  `overlayCoords(...)` → `uv2(...)` → `normal(...)` → `endVertex()`。顺序写错**不会抛异常**，
+  只会静默出现错乱的颜色/光照/法线——这是 1.20.1 `VertexConsumer` 最隐蔽的一类错。
+
+**（4）声波涟漪：服务端只发「触发」，波形在客户端解析式生成**
+
+- 触发链：`TunerBoss.accentKnockbackPulse()` 在 `music.accentWave` 开关下
+  `sendToTracking(new SAccentWavePacket(id))`（**通道 id 3**，限 `PLAY_TO_CLIENT`）→ 客户端
+  `AccentWaveRenderer.trigger()` 记下「实体 id → 起始 gameTime」→ 渲染钩子
+  `RenderLevelStageEvent.Stage.AFTER_PARTICLES` 逐环画环。**网络里没有任何顶点/几何数据**。
+- 参数：**10 环 × 32 角分段**，半径 0.6~6.0 格（间距 0.6），相邻环延迟 **2 tick**，每环升 8 / 落 8 tick
+  （`LIFE=16`），总时长 **34 tick**（`(RINGS-1)*DELAY+LIFE`）；淡白半透明（顶部 alpha 峰值 0.32，
+  底部取顶部的 0.35 倍）。
+- 高度函数 `h = 0.56*sin(πp)*(1 + sin(3θ + 0.10t − 0.28i)*a)`，**峰侧 a=0.40、谷侧 a=0.27**（非对称，
+  两侧不等高）；地面偏移 0.01 ⇒ 绝对最高 **0.794 格**（设计要求 ≤0.8 格）。
+- 生命周期：每次重音**覆盖同实体旧波、不叠加**；实体死亡/移除/换世界或超时都会清理；
+  **无活跃波时渲染器立即返回、不扫描世界实体**（活跃表是有界 `Map<实体id, 起始tick>`，
+  自然支持多个调律师同时播放且互不干扰）。
+
 ---
 
 ## 四、关键工程决策与红线（踩坑沉淀）
@@ -523,13 +611,13 @@ KillCommand → Entity.kill() →（虚分派）LivingEntity.kill() → hurt(dam
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~47 轮浓缩）
+## 五、版本演进时间线（第 1~48 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -563,6 +651,7 @@ KillCommand → Entity.kill() →（虚分派）LivingEntity.kill() → hurt(dam
 | v0.0.7 | 45 | LLM 批量评分改分批请求（修 200 聚晶只应用 25 条）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；实证「锁血机制已隐含限伤，限伤/限DPS 在当前设计下作用有限」 |
 | v0.0.8 | 46 | 附属模组变化健壮性加固（扫描逐项兜底、beginCast/instantCast/interrupt/finishCast 全流程兜底、returnEntry 幂等）+ 死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不吃档位、拦截 remove(KILLED)） |
 | v0.0.9 | 47 | 为 /kill 打开后门：识别 DamageTypes.GENERIC_KILL 后跳过宽限期免疫/致死截断/死亡回弹/remove 拦截（字节码实证调用链 KillCommand→Entity.kill()→LivingEntity.kill()→hurt(genericKill, MAX_VALUE)） |
+| v0.0.10 | 48 | 美术交付：身体贴图按参考图重画（头部区逐像素不变）+ 8 阶色带披风 + 红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）+ 非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）+ 刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；网络协议 1.0→**2.0 严格匹配**，联机需双方同版本 |
 
 ---
 
@@ -576,6 +665,8 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 # 验证（reobf jar 覆写方法显示 SRG 名，字符串检查会漏报 → 用 javap 验证方法表）
 # 部署：删游戏 mods 旧 jar → 放新 jar；大改默认值须删 config/goetytuner-common.toml
+# 0.0.10 例外：只需手改一行——accentParticles 是【已有键】，Forge 不会用新默认值覆盖老 toml，
+#   请把 accentParticles 改成 false（新键 accentWave 会自动补齐，无需删 toml）；详见 §3.5。
 # 同步：D:\tiaolvshi\goety-tuner（主副本：git 仓库 / 权威源码）
 #       → robocopy src /MIR → D:\测试\tiaolvshi\goety-tuner（编译/运行副本，只用于构建）
 # 游戏实例：versions\测试（Forge 47.4.23，实例内 Goety 2.5.56.5，与开发依赖一致）
@@ -586,7 +677,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
-| 0.0.9 | `goetytuner-0.0.9.jar` | 1,737,089 B | `75149715D273613A6E750679CC66B29E` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+| 0.0.10 | `goetytuner-0.0.10.jar` | 1,750,152 B | `5C05779CEC4CD4765BD2510EB4D4A6ED` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
 
 > 部署前务必确认**没有 java 进程在运行**（jar 被占用会导致替换静默失败）；
 > 部署后需**重启游戏**才会加载新 jar。
@@ -614,10 +705,16 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    E7 现状：`getAmbientSound` / `getDeathSound` / `getHurtSound` 三者均 `return null`，
    代码内带 TODO 注释。
 5. 挂载在 goetytwilight 等附属上的兼容测试（D 计划）待扩展。
+6. **0.0.10 美术项待游戏验收**：披风摆动、三颗立方体轨道与施法高亮（含高潮多通道同时点亮）、
+   透明声波与地形/水面/着色器的交互、原版刷怪蛋并排观感，均**尚未进游戏实测**——
+   离线脚本只证明了尺寸/参数/逐像素一致与代码编译通过，不能替代画面验收
+   （详见 `ART_ASSETS_REPORT.md`「验证与待验收」）。
+   另本轮**发现但未改动**的既有边界：`CastChannel` 在开始回调之后仍有日志调用，
+   异常路径下外层兜底的回调可能不配平（本轮未触碰施法流程，故保留现状）。
 
-### 已知缺陷与待办（0.0.9 时点）
+### 已知缺陷与待办（0.0.10 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.9** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.10** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。

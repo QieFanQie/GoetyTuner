@@ -43,7 +43,7 @@ public class ModItems {
     /** 调律师刷怪蛋（dev/测试与创造模式便捷生成；正式召唤方式见开发计划"结构/仪式"） */
     public static final RegistryObject<ForgeSpawnEggItem> TUNER_SPAWN_EGG =
             ITEMS.register("tuner_spawn_egg", () ->
-                    new ForgeSpawnEggItem(ModEntities.TUNER, 0x1E1E28, 0x7B5CD6, new Item.Properties()));
+                    new ForgeSpawnEggItem(ModEntities.TUNER, 0x8A2BE2, 0x2FA8FF, new Item.Properties()));
 
     public static final RegistryObject<CreativeModeTab> TUNER_TAB =
             CREATIVE_TABS.register("tuner_tab", () ->

@@ -27,7 +27,7 @@ public class TunerNetwork {
     public static void init() {
         INSTANCE = NetworkRegistry.newSimpleChannel(
                 new ResourceLocation(GoetyTuner.MOD_ID, "channel"),
-                () -> "1.0", s -> true, s -> true);
+                () -> "2.0", "2.0"::equals, "2.0"::equals);
 
         // 音乐同步包：服务端 → 客户端（进度tick、阶段枚举、二阶段标记）
         INSTANCE.registerMessage(nextID(), SMusicSyncPacket.class,
@@ -41,6 +41,9 @@ public class TunerNetwork {
         // （deathTime 非同步数据，服务端复活后必须显式通知客户端清动画）
         INSTANCE.registerMessage(nextID(), SEntityRevivePacket.class,
                 SEntityRevivePacket::encode, SEntityRevivePacket::decode, SEntityRevivePacket::consume);
+        INSTANCE.registerMessage(nextID(), SAccentWavePacket.class,
+                SAccentWavePacket::encode, SAccentWavePacket::decode, SAccentWavePacket::consume,
+                java.util.Optional.of(net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static void sendToPlayer(Object pkt, ServerPlayer player) {

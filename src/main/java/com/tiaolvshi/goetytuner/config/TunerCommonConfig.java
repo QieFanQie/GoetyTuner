@@ -104,6 +104,7 @@ public class TunerCommonConfig {
 
     // ---- 重音特效（第十九轮）----
     public static final ForgeConfigSpec.BooleanValue ACCENT_PARTICLES;  // 粒子冲击环+音符爆发
+    public static final ForgeConfigSpec.BooleanValue ACCENT_WAVE;
     public static final ForgeConfigSpec.BooleanValue ACCENT_SOUND;      // 阶段差异化提示音
 
     // ---- 音乐播放（第十九轮）----
@@ -304,7 +305,9 @@ public class TunerCommonConfig {
         ACCENT_SHAKE_STRENGTH = b.comment("视角震颤强度（摄像机roll抖动幅度，度）")
                 .defineInRange("accentShakeStrength", 2.0, 0.0, 10.0);
         ACCENT_PARTICLES = b.comment("重音特效-粒子：三波END_ROD同心冲击环 + NOTE音符爆发（boss头顶）")
-                .define("accentParticles", true);
+                .define("accentParticles", false);
+        ACCENT_WAVE = b.comment("重音特效：逐层非对称径向声波涟漪（最高0.794格）")
+                .define("accentWave", true);
         ACCENT_SOUND = b.comment("重音特效-提示音：阶段差异化音调的紫水晶音（铺垫0.9/高潮1.4/低谷0.6，使用原版音效无需音频资源）")
                 .define("accentSound", true);
         MUSIC_VOLUME = b.comment("boss战音乐播放音量（0-8，0=静音；客户端循环实例的增益，1=原音量）")

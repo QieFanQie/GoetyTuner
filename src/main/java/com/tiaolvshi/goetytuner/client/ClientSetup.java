@@ -12,6 +12,7 @@ package com.tiaolvshi.goetytuner.client;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.init.ModEntities;
 import com.tiaolvshi.goetytuner.client.render.TunerCapeModel;
+import com.tiaolvshi.goetytuner.client.render.TunerOrbModel;
 import com.tiaolvshi.goetytuner.client.render.TunerRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -35,6 +36,7 @@ public class ClientSetup {
     @SubscribeEvent
     public static void onRegisterLayers(EntityRenderersEvent.RegisterLayerDefinitions event) {
         event.registerLayerDefinition(TunerCapeModel.LAYER_LOCATION, TunerCapeModel::createBodyLayer);
+        event.registerLayerDefinition(TunerOrbModel.LAYER_LOCATION, TunerOrbModel::createBodyLayer);
     }
 
     /**
