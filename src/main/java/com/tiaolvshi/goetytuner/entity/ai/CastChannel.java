@@ -54,6 +54,29 @@ public class CastChannel {
     private int castTicksElapsed;
     private ItemStack wandSnapshot = ItemStack.EMPTY;
 
+    // ================= 【0.0.19】「长按持续释放」类法术（IChargingSpell）的通道状态 =================
+
+    /**
+     * 本次施法是否为「长按持续释放」型（{@link com.Polarice3.Goety.api.magic.IChargingSpell}）。
+     *
+     * <p>用户报的 bug：腐化 / 震撼 / 炼狱这类聚晶在调律师身上**只放一瞬间就停了**（被当成瞬发用了）。
+     * 根因有两层，见 {@link #tickChannel} 与 {@code TunerWand} 的类注释。
+     */
+    private boolean channeled;
+    /** 蓄力到第几 tick 才开始真正放（来自 {@code IChargingSpell#castUp}）。 */
+    private int channelChargeTicks;
+    /** 总时长上限对应的 {@code castTicksElapsed} 值（到点即结束——用户要求的"用时上限"）。 */
+    private int channelEndTick;
+    /** 距下一次开火还有几 tick（来自 {@code IChargingSpell#Cooldown}）。 */
+    private int channelFireTimer;
+    /** 本次通道已经放了几发。 */
+    private int channelShots;
+
+    /**
+     * 单次通道最多开火次数（防御性硬上限；正常由时长/时长上限/法术自己的 {@code shotsNumber} 收口）。
+     */
+    private static final int MAX_CHANNEL_SHOTS = 400;
+
     /**
      * 【0.0.12】本次施法是否已经发出过 {@code onCastStart}。
      *
@@ -133,7 +156,11 @@ public class CastChannel {
                 // 模拟 DarkWand.onUseTick：每tick useSpell
                 spell.useSpell(level, boss, boss.getMainHandItem(), castTicksElapsed, stats);
 
-                if (--warmupTicksRemaining <= 0) {
+                if (channeled) {
+                    // 【0.0.19】「长按持续释放」类法术：不是"蓄力一次然后放一发"，
+                    // 而是"蓄力到点后按法术自己的节奏反复释放，直到用时上限"。
+                    tickChannel(level, boss, spell, stats);
+                } else if (--warmupTicksRemaining <= 0) {
                     // 前摇结束：结算法术效果（直接调 SpellResult，等价于 Spell.mobSpellResult 的服务端路径）
                     spell.SpellResult(level, boss, boss.getMainHandItem(), stats);
                     finishCast();
@@ -143,10 +170,14 @@ public class CastChannel {
                 GoetyTuner.LOGGER.error("[Tuner] Spell {} threw exception during cast (likely needs player source). "
                         + "Auto-blacklisting focus {}.", current.getItemId(), current.getItemId(), t);
                 FocusPoolManager.runtimeBlacklist(current.getItemId().toString());
+                // 【0.0.19】通道型法术在中途抛异常时也必须松手 + 复位通道标志，
+                // 否则施法者会永久保持"使用中"、且腐化光束这类实体会永远不消失。
+                stopChannelUse(boss);
                 callback.onCastFailed(current);
                 callback.pools().returnEntry(current);
                 current = null;
                 state = State.IDLE;
+                channeled = false;
             }
         }
     }
@@ -163,12 +194,40 @@ public class CastChannel {
         if (entry == null) {
             return false;
         }
-        // 【0.0.8 健壮性】把整条施法流程统一兜底。
-        // 附属模组的法术实现（ISpell）可能在 conditionsMet / castDuration / startSpell /
-        // CastingSound / castingVolume 等**任一处**抛异常；原实现只 try 了 startSpell，
-        // 其余几步抛出的异常会沿 tickBuildup/tickClimax → aiStep → serverAiStep 一路冒泡，
-        // **直接崩服**（整合包里换一批附属模组就可能触发）。
-        // 现在任一步抛异常都按"该聚晶不可用"处理：运行期拉黑 + 归还功能池（幂等）+ 复位通道。
+        return tryStartCast(level, entry, warmupMultiplier);
+    }
+
+    /**
+     * 【0.0.18】用**指定**聚晶起手（仆从的「优先释放」指令）。
+     *
+     * <p>与 {@link #beginCast} 的唯一区别是"聚晶不是抽出来的，而是调用方点名的"：
+     * 抽签路径（轮盘赌权重 / 均匀随机）整个被跳过，其余流程（conditionsMet → 装配法杖 →
+     * 锁池 → startSpell → 锁朝向 → 音效 → onCastStart）**完全共用** {@link #startCast}。
+     *
+     * <p>本方法不会校验 {@code entry} 是否属于本通道的 {@code category}——
+     * 调用方应当把条目路由到**它自己类别**的通道上（{@code entry.getCategory()} 决定），
+     * 否则 {@code tick()} 里"攻击类蓄力中目标丢失则打断"的判定会张冠李戴。
+     *
+     * @param entry 必须来自 {@code callback.pools()}（否则锁池/冷却记账会对不上）
+     */
+    public boolean beginCast(ServerLevel level, FocusEntry entry, double warmupMultiplier) {
+        if (state != State.IDLE || entry == null) {
+            return false;
+        }
+        startEmitted = false;
+        return tryStartCast(level, entry, warmupMultiplier);
+    }
+
+    /**
+     * 【0.0.8 健壮性】把整条施法流程统一兜底。
+     *
+     * <p>附属模组的法术实现（ISpell）可能在 conditionsMet / castDuration / startSpell /
+     * CastingSound / castingVolume 等**任一处**抛异常；原实现只 try 了 startSpell，
+     * 其余几步抛出的异常会沿 tickBuildup/tickClimax → aiStep → serverAiStep 一路冒泡，
+     * **直接崩服**（整合包里换一批附属模组就可能触发）。
+     * 现在任一步抛异常都按"该聚晶不可用"处理：运行期拉黑 + 归还功能池（幂等）+ 复位通道。
+     */
+    private boolean tryStartCast(ServerLevel level, FocusEntry entry, double warmupMultiplier) {
         try {
             return startCast(level, entry, warmupMultiplier);
         } catch (Throwable t) {
@@ -176,7 +235,7 @@ public class CastChannel {
                     entry.getItemId(), t.toString(), t);
             FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
             // 【0.0.12】回调成对性：若 startCast 已经发出 onCastStart（异常发生在它之后），
-            // 这里必须补发一次结束回调，否则 TunerBoss 的施法状态计数与立方体类别掩码会永久 > 0。
+            // 这里必须补发一次结束回调，否则宿主侧的施法状态计数与立方体类别掩码会永久 > 0。
             // （startCast 已把 onCastStart 放到 return 前最后一步，所以正常不会走到这里；
             //  这是防将来有人在它后面加代码的第二道保险。）
             if (startEmitted) {
@@ -189,9 +248,95 @@ public class CastChannel {
                 }
             }
             callback.pools().returnEntry(entry); // 幂等：已归还/未锁池时不会重复添加
+            // 【0.0.19】异常逃逸时若已经是通道型施法，必须松手（否则施法者永远"使用中"、
+            // 腐化光束这类实体也永远不会消失）
+            stopChannelUse(callback.boss());
             current = null;
             state = State.IDLE;
+            channeled = false;
             return false;
+        }
+    }
+
+    /**
+     * 【0.0.19】「长按持续释放」类法术（{@link IChargingSpell}）的每 tick 推进。
+     *
+     * <h2>用户报的 bug 与它的两层根因</h2>
+     * <p>现象：**腐化 / 震撼 / 炼狱**这类"长按持续释放"的聚晶，在调律师（以及仆从）身上
+     * 只放一瞬间就停了 —— 被当成瞬发法术用了。反编译 Goety 2.5.56.5 后定位到两层原因：
+     *
+     * <ol>
+     *   <li><b>只结算一次</b>：玩家的施法路径（{@code DarkWand.onUseTick}）对
+     *       {@code IChargingSpell} 是"蓄力到 {@code castUp} 之后，每 {@code Cooldown} tick 调一次
+     *       {@code MagicResults}（→ {@code SpellResult}）"，一直持续到松手；
+     *       而本通道原先只在前摇结束时调**一次** {@code SpellResult}。于是轰炸/雷电/暴雪这类
+     *       "每发生成一个实体"的法术只出了一发。</li>
+     *   <li><b>实体下一 tick 就自毁</b>：腐化光束（{@code CorruptedBeam}）继承自
+     *       {@code AbstractBeam}，它的 tick 里有
+     *       {@code if (itemBase && !MobUtil.isSpellCasting(owner)) discard();}，
+     *       而 {@code isSpellCasting} = {@code isUsingItem() && 使用物 instanceof IWand && 法杖里有聚晶}。
+     *       **Mob 从不 startUsingItem** ⇒ 光束刚生成就被丢弃 ⇒ 玩家看到的就是"闪一下"。</li>
+     * </ol>
+     *
+     * <p>因此本方法做两件事：① 用 {@code startUsingItem(MAIN_HAND)} 让施法者**真的在"使用法杖"**
+     * （为此本模组自备 {@code TunerWand}，它没有任何 Item 层副作用，见其类注释）；
+     * ② 按法术自己的 {@code Cooldown} / {@code shotsNumber} 节奏反复释放。
+     *
+     * <h2>用时上限（用户明确要求"给一个用时上限，防止它停不下来"）</h2>
+     * <p>上限 = {@code casting.channelMaxTicks}（默认 **20 tick = 1 秒**），到点必然
+     * {@code finishCast()}（会 {@code stopUsingItem}）。三条独立的收口条件，谁先到算谁：
+     * ① 总时长到上限；② 法术自己的 {@code shotsNumber}（&gt;0 时）放完；
+     * ③ {@link #MAX_CHANNEL_SHOTS} 防御性硬上限。
+     *
+     * <p>⚠️ 顺带回答另一个常见疑问：老配置项 {@code casting.maxCastWindowTicks}（默认 50）
+     * 此前**只**用于"把前摇截断到 2.5 秒"（这也是为什么长按类法术以前会站桩 2.5 秒才放一发），
+     * 它并不是"持续释放的时长上限"——持续释放的时长上限是本轮新增的
+     * {@code casting.channelMaxTicks}。
+     */
+    private void tickChannel(ServerLevel level, LivingEntity caster, com.Polarice3.Goety.api.magic.ISpell spell,
+                             com.Polarice3.Goety.common.magic.SpellStat stats) {
+        if (!(spell instanceof com.Polarice3.Goety.api.magic.IChargingSpell charging)) {
+            // 理论上不可达（channeled 就是这么判定的）；兜底走普通路径，绝不把通道卡死
+            if (--warmupTicksRemaining <= 0) {
+                spell.SpellResult(level, caster, caster.getMainHandItem(), stats);
+                finishCast();
+            }
+            return;
+        }
+        // ① 维持"正在使用法杖"：被打断（受伤、其它模组 stopUsingItem 等）时自愈。
+        //    这是 AbstractBeam 那类"以法杖为基准"的实体存活的前提。
+        if (!caster.isUsingItem()) {
+            caster.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+        }
+        // ② 蓄力满之后按法术自己的节奏反复释放
+        if (castTicksElapsed >= channelChargeTicks && --channelFireTimer <= 0) {
+            int interval;
+            try {
+                interval = charging.Cooldown(caster, caster.getMainHandItem(), channelShots);
+            } catch (Throwable t) {
+                interval = 1;
+            }
+            channelFireTimer = Math.max(1, interval);
+            spell.SpellResult(level, caster, caster.getMainHandItem(), stats);
+            ++channelShots;
+            // ③ 防御性硬上限（正常永远先被"持续时长上限"收口）
+            //
+            // ⚠️【0.0.19 修正】这里**故意不再**用 `IChargingSpell#shotsNumber` 提前结束通道。
+            // 起因（用户反馈）：箭雨聚晶（`ArrowRainSpell extends EverChargeSpell`，`shotsNumber` =
+            // `SpellConfig.ArrowRainDuration` 默认 **100**）实测"几乎没有持续"。
+            // 反编译核对玩家侧 `DarkWand#onUseTick` 后发现：**它从不因 shotsNumber 停止开火** ——
+            // shotsNumber 只被用来 (a) 给 `ShotsFired` 计数、(b) 松开右键时按比例算冷却
+            //（`releaseUsing` 里 `coolPercent = ShotsFired / shotsNumber`）。
+            // 也就是说玩家按住就一直放、放多少发只影响之后的冷却 ⇒ 本模组若按 shotsNumber 截断，
+            // 就会比玩家**更早停手**，与"忠实模拟玩家长按"的目标相悖。真正的收口只有下面那条时长上限。
+            if (channelShots >= MAX_CHANNEL_SHOTS) {
+                finishCast();
+                return;
+            }
+        }
+        // ④ 持续释放时长上限（`casting.channelMaxTicks`；**不含前面的蓄力**，见 startCast 的说明）
+        if (castTicksElapsed >= channelEndTick) {
+            finishCast();
         }
     }
 
@@ -203,6 +348,7 @@ public class CastChannel {
         if (spell == null) {
             return false;
         }
+        channeled = false; // 【0.0.19】每次起手先归零，避免上一轮的通道状态泄漏到本轮
         // 条件不满足（如地形/天气限制）则换下一个：直接放弃本次，聚晶留在池中
         if (!spell.conditionsMet(level, boss)) {
             return false;
@@ -221,17 +367,56 @@ public class CastChannel {
 
         current = entry;
         castTicksElapsed = 0;
-        // 【2026-08-18 第十三轮】蓄力时长封顶：Goety castDuration 默认 5-10 秒甚至 300 秒，
-        // boss 照搬会站桩蓄力过久。截断到 maxCastWindowTicks（【第二十六轮起】默认50=2.5秒），
-        // 保底10tick(0.5秒)。
-        // 玩家提前松手（releaseUsing→MagicResults）是合法释放路径，提前结算安全。
-        int raw = (int) Math.max(1, spell.castDuration(boss, boss.getMainHandItem()) * warmupMultiplier);
-        int window = TunerCommonConfig.MAX_CAST_WINDOW_TICKS.get();
-        int warmup = Math.min(raw, window);
-        if (warmup < 10) {
-            warmup = Math.min(10, Math.max(1, raw)); // 不强制拉长原本更短的前摇
+
+        // 【0.0.19】分两条路：普通法术 = 前摇一次然后放一发；「长按持续释放」法术 = 蓄力后连续放。
+        // 判定依据是 Goety 自己的 IChargingSpell（腐化/震撼/暴雪/轰炸/旋风…全是它的子类）。
+        channeled = spell instanceof com.Polarice3.Goety.api.magic.IChargingSpell;
+        if (channeled) {
+            var charging = (com.Polarice3.Goety.api.magic.IChargingSpell) spell;
+            // ⚠️【0.0.19 修正 · 关键】蓄力与"持续释放"是**两段互不重叠**的时间，必须分别给预算：
+            //     总时长 = 蓄力(channelChargeTicks) + 持续(channelMaxTicks) = channelEndTick
+            //
+            // 起因（用户反馈）：箭雨聚晶实测"几乎没有持续"。
+            // 根因是我第一版把它写成"总时长 = channelMaxTicks、蓄力从里面扣"，于是
+            // `ArrowRainSpell`（`castUp` = `SpellConfig.ArrowRainChargeUp` 默认 **20**）在
+            // `channelMaxTicks` 默认 **20** 的情况下 ⇒ 蓄力就吃掉 19 tick、只剩 1 tick 开火
+            // ⇒ **整整一发**，看起来就是"闪一下"。
+            // 玩家侧的真实语义是：`castUp` 决定"按住多久才开始放"，之后**一直放**直到松手
+            // （`DarkWand#onUseTick` 每 tick 走一遍 `COOL >= Cooldown` 判定）⇒ 两段相加才对。
+            int sustain = Math.max(5, TunerCommonConfig.CHANNEL_MAX_TICKS.get());
+            // 蓄力取法术自己的 castUp，并吃高潮/二阶段的前摇倍率；**单独**用老的
+            // maxCastWindowTicks 封顶（避免某个法术 castUp 极大时站桩过久 —— 那是老键的本职）。
+            int up = 0;
+            try {
+                up = charging.castUp(boss, boss.getMainHandItem());
+            } catch (Throwable t) {
+                GoetyTuner.LOGGER.error("[Tuner] castUp threw for {} (assuming 0).", entry.getItemId(), t);
+            }
+            channelChargeTicks = (int) Math.max(0L, Math.min(
+                    (long) TunerCommonConfig.MAX_CAST_WINDOW_TICKS.get(),
+                    Math.round(up * warmupMultiplier)));
+            channelEndTick = channelChargeTicks + sustain;
+            channelFireTimer = 0;
+            channelShots = 0;
+            warmupTicksRemaining = sustain; // 仅作兜底路径使用
+            // 让施法者**真的开始"使用法杖"**：AbstractBeam 那类实体靠
+            // MobUtil.isSpellCasting(caster) 判定存活（详细理由见 tickChannel 的 javadoc）。
+            boss.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+            GoetyTuner.LOGGER.debug("[Tuner] Channelled cast {} (charge={}, sustain={}, total={})",
+                    entry.getItemId(), channelChargeTicks, sustain, channelEndTick);
+        } else {
+            // 【2026-08-18 第十三轮】蓄力时长封顶：Goety castDuration 默认 5-10 秒甚至 300 秒，
+            // boss 照搬会站桩蓄力过久。截断到 maxCastWindowTicks（【第二十六轮起】默认50=2.5秒），
+            // 保底10tick(0.5秒)。
+            // 玩家提前松手（releaseUsing→MagicResults）是合法释放路径，提前结算安全。
+            int raw = (int) Math.max(1, spell.castDuration(boss, boss.getMainHandItem()) * warmupMultiplier);
+            int window = TunerCommonConfig.MAX_CAST_WINDOW_TICKS.get();
+            int warmup = Math.min(raw, window);
+            if (warmup < 10) {
+                warmup = Math.min(10, Math.max(1, raw)); // 不强制拉长原本更短的前摇
+            }
+            warmupTicksRemaining = warmup;
         }
-        warmupTicksRemaining = warmup;
         state = State.WARMUP;
 
         // 【2026-08-18 第十三轮】锁池：立即从功能池移除，防止高潮多通道/重音瞬发争抢同一聚晶。
@@ -257,8 +442,11 @@ public class CastChannel {
                     spell.getClass().getSimpleName(), current.getItemId(), t);
             FocusPoolManager.runtimeBlacklist(current.getItemId().toString());
             callback.pools().returnEntry(current);
+            // 【0.0.19】通道型法术可能已经 startUsingItem：这里必须松手，否则施法者会一直"使用中"
+            stopChannelUse(boss);
             current = null;
             state = State.IDLE;
+            channeled = false;
             return false;
         }
         var sound = spell.CastingSound(boss);
@@ -280,6 +468,10 @@ public class CastChannel {
 
     private void finishCast() {
         LivingEntity boss = callback.boss();
+        // 【0.0.19】「长按持续释放」类法术结束：必须让施法者松手（stopUsingItem）。
+        // 否则一来 isSpellCasting 会一直为真（腐化光束这类"以法杖为基准"的实体会永远不消失），
+        // 二来施法者会一直保持"使用中"的同步状态。
+        stopChannelUse(boss);
         // 【0.0.8 健壮性】spellCooldown 也是第三方法术实现；它抛异常时不能让结算中断——
         // 否则聚晶留在锁池状态（既不在功能池也没进冷却池）永久丢失。失败则退化为纯额外冷却。
         int cooldown;
@@ -295,6 +487,23 @@ public class CastChannel {
         callback.onCastFinish(current);
         current = null;
         state = State.IDLE;
+        channeled = false;
+    }
+
+    /**
+     * 【0.0.19】结束"长按"状态：让施法者松手。
+     *
+     * <p>只在本次施法确实是通道型时才动手 —— 普通法术从不 {@code startUsingItem}，
+     * 无条件 {@code stopUsingItem} 可能误伤别的模组让 Boss 正在使用的物品
+     * （例如某个附属给 Boss 挂的引导型道具）。
+     */
+    private void stopChannelUse(LivingEntity caster) {
+        if (!channeled) {
+            return;
+        }
+        if (caster.isUsingItem()) {
+            caster.stopUsingItem();
+        }
     }
 
     /** 强制打断（进入高潮/低谷时由阶段切换调用 / 蓄力中目标丢失） */
@@ -312,6 +521,8 @@ public class CastChannel {
                 GoetyTuner.LOGGER.error("[Tuner] Spell {} threw on stopSpell (ignored, cast still released).",
                         spell == null ? "?" : spell.getClass().getSimpleName(), t);
             }
+            // 【0.0.19】通道型法术被打断同样要松手（否则腐化光束会一直挂在那儿）
+            stopChannelUse(boss);
             callback.onCastInterrupted(current);
             // 【2026-08-18 第十三轮】归还功能池（无冷却）：打断不应惩罚聚晶
             callback.pools().returnEntry(current);
@@ -319,6 +530,7 @@ public class CastChannel {
         }
         current = null;
         state = State.IDLE;
+        channeled = false;
     }
 
     /** 无前摇瞬发（重音触发时使用：其他类聚晶） */

@@ -11,6 +11,7 @@ package com.tiaolvshi.goetytuner.init;
 
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.entity.TunerBoss;
+import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraftforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -29,8 +30,11 @@ public class ModBusEvents {
     @SubscribeEvent
     public static void onAttributes(EntityAttributeCreationEvent event) {
         event.put(ModEntities.TUNER.get(), TunerBoss.createAttributes().build());
+        // 【0.0.18】调律师仆从的属性表（同样只能用常量：本事件在注册阶段 fire，config 未加载；
+        // 实际数值在 TunerServant 构造函数里按 config 覆盖）
+        event.put(ModEntities.TUNER_SERVANT.get(), TunerServant.createAttributes().build());
         // 注册确认日志：若日志缺失且游戏内反复刷 "has no attributes"，说明本类
         // 被移到了错误的 event bus（必须是 MOD bus）或订阅失效。
-        GoetyTuner.LOGGER.info("[GoetyTuner] Registered attribute supplier for entity 'tuner'");
+        GoetyTuner.LOGGER.info("[GoetyTuner] Registered attribute suppliers for 'tuner' and 'tuner_servant'");
     }
 }

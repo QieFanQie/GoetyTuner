@@ -14,6 +14,7 @@ import com.Polarice3.Goety.init.ModAttributes;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.entity.TunerBoss;
+import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
@@ -44,7 +45,9 @@ import java.util.UUID;
  *
  * <ul>
  *   <li><b>掉落</b>：仪式召唤的 Boss 死亡时掉落「原始法杖快照 + 加成 NBT」，
- *       并从掉落列表移除战斗中已被改写的法杖（快照制，见设计文档 5.1 修订）；</li>
+ *       并从掉落列表移除战斗中已被改写的法杖（快照制，见设计文档 5.1 修订）；
+ *       【0.0.20】仪式召唤的**仆从**死亡时掉落「召唤用杖快照，不加不减」（见
+ *       {@link #dropServantSummonWand}）；</li>
  *   <li><b>10% 巫法加成</b>：玩家手持升级法杖时给实体挂 SPELL_POTENCY 的
  *       MULTIPLY_TOTAL 百分比 modifier（Goety 原生施法通道，天然乘法叠加语义）；</li>
  *   <li><b>40% 魔法伤害加成</b>：LivingDamageEvent 拦截魔法伤害 ×(1+加成)；</li>
@@ -92,6 +95,10 @@ public class WandUpgradeEvents {
 
     @SubscribeEvent
     public static void onLivingDrops(LivingDropsEvent event) {
+        if (event.getEntity() instanceof TunerServant servant) {
+            dropServantSummonWand(event, servant);
+            return;
+        }
         if (!(event.getEntity() instanceof TunerBoss boss)) {
             return;
         }
@@ -111,6 +118,39 @@ public class WandUpgradeEvents {
         event.getDrops().add(item);
         GoetyTuner.LOGGER.info("[Tuner] Ritual boss dropped upgraded wand: {} ({})",
                 boss.getName().getString(), drop.getDisplayName().getString());
+    }
+
+    /**
+     * 【0.0.20 新增】**仆从死亡时把召唤用杖原样还给玩家**（用户需求）。
+     *
+     * <p>用户原话："当调律师仆从死亡时，掉落召唤用的法杖。（并不会有加成，原样返回）"
+     * ⇒ 与 Boss 的掉落**刻意不同**：
+     * <ul>
+     *   <li><b>Boss</b>：掉"原始快照 + {@link #applyWandUpgrade} 叠加调律加成"（击杀奖励）；</li>
+     *   <li><b>仆从</b>：掉**召唤时那把杖的完整副本**（附魔 / 聚晶 / 已有的调律加成全部保留），
+     *       **不额外加任何东西**。用户括号里的"并不会有加成"指的是"不会再被加成一次"，
+     *       而不是"把原有的加成剥掉"（已与用户确认）。</li>
+     * </ul>
+     * 仪式结束时法杖已被祭坛 {@code shrink(1)} 消耗，所以这里掉的是
+     * {@link TunerServant#getSummonWand()} 存下来的那份快照 —— 刷怪蛋 / {@code /summon}
+     * 出来的仆从没有快照，**不掉任何东西**（保持原行为）。
+     *
+     * <p>同样先移除主手那把 {@code tuner_wand}（它是配发给 AI 的施法载体，
+     * {@code setDropChance(MAINHAND, 0)} 本来就让它掉不出来；这里再兜一道，
+     * 防止将来有人改掉掉落概率时白送一把杖）。
+     */
+    private static void dropServantSummonWand(LivingDropsEvent event, TunerServant servant) {
+        ItemStack summonWand = servant.getSummonWand();
+        if (summonWand.isEmpty()) {
+            return;
+        }
+        event.getDrops().removeIf(e -> e.getItem().getItem() instanceof IWand);
+        ItemEntity item = new ItemEntity(servant.level(),
+                servant.getX(), servant.getY() + 0.5D, servant.getZ(), summonWand.copy());
+        item.setDefaultPickUpDelay();
+        event.getDrops().add(item);
+        GoetyTuner.LOGGER.info("[Tuner] Tuner servant died, returned its summoning wand: {} ({})",
+                servant.getUUID(), summonWand.getDisplayName().getString());
     }
 
     // ================= 10% 巫法加成（SPELL_POTENCY 百分比 modifier） =================
@@ -149,8 +189,8 @@ public class WandUpgradeEvents {
             return;
         }
         double total = 0.0D;
-        total += witchcraftOf(player.getMainHandItem());
-        total += witchcraftOf(player.getOffhandItem());
+        total += witchcraftBonus(player.getMainHandItem());
+        total += witchcraftBonus(player.getOffhandItem());
         AttributeModifier existing = attr.getModifier(POTENCY_MODIFIER_UUID);
         if (existing != null && Math.abs(existing.getAmount() - total) < 1.0E-4D) {
             return; // 数值未变：不触碰 attribute（零开销）
@@ -163,8 +203,20 @@ public class WandUpgradeEvents {
         }
     }
 
-    /** 只读读取（不 getOrCreate，避免污染无 tag 物品的 NBT） */
-    private static double witchcraftOf(ItemStack stack) {
+    /**
+     * 读取法杖的「调律·巫法加成」（**小数**：{@code 0.10} = +10%）。
+     *
+     * <p>只读读取（不 {@code getOrCreate}，避免污染无 tag 物品的 NBT）。
+     * 非 {@link IWand} / 无 tag / 无该键一律返回 {@code 0.0D}。
+     *
+     * <p>【0.0.20】由 {@code private witchcraftOf} 提升为 {@code public}：
+     * 与 {@link #magicDamageBonus} 同理，它是"法杖的巫法加成是多少"的**唯一实现**，
+     * 现在有两个消费方 —— 本类的 SPELL_POTENCY modifier、
+     * 以及 {@link com.tiaolvshi.goetytuner.combat.ServantWandBlessing}
+     * （换算成百分数决定仆从增益档位；用户要求**以巫法加成为准**，因为它的默认值 +10%
+     * 比魔法伤害加成的 +40% 陡峭得多，档位爬升才是"打了很多次"才到得的高度）。
+     */
+    public static double witchcraftBonus(ItemStack stack) {
         if (stack.isEmpty() || !(stack.getItem() instanceof IWand)) {
             return 0.0D;
         }
@@ -189,12 +241,12 @@ public class WandUpgradeEvents {
         // 实际加成取法杖 NBT 中叠加后的值（多次击败叠加生效），而非配置单次值
         double magicBonus;
         if (attacker instanceof Player player) {
-            magicBonus = magicBonusOf(player.getMainHandItem())
-                    + magicBonusOf(player.getOffhandItem()); // 双持两把升级杖叠加
+            magicBonus = magicDamageBonus(player.getMainHandItem())
+                    + magicDamageBonus(player.getOffhandItem()); // 双持两把升级杖叠加
         } else if (attacker instanceof TunerBoss) {
             // Boss 手持升级法杖时是否同样加成（默认 false，防自伤放大）
             magicBonus = TunerCommonConfig.WAND_BONUS_APPLIES_TO_BOSS.get()
-                    ? magicBonusOf(attacker.getMainHandItem()) : 0.0D;
+                    ? magicDamageBonus(attacker.getMainHandItem()) : 0.0D;
         } else {
             magicBonus = 0.0D;
         }
@@ -203,8 +255,19 @@ public class WandUpgradeEvents {
         }
     }
 
-    /** 只读读取（不 getOrCreate，避免污染无 tag 物品的 NBT） */
-    private static double magicBonusOf(ItemStack stack) {
+    /**
+     * 读取法杖的「调律·魔法伤害加成」（**小数**：{@code 0.40} = +40%）。
+     *
+     * <p>只读读取（不 {@code getOrCreate}，避免污染无 tag 物品的 NBT）。
+     * 非 {@link IWand} / 无 tag / 无该键一律返回 {@code 0.0D}。
+     *
+     * <p>【0.0.20】由 {@code private magicBonusOf} 提升为 {@code public}：
+     * 它是"法杖加成是多少"的**唯一实现**，现在有三个消费方 ——
+     * 本类的伤害加成、{@link com.tiaolvshi.goetytuner.ritual.TunerServantSummonRitual#isTunedWand}
+     * （判定仪式中心那把杖算不算"有调律加成"）、
+     * {@link com.tiaolvshi.goetytuner.combat.ServantWandBlessing}（换算成百分数决定仆从增益档位）。
+     */
+    public static double magicDamageBonus(ItemStack stack) {
         if (stack.isEmpty() || !(stack.getItem() instanceof IWand)) {
             return 0.0D;
         }

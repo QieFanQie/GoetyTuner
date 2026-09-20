@@ -17,6 +17,17 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import net.minecraft.server.level.ServerPlayer;
 
 public class TunerNetwork {
+
+    /**
+     * 【0.0.18】网络协议版本 {@code "2.0"} → {@code "2.1"}。
+     *
+     * <p>本版改掉了既有包 {@code SAccentWavePacket}（通道 id 3）的**载荷结构**：
+     * 由"实体 id（varint）"改为"三个 double 的世界坐标"。同 id 不同结构的包在新旧客户端之间
+     * 会**解码错位**（旧客户端会把 8 个字节的 double 当成 varint 读），因此必须提升协议号——
+     * 沿用 0.0.10 定下的规矩：**严格匹配**（{@code equals}），联机双方必须同版本。
+     */
+    public static final String PROTOCOL_VERSION = "2.1";
+
     private static SimpleChannel INSTANCE;
     private static int id = 0;
 
@@ -27,7 +38,7 @@ public class TunerNetwork {
     public static void init() {
         INSTANCE = NetworkRegistry.newSimpleChannel(
                 new ResourceLocation(GoetyTuner.MOD_ID, "channel"),
-                () -> "2.0", "2.0"::equals, "2.0"::equals);
+                () -> PROTOCOL_VERSION, PROTOCOL_VERSION::equals, PROTOCOL_VERSION::equals);
 
         // 音乐同步包：服务端 → 客户端（进度tick、阶段枚举、二阶段标记）
         INSTANCE.registerMessage(nextID(), SMusicSyncPacket.class,

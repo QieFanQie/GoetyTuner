@@ -3,7 +3,7 @@ package com.tiaolvshi.goetytuner.client.render;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import com.tiaolvshi.goetytuner.GoetyTuner;
-import com.tiaolvshi.goetytuner.entity.TunerBoss;
+import com.tiaolvshi.goetytuner.entity.OrbHighlightSource;
 import net.minecraft.client.model.geom.EntityModelSet;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -12,9 +12,16 @@ import net.minecraft.client.renderer.entity.RenderLayerParent;
 import net.minecraft.client.renderer.entity.layers.RenderLayer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.LivingEntity;
 
-/** Three category indicators; animation state belongs to each entity, never the shared renderer. */
-public class TunerOrbLayer extends RenderLayer<TunerBoss, TunerModel> {
+/**
+ * Three category indicators; animation state belongs to each entity, never the shared renderer.
+ *
+ * <p>【0.0.18】改为**泛型 + 面向接口**：高亮数据来自 {@link OrbHighlightSource}
+ * （Boss 与调律师仆从都实现它），渲染层因此不再依赖具体的实体类，
+ * 一份代码同时服务 {@code TunerRenderer} 与 {@code TunerServantRenderer}。
+ */
+public class TunerOrbLayer<T extends LivingEntity & OrbHighlightSource> extends RenderLayer<T, TunerModel<T>> {
     private static final ResourceLocation TEXTURE = new ResourceLocation(GoetyTuner.MOD_ID,
             "textures/entity/tuner_orb.png");
     private static final RenderType CORE = RenderType.entitySolid(TEXTURE);
@@ -31,13 +38,13 @@ public class TunerOrbLayer extends RenderLayer<TunerBoss, TunerModel> {
             {47 / 255F, 168 / 255F, 1}, {200 / 255F, 200 / 255F, 200 / 255F}};
     private final TunerOrbModel model;
 
-    public TunerOrbLayer(RenderLayerParent<TunerBoss, TunerModel> parent, EntityModelSet models) {
+    public TunerOrbLayer(RenderLayerParent<T, TunerModel<T>> parent, EntityModelSet models) {
         super(parent);
         model = new TunerOrbModel(models.bakeLayer(TunerOrbModel.LAYER_LOCATION));
     }
 
     @Override
-    public void render(PoseStack pose, MultiBufferSource buffers, int light, TunerBoss entity,
+    public void render(PoseStack pose, MultiBufferSource buffers, int light, T entity,
                        float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks,
                        float netHeadYaw, float headPitch) {
         if (entity.isInvisible() || !entity.isAlive()) return;

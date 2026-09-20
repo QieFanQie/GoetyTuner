@@ -10,8 +10,10 @@
 package com.tiaolvshi.goetytuner.client.render;
 
 import com.tiaolvshi.goetytuner.entity.TunerBoss;
+import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.geom.ModelPart;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 
 /**
@@ -28,15 +30,21 @@ import net.minecraft.world.entity.Pose;
  * <p>本子类只做一件事：setupAnim 前把服务端 {@link Pose#CROUCHING}（原版 DATA_POSE
  * 数据同步，零额外网络包）映射到 {@code crouching} 字段，原版蹲姿动画即自动生效。
  * 资源占用：每帧一次枚举比较，可忽略。
+ *
+ * <p>【0.0.18】改为**泛型**（{@code TunerModel<T extends LivingEntity>}）：
+ * 原来写死成 {@code HumanoidModel<TunerBoss>}，而调律师仆从
+ * （{@link TunerServant}，与 Boss {@link TunerBoss} 同形同贴图）也要用这套模型。
+ * 泛型化之后两个渲染器各自实例化 {@code TunerModel<TunerBoss>} / {@code TunerModel<TunerServant>}，
+ * 模型代码仍然只有一份。
  */
-public class TunerModel extends HumanoidModel<TunerBoss> {
+public class TunerModel<T extends LivingEntity> extends HumanoidModel<T> {
 
     public TunerModel(ModelPart root) {
         super(root);
     }
 
     @Override
-    public void setupAnim(TunerBoss entity, float limbSwing, float limbSwingAmount,
+    public void setupAnim(T entity, float limbSwing, float limbSwingAmount,
                           float ageInTicks, float netHeadYaw, float headPitch) {
         this.crouching = entity.hasPose(Pose.CROUCHING);
         super.setupAnim(entity, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch);

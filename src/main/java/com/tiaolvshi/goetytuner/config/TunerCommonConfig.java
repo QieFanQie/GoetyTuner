@@ -80,6 +80,8 @@ public class TunerCommonConfig {
     // ---- 施法 ----
     public static final ForgeConfigSpec.IntValue EXTRA_CAST_COOLDOWN;    // boss额外施法冷却（防复读，tick）
     public static final ForgeConfigSpec.IntValue MAX_CAST_WINDOW_TICKS; // 施法窗口封顶（boss每次蓄力最大tick数）
+    /** 【0.0.19】「长按持续释放」类聚晶（Goety 的 IChargingSpell）单次施法的总时长上限 */
+    public static final ForgeConfigSpec.IntValue CHANNEL_MAX_TICKS;
     public static final ForgeConfigSpec.DoubleValue CLIMAX_WARMUP_MULTIPLIER; // 高潮期前摇倍率
     // 角色序列（数字串，每字符一个通道位）：1=防御 2=攻击 3=召唤 4=其他
     public static final ForgeConfigSpec.ConfigValue<String> PHASE1_BUILDUP_ROTATION;  // 一阶段铺垫轮换
@@ -120,6 +122,20 @@ public class TunerCommonConfig {
     // ---- 音乐播放（第十九轮）----
     public static final ForgeConfigSpec.DoubleValue MUSIC_VOLUME;        // 播放音量
     public static final ForgeConfigSpec.DoubleValue MUSIC_PITCH_PHASE1;  // 播放速度(pitch)
+
+    // ---- 调律师仆从（0.0.18；血量/护甲已于 0.0.19 改为跟随本体）----
+    /** 仆从两次施法之间的间隔（tick） */
+    public static final ForgeConfigSpec.IntValue SERVANT_CAST_INTERVAL;
+    /** 仆从的索敌半径（写入 FOLLOW_RANGE） */
+    public static final ForgeConfigSpec.IntValue SERVANT_FOLLOW_RANGE;
+    /** 仆从施法轮换序列（数字串，含义同 Boss 的角色序列） */
+    public static final ForgeConfigSpec.ConfigValue<String> SERVANT_ROTATION;
+
+    /**
+     * 【0.0.20】仆从的"召唤用杖加成 → 持续性增益"总开关。
+     * 实现在 {@link com.tiaolvshi.goetytuner.combat.ServantWandBlessing}。
+     */
+    public static final ForgeConfigSpec.BooleanValue SERVANT_WAND_BLESSING_ENABLED;
 
     // ---- LLM 自动分类 ----
     public static final ForgeConfigSpec.ConfigValue<String> LLM_API_URL;
@@ -285,6 +301,19 @@ public class TunerCommonConfig {
                 .defineInRange("extraCastCooldown", 20, 0, 1200);
         MAX_CAST_WINDOW_TICKS = b.comment("施法窗口封顶（tick）：Goety法术前摇castDuration默认5-10秒甚至更长，boss若照搬会站桩蓄力过久几乎不放技能。此值截断每次蓄力时长（玩家提前松手也是合法释放路径）。【第二十六轮】默认50=2.5秒")
                 .defineInRange("maxCastWindowTicks", 50, 10, 200);
+        CHANNEL_MAX_TICKS = b.comment("【0.0.19】「长按持续释放」类聚晶的**持续开火时长上限**（tick，20=1秒）。",
+                        "· 适用范围：Goety 的 IChargingSpell（腐化光束 / 震撼 / 箭雨 / 暴雪 / 轰炸 / 旋风 … 这一大类",
+                        "  \"按住右键持续放\"的法术）。玩家手里它们是**按住多久就放多久**，Mob 没有松手动作，",
+                        "  所以必须给一个上限，否则会一直放下去。默认 20 = 1 秒。",
+                        "· ⚠️ **本键只算\"持续开火\"那一段，不含蓄力**：一次通道型施法的总时长 =",
+                        "  蓄力（法术自己的 `castUp`，受 `maxCastWindowTicks` 封顶）+ 本键。",
+                        "  （0.0.19 收尾修正：起初本键被当成总时长，结果 `ArrowRainSpell` 的 castUp 默认就是 20t、",
+                        "   蓄力把 20t 预算吃光 ⇒ 只放出一发，表现为\"箭雨几乎没有持续\"。现已是两段相加。）",
+                        "· ⚠️ 与 maxCastWindowTicks 的分工：本键管**长按类的持续段**；",
+                        "  maxCastWindowTicks 管**普通法术**的蓄力截断（2.5秒）+ 长按类的**蓄力段**封顶。",
+                        "· ⚠️ 调大有风险：腐化光束这类法术是**每 tick 造成伤害**的（默认 10 点/次），",
+                        "  持续段调到 100 以上基本等于必杀。")
+                .defineInRange("channelMaxTicks", 20, 5, 200);
         CLIMAX_WARMUP_MULTIPLIER = b.comment("高潮期施法前摇倍率（冷却不变）")
                 .defineInRange("climaxWarmupMultiplier", 0.5, 0.1, 1.0);
         PHASE1_BUILDUP_ROTATION = b.comment("一阶段铺垫期轮换序列。数字串：1=防御 2=攻击 3=召唤 4=其他，按序循环")
@@ -317,8 +346,15 @@ public class TunerCommonConfig {
                         + "  · 也兼容数组写法：[\"goetytwilight:destruction_focus\", \"goety:another_focus\"]\n"
                         + "每条格式为 模组id:物品id（modid:itemid）。\n"
                         + "运行期若某聚晶施法抛异常，会被自动临时拉黑并记日志，把日志里的 id 填到这里即可永久屏蔽。\n"
-                        + "【默认值】goetytwilight:destruction_focus（诡厄：暮色 的毁坏链锤对非玩家 owner 必崩，内置屏蔽）")
-                .define("blacklist", "goetytwilight:destruction_focus");
+                        + "【默认值】goetytwilight:destruction_focus（诡厄：暮色 的毁坏链锤对非玩家 owner 必崩，内置屏蔽）\n"
+                        + "          + goetytuner:tuner_ripple_focus（【0.0.18】本模组新增的「调律波纹聚晶」。\n"
+                        + "            它是给玩家用的：Boss 若抽到它就等于白得一个 0.5 秒冷却的重音，\n"
+                        + "            而且那发涟漪还会把 Boss 自己一起推开，故默认屏蔽。）\n"
+                        + "⚠️ 本键的默认值在 0.0.18 变过。Forge **不会**用新默认值覆盖你已有的 toml\n"
+                        + "（本项目红线 8），所以老存档必须手工把 goetytuner:tuner_ripple_focus 补进去——\n"
+                        + "可以用 scripts/add_ripple_focus_blacklist.py，或直接在游戏内 Mods → Config →\n"
+                        + "「聚晶黑名单」输入框里补（0.0.14 起有该入口，改完立即生效）。")
+                .define("blacklist", "goetytwilight:destruction_focus, goetytuner:tuner_ripple_focus");
         b.pop();
 
         b.comment("【法杖白名单】\n"
@@ -359,6 +395,31 @@ public class TunerCommonConfig {
                         + "全程恒定（一/二阶段共用），乐谱时间轴同步按此速度推进。"
                         + "注意：原版音频引擎速度与音调绑定，无法只变速不变调；若改速度请按变速后的实际时长标注乐谱分段")
                 .defineInRange("pitchPhase1", 1.0, 0.5, 2.0);
+        b.pop();
+
+        b.push("servant");
+        SERVANT_FOLLOW_RANGE = b.comment("【0.0.18】调律师仆从的索敌半径（格，写入 FOLLOW_RANGE 属性）。"
+                + "仆从靠它锁定目标，也靠它决定【多远还追】——仆从是远程施法者，默认 32 比近战仆从大一些。"
+                + "⚠️ 仆从的血量/护甲**不在这里**：0.0.19 起按用户要求与本体保持一致，"
+                + "直接读 [boss] 段的 maxHealth 与 equivalentArmor（原先的 servant.health 已删除）。")
+                .defineInRange("followRange", 32, 8, 128);
+        SERVANT_CAST_INTERVAL = b.comment("【0.0.18】调律师仆从两次施法之间的间隔（tick，20=1秒）。"
+                + "默认 40 = 2 秒：这是【上一发结算完】到【开始下一发前摇】的等待，"
+                + "与聚晶自身的法术冷却（冷却池）是两回事，二者取更长者。")
+                .defineInRange("castIntervalTicks", 40, 0, 600);
+        SERVANT_ROTATION = b.comment("【0.0.18】调律师仆从的施法轮换序列。数字串，每位一个通道角色："
+                + "1=防御 2=攻击 3=召唤 4=其他，按序循环。默认 23（攻击、召唤各半）。"
+                + "防御/其他类聚晶不参与评分、均匀随机；攻击/召唤类走与 Boss 同一套评分与轮盘赌。")
+                .define("rotation", "23");
+        SERVANT_WAND_BLESSING_ENABLED = b.comment("【0.0.20】仪式召唤的仆从是否按「召唤用杖的调律·巫法加成」"
+                + "获得持续性增益。true=按加成给强健（≥10% 起 1 级、每 20% 加一级）"
+                + "＋生命恢复（>20% 1 级、>60% 2 级）＋抗性提升（>80% 1 级、>100% 2 级）；"
+                + "false=不给任何增益（数值表见 combat/ServantWandBlessing）。"
+                + "⚠️ 判定用的是**巫法加成**（default +10%/次）而不是魔法伤害加成（+40%/次）——"
+                + "后者一次击杀就直接推到高档位、太容易触发（用户 0.0.20 反馈）。"
+                + "⚠️ 只对**仪式召唤**（中心放带调律加成的法杖）出来的仆从生效；"
+                + "刷怪蛋 / /summon 出来的仆从没有召唤用杖，本来就没有增益。默认 true")
+                .define("wandBlessingEnabled", true);
         b.pop();
 
         b.push("llm");

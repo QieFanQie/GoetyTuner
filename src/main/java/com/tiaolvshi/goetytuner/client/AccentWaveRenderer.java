@@ -3,7 +3,6 @@ package com.tiaolvshi.goetytuner.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.tiaolvshi.goetytuner.GoetyTuner;
-import com.tiaolvshi.goetytuner.entity.TunerBoss;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LightTexture;
@@ -60,16 +59,23 @@ public final class AccentWaveRenderer {
         }
     }
 
-    public static void trigger(int entityId) {
+    /**
+     * 【0.0.18】触发一条涟漪：**直接给世界坐标**。
+     *
+     * <p>0.0.10~0.0.17 的签名是 {@code trigger(int entityId)}，客户端收到包后用
+     * {@code level.getEntity(id) instanceof TunerBoss} 反查位置——即"只有调律师放的涟漪才画得出来"。
+     * 0.0.18 的「调律波纹聚晶」由玩家释放，锚点是一个裸坐标（没有对应实体），
+     * 故服务端改为直接下发坐标（见 {@code SAccentWavePacket}），这里也只剩这一个入口。
+     */
+    public static void trigger(double x, double y, double z) {
         ClientLevel level = Minecraft.getInstance().level;
         checkLevel(level);
-        if (level != null && level.getEntity(entityId) instanceof TunerBoss boss) {
-            // 每发各成一条波（不再覆盖旧的）。坐标取"触发瞬间"的脚下位置（实体位置=脚底）。
-            if (ACTIVE.size() >= MAX_WAVES) {
-                ACTIVE.remove(0);
-            }
-            ACTIVE.add(new Wave(level.getGameTime(), boss.getX(), boss.getY(), boss.getZ()));
+        if (level == null) return;
+        // 每发各成一条波（不再覆盖旧的）。坐标由服务端在触发瞬间算好。
+        if (ACTIVE.size() >= MAX_WAVES) {
+            ACTIVE.remove(0);
         }
+        ACTIVE.add(new Wave(level.getGameTime(), x, y, z));
     }
 
     @SubscribeEvent

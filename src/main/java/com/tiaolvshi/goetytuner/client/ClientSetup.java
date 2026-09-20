@@ -14,6 +14,7 @@ import com.tiaolvshi.goetytuner.init.ModEntities;
 import com.tiaolvshi.goetytuner.client.render.TunerCapeModel;
 import com.tiaolvshi.goetytuner.client.render.TunerOrbModel;
 import com.tiaolvshi.goetytuner.client.render.TunerRenderer;
+import com.tiaolvshi.goetytuner.client.render.TunerServantRenderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraftforge.api.distmarker.Dist;
@@ -30,6 +31,8 @@ public class ClientSetup {
     @SubscribeEvent
     public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.TUNER.get(), TunerRenderer::new);
+        // 【0.0.18】调律师仆从（与 Boss 同模型/贴图/渲染层，见 TunerServantRenderer）
+        event.registerEntityRenderer(ModEntities.TUNER_SERVANT.get(), TunerServantRenderer::new);
     }
 
     /** 【2026-08-19 第十九轮】披风模型层定义（原版渲染方案，TunerCapeLayer 使用） */

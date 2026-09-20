@@ -27,4 +27,19 @@ public class ModEntities {
                             .clientTrackingRange(32)
                             .fireImmune()
                             .build("tuner"));
+
+    /**
+     * 【0.0.18】调律师仆从。
+     *
+     * <p>尺寸/类别照抄 Goety 本体仆从的写法（如 {@code goety:warlock_servant}：
+     * {@code MobCategory.MONSTER} + {@code sized(0.6F, 1.95F)} + {@code clientTrackingRange(8)}）——
+     * "仆从与本体同形同大小"正是诡厄巫法里生物↔仆从的对应惯例。
+     * （仆从实体是 {@code Summoned} 子类而非 {@code Monster}，故不继承 {@code fireImmune}。）
+     */
+    public static final RegistryObject<EntityType<com.tiaolvshi.goetytuner.entity.TunerServant>> TUNER_SERVANT =
+            ENTITY_TYPES.register("tuner_servant", () ->
+                    EntityType.Builder.of(com.tiaolvshi.goetytuner.entity.TunerServant::new, MobCategory.MONSTER)
+                            .sized(0.6F, 1.95F) // 与 Boss 同形（仆从惯例）
+                            .clientTrackingRange(8)
+                            .build("tuner_servant"));
 }

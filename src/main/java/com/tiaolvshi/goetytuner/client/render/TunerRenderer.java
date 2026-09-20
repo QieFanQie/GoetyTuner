@@ -29,18 +29,19 @@ import net.minecraft.resources.ResourceLocation;
  * </ul>
  * 后续打磨：施法抬臂姿态、二阶段破碎形态变体贴图、传送粒子。
  */
-public class TunerRenderer extends HumanoidMobRenderer<TunerBoss, TunerModel> {
+public class TunerRenderer extends HumanoidMobRenderer<TunerBoss, TunerModel<TunerBoss>> {
 
-    private static final ResourceLocation TEXTURE =
+    /** 调律师贴图（Boss 与仆从共用同一张，见 {@link TunerServantRenderer}）。 */
+    static final ResourceLocation TEXTURE =
             new ResourceLocation(GoetyTuner.MOD_ID, "textures/entity/tuner.png");
 
     public TunerRenderer(EntityRendererProvider.Context ctx) {
         // 【第二十四轮】TunerModel：把服务端 Pose.CROUCHING 映射到 crouching 字段，
         // 使嘲讽蹲起（TunerBoss.tickTaunt）获得原版蹲姿动画（HumanoidModel 自带分支）
-        super(ctx, new TunerModel(ctx.bakeLayer(ModelLayers.PLAYER)), 0.5F);
+        super(ctx, new TunerModel<>(ctx.bakeLayer(ModelLayers.PLAYER)), 0.5F);
         // 深紫披风渲染层（模型层定义注册见 ClientSetup#onRegisterLayers）
-        this.addLayer(new TunerCapeLayer(this, ctx.getModelSet()));
-        this.addLayer(new TunerOrbLayer(this, ctx.getModelSet()));
+        this.addLayer(new TunerCapeLayer<>(this, ctx.getModelSet()));
+        this.addLayer(new TunerOrbLayer<>(this, ctx.getModelSet()));
     }
 
     @Override

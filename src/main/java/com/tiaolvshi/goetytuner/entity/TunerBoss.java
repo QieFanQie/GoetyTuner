@@ -14,14 +14,15 @@ import com.Polarice3.Goety.init.ModAttributes;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.combat.CombatEvents;
 import com.tiaolvshi.goetytuner.combat.DamageScoreTracker;
+import com.tiaolvshi.goetytuner.combat.DamageThrottle;
 import com.tiaolvshi.goetytuner.combat.SummonScoreTracker;
+import com.tiaolvshi.goetytuner.combat.TunerDamageRules;
 import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.entity.ai.CastChannel;
 import com.tiaolvshi.goetytuner.focus.FocusCategory;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
 import com.tiaolvshi.goetytuner.network.SMusicSyncPacket;
 import com.tiaolvshi.goetytuner.network.SEntityRevivePacket;
-import com.tiaolvshi.goetytuner.network.SAccentWavePacket;
 import com.tiaolvshi.goetytuner.network.TunerNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -86,7 +87,7 @@ import java.util.List;
  *
  * 无限灵魂能量：不接SoulEnergy capability，耗蓝对非玩家施法本就不生效。
  */
-public class TunerBoss extends Monster implements CastChannel.TunerCastCallback {
+public class TunerBoss extends Monster implements CastChannel.TunerCastCallback, OrbHighlightSource {
 
     private static final EntityDataAccessor<Integer> DATA_CAST_CATEGORIES =
             SynchedEntityData.defineId(TunerBoss.class, EntityDataSerializers.INT);
@@ -98,6 +99,7 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     public int getActiveCastCategories() { return entityData.get(DATA_CAST_CATEGORIES); }
 
+    @Override
     public float getOrbHighlight(int category, float partialTick) {
         return net.minecraft.util.Mth.lerp(partialTick, previousOrbHighlight[category], orbHighlight[category]);
     }
@@ -258,13 +260,33 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         super(type, level);
         this.xpReward = 500;
         this.setPersistenceRequired();
-        // 【2026-08-18 第八轮修复】主手常驻一把 Goety 暗法杖（dark_wand, SpellType.NONE 通用系别）。
+        // 【2026-08-18 第八轮修复】主手常驻一把法杖（需具备 ITEM_HANDLER capability）。
         // 崩溃根因：SoulUsingItemHandler.get(stack) 要求物品具备 ITEM_HANDLER capability，
         // 而 IWand.initCapabilities 正是提供 SoulUsingItemCapability 的入口；此前主手为空，
         // 空 ItemStack 无 capability → orElseThrow 抛 "ItemStack is missing item capability"。
         // 施法前由 BossWandHelper.installFocus 换装当前聚晶（见 CastChannel.beginCast）。
+        //
+        // 【0.0.19】由 goety:dark_wand 换成**本模组自备的 goetytuner:tuner_wand**：
+        // 长按类法术（腐化光束等）要求施法者"真的在使用一把装着聚晶的 IWand"
+        // （MobUtil.isSpellCasting），而 DarkWand.onUseTick 对非玩家施法者会走
+        // failParticles + FIRE_EXTINGUISH 分支（冒白烟、响灭火音），所以必须换成行为干净的
+        // TunerWand。外观完全一致（模型继承 goety:item/dark_wand）。详见 TunerWand 的类注释。
         this.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
-                new net.minecraft.world.item.ItemStack(com.Polarice3.Goety.common.items.ModItems.DARK_WAND.get()));
+                new net.minecraft.world.item.ItemStack(com.tiaolvshi.goetytuner.init.ModItems.TUNER_WAND.get()));
+        // 【0.0.19】把这把杖标成"永不掉落"。
+        //
+        // 为什么要显式写：**Boss 的法杖与玩家的法杖是两条完全不同的链路**，而"击败 Boss 获得
+        // 强化法杖"这个设计针对的是**玩家自己那把**（仪式激活时把玩家手持的法杖 `copy()` 成
+        // originalWand 快照，死亡时由 WandUpgradeEvents 掉这份快照 + 调律加成 NBT）。
+        // Boss 主手这把只是**施法载体**，玩家拿到它毫无用处（`TunerWand.onUseTick` 是空实现、
+        // `use()` 返回 PASS ⇒ 不能施法）。若它因掉落概率漏出去，玩家会得到一把"看起来像暗法杖
+        // 却不能用"的废品，还会连带掉出当时装在里面的聚晶。
+        //
+        // 实测：`Mob.getEquipmentDropChance(MAINHAND)` 读的是 `handDropChances[0]`，其默认值本来就是
+        // 0.0F（`javap` 反编译确认：HAND 分支取 handDropChances，ARMOR 分支取 armorDropChances，
+        // 其余分支 `fconst_0`），所以**本来就不会掉**。这里显式设 0 是为了把意图写进代码，
+        // 防止将来有人给 Boss 加装备/改掉落概率时无意中把这条设计破坏掉。
+        this.setDropChance(net.minecraft.world.entity.EquipmentSlot.MAINHAND, 0.0F);
         // 应用 config 数值：实体在游戏内创建时 config 必已加载。
         // 注意 createAttributes() 在 EntityAttributeCreationEvent（注册阶段）执行，
         // 彼时 config 尚未加载，只能使用默认常量，故此处按 config 覆盖（保持配置可调）。
@@ -289,25 +311,13 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     /**
      * 配置数字串 → 功能分块序列。
      * 映射：1=防御 2=攻击 3=召唤 4=其他。非法字符忽略；全非法时回退默认"123"。
+     *
+     * <p>【0.0.18】实现已上提到 {@link FocusCategory#parseRoleSpec(String)}：调律师仆从
+     * （{@code TunerServant}）也要按同一种序列轮换施法，两处各自抄一份是本项目明令避免的做法。
+     * 这里保留一个薄委托，避免改动 Boss 侧既有的 4 个调用点。
      */
     private static FocusCategory[] parseRoleSpec(String spec) {
-        java.util.List<FocusCategory> out = new java.util.ArrayList<>();
-        if (spec != null) {
-            for (char c : spec.toCharArray()) {
-                switch (c) {
-                    case '1' -> out.add(FocusCategory.DEFENSE);
-                    case '2' -> out.add(FocusCategory.ATTACK);
-                    case '3' -> out.add(FocusCategory.SUMMON);
-                    case '4' -> out.add(FocusCategory.OTHER);
-                }
-            }
-        }
-        if (out.isEmpty()) {
-            out.add(FocusCategory.DEFENSE);
-            out.add(FocusCategory.ATTACK);
-            out.add(FocusCategory.SUMMON);
-        }
-        return out.toArray(new FocusCategory[0]);
+        return FocusCategory.parseRoleSpec(spec);
     }
 
     /** 当前（按一/二阶段）铺垫轮换序列 */
@@ -832,49 +842,17 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      * 【第三十一轮】重音击退脉冲（从 onAccent 提取，供其与二阶段进场连发共用）：
      * 以自身为中心把 8 格内存活生物沿径向推出 strength 强度，附三波冲击环+音符爆发粒子
      * 与阶段音调的紫水晶提示音。
+     *
+     * <p>【0.0.18】**四件事的实现已全部抽到 {@link com.tiaolvshi.goetytuner.combat.AccentRipple}**，
+     * 因为新增的「调律波纹聚晶」要求与铺垫期重音**完全同款**——共用同一份代码
+     * （同款=字面上同一处实现，而不是复制一份出来），本项目红线：同一职责只允许一处实现。
+     * 本方法现在只剩"取参 + 转发"：力量/音调由调用方（阶段）决定，Boss 无"友军豁免"需求故传 null。
      */
     private void accentKnockbackPulse(ServerLevel level, double strength, float pitch) {
-        // 【第三十三轮】bug3 修复：旁观/创造玩家白名单——旁观者不应被击退，创造玩家（观战/建筑）
-        // 也不应被击退打断操作。非玩家生物保留击退（与 tickTeleportNonPlayer 的过滤写法一致）。
-        List<LivingEntity> around = level.getEntitiesOfClass(LivingEntity.class,
-                new AABB(this.blockPosition()).inflate(8.0D),
-                e -> e != this && e.isAlive()
-                        && !(e instanceof Player p && (p.isSpectator() || p.isCreative())));
-        for (LivingEntity e : around) {
-            Vec3 dir = e.position().subtract(this.position()).normalize();
-            e.push(dir.x * strength, strength * 0.5D, dir.z * strength);
-            e.hurtMarked = true; // 速度同步
-        }
-        // 【2026-08-19 第十九轮】重音特效：
-        // 1) 三波同心冲击环（END_ROD，逐波外扩+抬升，视觉上"音波"从boss脚下荡开）
-        if (TunerCommonConfig.ACCENT_PARTICLES.get()) {
-            double px = this.getX(), py = this.getY() + 1.0D, pz = this.getZ();
-            for (int wave = 0; wave < 3; wave++) {
-                double r = 2.0D + wave * 2.0D;
-                int n = 8 + wave * 6;
-                for (int i = 0; i < n; i++) {
-                    double ang = (Math.PI * 2.0D * i) / n + wave * 0.35D;
-                    level.sendParticles(net.minecraft.core.particles.ParticleTypes.END_ROD,
-                            px + Math.cos(ang) * r, py + wave * 0.3D, pz + Math.sin(ang) * r,
-                            1, 0.0D, 0.03D, 0.0D, 0.0D);
-                }
-            }
-            // 2) 音符爆发（NOTE粒子：speed参数决定音符颜色，随机彩色）
-            for (int i = 0; i < 12; i++) {
-                double noteSpeed = this.getRandom().nextDouble();
-                level.sendParticles(net.minecraft.core.particles.ParticleTypes.NOTE,
-                        px, py + 1.2D, pz, 1, 0.4D, 0.5D, 0.4D, noteSpeed);
-            }
-        }
-        if (TunerCommonConfig.ACCENT_WAVE.get()) {
-            TunerNetwork.sendToTracking(new SAccentWavePacket(this.getId()), this);
-        }
-        // 3) 提示音：阶段差异化音调（原版紫水晶音，无需音频资源；铺垫0.9/高潮1.4/低谷0.6）
-        if (TunerCommonConfig.ACCENT_SOUND.get()) {
-            level.playSound(null, this.getX(), this.getY(), this.getZ(),
-                    net.minecraft.sounds.SoundEvents.AMETHYST_BLOCK_CHIME,
-                    net.minecraft.sounds.SoundSource.NEUTRAL, 1.6F, pitch);
-        }
+        com.tiaolvshi.goetytuner.combat.AccentRipple.knockback(level, this, strength, null);
+        com.tiaolvshi.goetytuner.combat.AccentRipple.particles(level, this);
+        com.tiaolvshi.goetytuner.combat.AccentRipple.wave(level, this);
+        com.tiaolvshi.goetytuner.combat.AccentRipple.chime(level, this, pitch);
     }
 
     // ---- 传送行为 ----
@@ -1426,18 +1404,17 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         // 【第二十三轮】Boss身份伤害免疫：摔落、原版火焰（含火焰/岩浆/燃烧，
         // 覆盖 DamageTypeTags.IS_FIRE 全部火系）、窒息（卡墙）、溺水。
         // （不免疫魔法/爆炸/普通攻击等玩家可造成/可操作的伤害类型）
-        if (source.is(DamageTypes.FALL)
-                || source.is(DamageTypeTags.IS_FIRE)
-                || source.is(DamageTypes.IN_WALL)
-                || source.is(DamageTypes.DROWN)) {
+        // 【0.0.19】实现已抽到 TunerDamageRules.isIdentityImmune —— 调律师仆从要求
+        // "减伤机制与本体一致"，两处共用同一份代码（见该类注释）。
+        if (TunerDamageRules.isIdentityImmune(source)) {
             return false;
         }
         // 【第二十九轮】近战易伤：直接近身物理攻击（玩家/生物的手持武器挥击与横扫）
         // 伤害 ×(1+meleeVulnerability)，默认+25%，让贴身近战成为有效输出手段。
         // 投射物/爆炸/魔法等远程手段不受加成。
-        if (isDirectMelee(source)) {
-            amount *= (float) (1.0D + TunerCommonConfig.MELEE_VULNERABILITY.get());
-        }
+        // 【0.0.19】同样抽到 TunerDamageRules（仆从按"与本体一致"一并适用）。
+        amount = TunerDamageRules.applyMeleeVulnerability(source, amount,
+                TunerCommonConfig.MELEE_VULNERABILITY.get());
         // 【2026-08-18 第十四轮】锁血宽限期内免疫伤害（真正无敌窗口，而非事后拉回）
         // 此前宽限期内 hurt 照常生效、applyLockHealth 事后 setHealth 拉回，
         // 多段/高频伤害在 tick 中间可能穿透。改为宽限期内直接 return false。
@@ -1456,31 +1433,18 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     // ================= 【0.0.6】限伤 / 限DPS（伤害节流） =================
 
-    /** 限DPS 滑动窗口长度：1 秒 = 20 tick，每 tick 一个槽位 */
-    private static final int DAMAGE_WINDOW_TICKS = 20;
-    /** 每秒伤害滑动窗口（环形数组：槽位 = gameTime % 20，槽内只存该 tick 的伤害） */
-    private final float[] damageWindow = new float[DAMAGE_WINDOW_TICKS];
-    private float damageWindowSum = 0.0F;
-    private long damageWindowLastTick = Long.MIN_VALUE;
+    /**
+     * 【0.0.6 / 0.0.19】限伤 + 限DPS 的状态与算法都在 {@link DamageThrottle} 里
+     * （0.0.19 从本类抽出，供调律师仆从共用同一份实现；语义与 0.0.6 完全一致）。
+     */
+    private final DamageThrottle damageThrottle = new DamageThrottle();
 
     /**
      * 【0.0.6】限伤（单次伤害上限）+ 限DPS（每秒伤害上限）：在**最终结算处**节流 boss 承受的伤害。
      *
-     * <p><b>为什么覆盖 {@code actuallyHurt} 而不是在 {@code hurt} 里做</b>：
-     * 参照 Goety 本体 Boss 的成熟做法（{@code Apostle}/{@code Vizier}/{@code EnderKeeper}/
-     * {@code RedstoneMonstrosity} 都在 {@code actuallyHurt} 里对最终伤害取 {@code Math.min}）。
-     * {@code actuallyHurt} 是伤害真正生效的唯一入口，放在这里的好处是
-     * **受击动画、击退、无敌帧（invulnerableTime）全部照常发生**——
-     * 玩家看到的是「打中了，但只掉这么多血」，而不是「打了完全没反应」。
-     *
-     * <p><b>限伤与限DPS 是两件不同的事（互补）</b>：
-     * <ul>
-     *   <li><b>限伤</b>：约束<b>单次</b>伤害上限 → 只削掉「一击秒杀 / 巨额爆发」，
-     *       对高频小伤害毫无作用（100 次 10 点照样打满 1000）；</li>
-     *   <li><b>限DPS</b>：约束<b>每秒总吞吐</b>（滑动 1 秒窗口预算）→ 压制多段 / 多来源持续爆发，
-     *       但对「一发超大伤害」只能整段吸收或整段放行，粒度粗、手感突兀。</li>
-     * </ul>
-     * 两者都开启时先限伤再限DPS：先把单次削到上限，再由每秒预算决定这次能兑现多少。
+     * <p>两项规则的实现与理由见 {@link DamageThrottle}（Boss 与调律师仆从共用）。
+     * 本方法只负责 Boss **特有**的后门豁免：这些伤害不受任何限伤约束，
+     * 否则会出现「管理员杀不死、索命处决失效」的破状态。
      */
     @Override
     protected void actuallyHurt(DamageSource source, float amount) {
@@ -1493,105 +1457,18 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)
                 && !source.is(DamageTypes.GENERIC_KILL)
                 && !(TunerCommonConfig.DEATH_CURSE_EXECUTION.get() && source.is(GOETY_DEATH_CURSE))) {
-            amount = applyHitDamageCap(amount);
-            float allowed = applyDpsCap(amount);
+            float allowed = damageThrottle.apply(
+                    this.level().getGameTime(),
+                    amount,
+                    this.getMaxHealth(),
+                    TunerCommonConfig.MAX_HIT_DAMAGE_PERCENT.get(),
+                    TunerCommonConfig.MAX_DAMAGE_PER_SECOND.get());
             if (allowed < 0.0F) {
                 return; // 每秒预算耗尽：本次伤害被完全吸收（hurt 已返回 true，动画/击退/无敌帧照常）
             }
             amount = allowed;
         }
         super.actuallyHurt(source, amount);
-    }
-
-    /** 限伤：把单次伤害压到 最大生命 × maxHitDamagePercent（配置为 0 时不生效） */
-    private float applyHitDamageCap(float amount) {
-        double pct = TunerCommonConfig.MAX_HIT_DAMAGE_PERCENT.get();
-        if (pct <= 0.0D) {
-            return amount;
-        }
-        float cap = (float) Math.max(1.0D, this.getMaxHealth() * pct);
-        if (amount > cap) {
-            GoetyTuner.LOGGER.debug("[Tuner] Hit damage capped: {} -> {} ({}% of max health {})",
-                    amount, cap, (int) Math.round(pct * 100.0D), this.getMaxHealth());
-            return cap;
-        }
-        return amount;
-    }
-
-    /**
-     * 限DPS：滑动 1 秒窗口预算。
-     *
-     * @return 允许生效的伤害；预算已耗尽时返回 -1（调用方直接放弃本次伤害）
-     */
-    private float applyDpsCap(float amount) {
-        double capPerSecond = TunerCommonConfig.MAX_DAMAGE_PER_SECOND.get();
-        if (capPerSecond <= 0.0D) {
-            return amount;
-        }
-        long now = this.level().getGameTime();
-        advanceDamageWindow(now);
-        float budget = (float) capPerSecond - damageWindowSum;
-        if (budget <= 0.0F) {
-            GoetyTuner.LOGGER.debug("[Tuner] DPS budget exhausted ({}/{} per second), hit absorbed",
-                    damageWindowSum, capPerSecond);
-            return -1.0F;
-        }
-        float allowed = Math.min(amount, budget);
-        recordDamageWindow(now, allowed);
-        return allowed;
-    }
-
-    /** 推进滑动窗口：把 (lastTick, now] 这些 tick 的旧槽位清零（槽位 = tick % 20，20 tick 后会被复用） */
-    private void advanceDamageWindow(long now) {
-        if (damageWindowLastTick == Long.MIN_VALUE) {
-            damageWindowLastTick = now;
-            return;
-        }
-        long delta = now - damageWindowLastTick;
-        if (delta <= 0L) {
-            return;
-        }
-        if (delta >= DAMAGE_WINDOW_TICKS) {
-            for (int i = 0; i < DAMAGE_WINDOW_TICKS; i++) {
-                damageWindow[i] = 0.0F;
-            }
-            damageWindowSum = 0.0F;
-        } else {
-            for (long t = damageWindowLastTick + 1L; t <= now; t++) {
-                int idx = (int) (t % DAMAGE_WINDOW_TICKS);
-                damageWindowSum -= damageWindow[idx];
-                damageWindow[idx] = 0.0F;
-            }
-            if (damageWindowSum < 0.0F) {
-                damageWindowSum = 0.0F; // 浮点误差兜底
-            }
-        }
-        damageWindowLastTick = now;
-    }
-
-    /** 把本次生效的伤害记入当前 tick 的槽位（同一 tick 多次命中会累加） */
-    private void recordDamageWindow(long now, float amount) {
-        int idx = (int) (now % DAMAGE_WINDOW_TICKS);
-        damageWindow[idx] += amount;
-        damageWindowSum += amount;
-    }
-
-    /**
-     * 判定伤害是否为"直接近战物理攻击"：
-     * - 原版类型：player_attack / mob_attack（手持武器挥击与横扫；
-     *   1.20.1 无 mob_attack_no_cooldown，通用兜底已覆盖该情况）；
-     * - 通用兜底：伤害直接来源是生物本体（非投射物实体、非爆炸）——覆盖模组近战武器。
-     */
-    private static boolean isDirectMelee(DamageSource source) {
-        if (source.is(DamageTypes.PLAYER_ATTACK)
-                || source.is(DamageTypes.MOB_ATTACK)) {
-            return true;
-        }
-        if (source.is(DamageTypeTags.IS_PROJECTILE) || source.is(DamageTypeTags.IS_EXPLOSION)) {
-            return false;
-        }
-        return source.getDirectEntity() instanceof LivingEntity
-                && source.getDirectEntity() == source.getEntity();
     }
 
     @Override
@@ -2076,11 +1953,21 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         // 【2026-08-18 第八轮修复】旧档自愈：实体从 NBT 恢复时，super 会把主手还原成
         // 存档中的值（修复前生成的 Tuner 主手为空），导致 SoulUsingItemHandler.get 崩溃
         // （"ItemStack is missing item capability"）。readAdditionalSaveData 在构造函数
-        // 之后执行，故此处兜底：主手非法杖则补发暗法杖（IWand 自带 SoulUsing capability）。
-        if (!(this.getMainHandItem().getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)) {
+        // 之后执行，故此处兜底：主手非法杖则补发调律师法杖（IWand 自带 SoulUsing capability）。
+        // 【0.0.19】这里也顺带完成"从 goety:dark_wand 迁移到 goetytuner:tuner_wand"——
+        // 老存档里存的仍是 dark_wand，它会走 IWand 判定通过（dark_wand 也是 IWand），
+        // 但它**无法**支撑长按类法术（见构造函数注释），所以按注册名精确迁移。
+        if (!(this.getMainHandItem().getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)
+                || isLegacyDarkWand(this.getMainHandItem())) {
             this.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
-                    new net.minecraft.world.item.ItemStack(com.Polarice3.Goety.common.items.ModItems.DARK_WAND.get()));
+                    new net.minecraft.world.item.ItemStack(
+                            com.tiaolvshi.goetytuner.init.ModItems.TUNER_WAND.get()));
         }
+    }
+
+    /** 【0.0.19】老存档的主手是 {@code goety:dark_wand} 时判定为需要迁移。 */
+    private static boolean isLegacyDarkWand(net.minecraft.world.item.ItemStack stack) {
+        return stack.getItem() == com.Polarice3.Goety.common.items.ModItems.DARK_WAND.get();
     }
 
     /**

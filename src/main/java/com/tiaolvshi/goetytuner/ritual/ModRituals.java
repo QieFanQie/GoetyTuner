@@ -37,6 +37,16 @@ public final class ModRituals {
     public static final RegistryObject<ModRitualFactory> TUNER_BOSS_SUMMON =
             RITUALS.register("tuner_boss_summon", () -> new ModRitualFactory(TunerSummonRitual::new));
 
+    /**
+     * 【0.0.20 新增】调律师仆从的仪式召唤（配方 {@code data/goety/recipes/tuner_servant_ritual.json}）。
+     *
+     * <p>与 Boss 那条的区别：中心必须是**带调律加成**的法杖（NBT 条件，靠
+     * {@link TunerServantSummonRitual#identify} 判定），且召唤出来的仆从**认主**（tame=true）。
+     */
+    public static final RegistryObject<ModRitualFactory> TUNER_SERVANT_SUMMON =
+            RITUALS.register("tuner_servant_summon",
+                    () -> new ModRitualFactory(TunerServantSummonRitual::new));
+
     public static void register(IEventBus modBus) {
         RITUALS.register(modBus);
     }

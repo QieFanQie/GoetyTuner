@@ -13,7 +13,6 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 import com.tiaolvshi.goetytuner.GoetyTuner;
-import com.tiaolvshi.goetytuner.entity.TunerBoss;
 import net.minecraft.client.model.geom.EntityModelSet;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -22,6 +21,7 @@ import net.minecraft.client.renderer.entity.layers.RenderLayer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.LivingEntity;
 
 /**
  * 【2026-08-19 第十九轮】调律师披风渲染层（深紫披风，原版渲染方案）。
@@ -33,8 +33,12 @@ import net.minecraft.util.Mth;
  *       行走时向后飘（limbSwingAmount 比例）+ 静止呼吸微摆（cos 时间正弦）；</li>
  *   <li>独立贴图 textures/entity/tuner_cape.png（64x32），RenderType.entitySolid。</li>
  * </ul>
+ *
+ * <p>【0.0.18】改为**泛型**（{@code TunerCapeLayer<T extends LivingEntity>}）：调律师仆从与
+ * Boss 同形同贴图，同一条披风层要能挂在两个渲染器上。本层不使用实体的任何字段，
+ * 泛型化对它纯粹是"去掉对 TunerBoss 的无谓依赖"。
  */
-public class TunerCapeLayer extends RenderLayer<TunerBoss, TunerModel> {
+public class TunerCapeLayer<T extends LivingEntity> extends RenderLayer<T, TunerModel<T>> {
 
     private static final ResourceLocation TEXTURE =
             new ResourceLocation(GoetyTuner.MOD_ID, "textures/entity/tuner_cape.png");
@@ -50,13 +54,13 @@ public class TunerCapeLayer extends RenderLayer<TunerBoss, TunerModel> {
 
     private final TunerCapeModel model;
 
-    public TunerCapeLayer(RenderLayerParent<TunerBoss, TunerModel> parent, EntityModelSet modelSet) {
+    public TunerCapeLayer(RenderLayerParent<T, TunerModel<T>> parent, EntityModelSet modelSet) {
         super(parent);
         this.model = new TunerCapeModel(modelSet.bakeLayer(TunerCapeModel.LAYER_LOCATION));
     }
 
     @Override
-    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, TunerBoss entity,
+    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, T entity,
                        float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks,
                        float netHeadYaw, float headPitch) {
         poseStack.pushPose();

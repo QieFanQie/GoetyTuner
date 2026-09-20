@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -136,6 +137,34 @@ public class FocusPoolManager {
                 STATIC_POOLS.get(FocusCategory.DEFENSE).size(),
                 STATIC_POOLS.get(FocusCategory.SUMMON).size(),
                 STATIC_POOLS.get(FocusCategory.OTHER).size());
+
+        // 【0.0.19】把「长按持续释放」类聚晶的**自动检测结果**打出来（可观测性）。
+        //
+        // 背景：腐化 / 震撼 / 炼狱这类法术前一阵只放一瞬间就停，修法见 CastChannel#tickChannel。
+        // 该修复的判定只有一条 `spell instanceof IChargingSpell` —— 它靠的是 Goety 自己的接口
+        // **继承闭包**，因此本体与任意附属的同类法术都会被自动覆盖，**不写死任何聚晶 id**。
+        // 这条日志就是这个"自动检测"的现场证据：启动时数一遍、并给几个样例。
+        // （实测本机整合包：本体 19 个具体法术 + 觉醒 4 + 阶梯 2 + 灾变 1 = 26 个具体法术落在闭包内。）
+        logChanneledFoci();
+    }
+
+    /** 【0.0.19】统计并记录自动检测到的「长按持续释放」类聚晶（仅启动/重扫时跑一次）。 */
+    private static void logChanneledFoci() {
+        int count = 0;
+        StringBuilder sample = new StringBuilder();
+        for (FocusEntry e : ALL_ENTRIES) {
+            if (e.getSpell() instanceof com.Polarice3.Goety.api.magic.IChargingSpell) {
+                ++count;
+                if (sample.length() < 160) {
+                    if (sample.length() > 0) {
+                        sample.append(", ");
+                    }
+                    sample.append(e.getItemId());
+                }
+            }
+        }
+        GoetyTuner.LOGGER.info("[Tuner] Channelled (IChargingSpell) foci auto-detected: {} / {} — e.g. {}",
+                count, ALL_ENTRIES.size(), count == 0 ? "(none)" : sample);
     }
 
     public static List<FocusEntry> allEntries() {
@@ -204,6 +233,7 @@ public class FocusPoolManager {
         }
         GoetyTuner.LOGGER.info("[Tuner] Blacklist refreshed: {} foci active (reused {}, skipped {})",
                 ALL_ENTRIES.size(), reused, skipped);
+        logChanneledFoci(); // 【0.0.19】重扫后同样刷新一次"长按类"检测结果
     }
 
     /** 重新加载配置文件并重新分类（LLM自动配置完成后调用） */
@@ -232,6 +262,128 @@ public class FocusPoolManager {
     private final EnumMap<FocusCategory, List<FocusEntry>> pools = new EnumMap<>(FocusCategory.class);
     private final EnumMap<FocusCategory, List<CooldownTicket>> cooldownPools = new EnumMap<>(FocusCategory.class);
     private final RandomSource random = RandomSource.create();
+
+    // ================= 【0.0.18】仆从个体指令：禁放 / 优先 =================
+    //
+    // 用户需求：「调律师仆从」在被玩家手持某聚晶左键/右键时，分别被设为
+    // **不释放** / **优先释放** 那个聚晶。
+    //
+    // 这两张表**故意放在实例上**（不是 static），理由与 0.0.16 的 castCount 完全一致：
+    // pools 由 {@link #createFightPools()} 每只仆从各建一份，FocusEntry 也是实例级复制，
+    // 所以"玩家对这只仆从下达的指令"天然只作用于这一只——
+    // 若做成 static，对一只仆从的指令会连带影响场上所有调律师与仆从（严重错误）。
+
+    /** 该个体**禁放**的聚晶 id（玩家左键设置）。 */
+    private final Set<String> disabledFoci = new HashSet<>();
+
+    /**
+     * 该个体**优先释放**的聚晶 id（玩家右键设置）。
+     * 用 LinkedHashSet 保留玩家设定的先后顺序，多只被优先时按设定顺序依次尝试（先设的先放）。
+     */
+    private final Set<String> priorityFoci = new LinkedHashSet<>();
+
+    /**
+     * 设置/取消「禁放」。返回 true 表示状态**发生了变化**（供调用方决定要不要提示玩家）。
+     *
+     * <p>同一个聚晶同时被"优先"和"禁放"时，**禁放优先**——禁放是明确的否决，
+     * 且 {@link #draw}/{@link #drawUniform}/{@link #takeSpecific} 全部先过 {@link #isUsable}。
+     */
+    public boolean setFocusDisabled(String itemId, boolean disabled) {
+        if (itemId == null) {
+            return false;
+        }
+        boolean changed = disabled ? disabledFoci.add(itemId) : disabledFoci.remove(itemId);
+        if (changed) {
+            GoetyTuner.LOGGER.info("[Tuner] Servant focus {} -> {}",
+                    itemId, disabled ? "DISABLED" : "not disabled");
+        }
+        return changed;
+    }
+
+    /** 该聚晶是否被本个体禁放。 */
+    public boolean isFocusDisabled(String itemId) {
+        return itemId != null && disabledFoci.contains(itemId);
+    }
+
+    /** 设置/取消「优先释放」。返回 true 表示状态发生了变化。 */
+    public boolean setFocusPriority(String itemId, boolean priority) {
+        if (itemId == null) {
+            return false;
+        }
+        boolean changed = priority ? priorityFoci.add(itemId) : priorityFoci.remove(itemId);
+        if (changed) {
+            GoetyTuner.LOGGER.info("[Tuner] Servant focus {} -> {}",
+                    itemId, priority ? "PRIORITY" : "not priority");
+        }
+        return changed;
+    }
+
+    /** 该聚晶是否被本个体设为优先释放。 */
+    public boolean isFocusPriority(String itemId) {
+        return itemId != null && priorityFoci.contains(itemId);
+    }
+
+    /** 优先释放表（只读视图，按玩家设定的顺序）。 */
+    public Set<String> priorityFoci() {
+        return java.util.Collections.unmodifiableSet(priorityFoci);
+    }
+
+    /** 禁放表（只读视图）。 */
+    public Set<String> disabledFoci() {
+        return java.util.Collections.unmodifiableSet(disabledFoci);
+    }
+
+    /** 从存档恢复（{@code TunerServant#readAdditionalSaveData} 调用）。 */
+    public void restoreFocusCommands(java.util.Collection<String> disabled, java.util.Collection<String> priority) {
+        disabledFoci.clear();
+        priorityFoci.clear();
+        if (disabled != null) {
+            for (String s : disabled) {
+                if (s != null && !s.isEmpty()) {
+                    disabledFoci.add(s);
+                }
+            }
+        }
+        if (priority != null) {
+            for (String s : priority) {
+                if (s != null && !s.isEmpty()) {
+                    priorityFoci.add(s);
+                }
+            }
+        }
+    }
+
+    /**
+     * 该聚晶在本个体上是否**可用**：未被（配置 / 运行期 / 本个体指令）拉黑。
+     *
+     * <p>注意"禁放"是**个体指令**，而 {@link #isBlacklisted} 是全局的——
+     * 玩家把某聚晶从禁放里取消，也不会让一个全局拉黑的聚晶复活。
+     */
+    public boolean isUsable(String itemId) {
+        return itemId != null && !isBlacklisted(itemId) && !disabledFoci.contains(itemId);
+    }
+
+    /**
+     * 【0.0.18】按 id 取一个**当前可用**的聚晶条目（不锁定、不移除）。
+     *
+     * <p>用途：仆从的「优先释放」指令需要在开始施法前把指定聚晶挑出来交给
+     * {@code CastChannel#beginCast(level, entry, mult)}；若它此时正在冷却池里、或已被禁放，
+     * 就返回 null（调用方退回常规轮换抽签）。
+     */
+    @Nullable
+    public FocusEntry takeSpecific(String itemId) {
+        if (!isUsable(itemId)) {
+            return null;
+        }
+        for (FocusCategory c : FocusCategory.values()) {
+            for (FocusEntry e : pools.get(c)) {
+                if (itemId.equals(e.getItemId().toString())) {
+                    return e;
+                }
+            }
+        }
+        return null;
+    }
 
     private FocusEntry copyEntry(FocusEntry src) {
         FocusEntry copy = new FocusEntry(src.getItemId(), src.getFocusItem());
@@ -392,9 +544,10 @@ public class FocusPoolManager {
             return null;
         }
         // 【第二十六轮】过滤掉被运行期拉黑的聚晶（配置黑名单在 init 时已排除，这里兜底）
+        // 【0.0.18】同时过滤"该个体被玩家设为禁放"的聚晶（仆从指令）
         List<FocusEntry> usable = new ArrayList<>(pool.size());
         for (FocusEntry e : pool) {
-            if (!isBlacklisted(e.getItemId().toString())) {
+            if (isUsable(e.getItemId().toString())) {
                 usable.add(e);
             }
         }
@@ -444,9 +597,10 @@ public class FocusPoolManager {
             return null;
         }
         // 【第二十六轮】过滤运行期拉黑
+        // 【0.0.18】同时过滤"该个体被玩家设为禁放"的聚晶（仆从指令）
         List<FocusEntry> usable = new ArrayList<>(pool.size());
         for (FocusEntry e : pool) {
-            if (!isBlacklisted(e.getItemId().toString())) {
+            if (isUsable(e.getItemId().toString())) {
                 usable.add(e);
             }
         }
