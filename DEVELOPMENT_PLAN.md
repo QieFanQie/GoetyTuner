@@ -1,14 +1,16 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> **0.0.13 修复**：本轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 仍 10 个）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**（`BossMusicManager`）：原先只以静态字段 `music != null` 当作「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**，且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（症状「整个 BGM 都没了」）；改为每 tick 用 **`SoundManager.isActive(music)`** 核实 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑 + 高潮改细小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、刻度只有 1~2px ⇒ 取整后逐像素跳动；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮「中」字改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音数量与频率降为 1/3**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9），在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮更明显 + 发光**（`TunerOrbLayer`）：高亮改为额外叠加 `glow*0.4` 逐通道**向白靠拢**（原先 `min(1, color*(1+glow*0.8))` 被 `min` 截断、几乎看不出变化），发光用**两层 `entityTranslucentEmissive` 自发光外壳**——**不能用原版发光描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，只能整只 Boss 一起描边，无法只描一颗立方体）。⑥ **药水效果可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（用于 boss 自身 4 处），并完成药水现状审计。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶，对施法者反噬 125%）** 加入 `focus.blacklist`——**配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 toml）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.14 发布（第 52 轮）**：本轮两件事，改 **4 个 Java 文件**（`client/TunerConfigScreen`、`focus/FocusPoolManager`、`entity/TunerBoss`、`config/TunerCommonConfig`）+ **2 个 lang** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `phase2_buffs.phase2EffectImmunity`（Boolean，默认 **true**）⇒ 配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**，`boss` 段仍 **19**，section 仍 10 个）。① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**、只能手改文件；现补一个单行 `EditBox`（预填当前值，提示「namespace:path，英文逗号分隔；留空=不屏蔽」），**点「完成」关屏时保存**（最自然的"改完了"信号），点「开始评分」时也**顺带保存**；保存动作 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效 ⇒ 下一次抽取就过滤）。**新增 `FocusPoolManager.refreshBlacklist()`**：`initIfNeeded()` 扫描时是**直接 `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`），所以"**新增**拉黑"能靠 `draw()/drawUniform()` 的实时过滤立刻生效，但"**取消**拉黑"必须重扫才会回来；而重扫若 `new` 出全新 `FocusEntry`，会让实体侧那些**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒ 出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题。故新方法按 `namespace:path` 建索引**复用已有 `FocusEntry` 对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），然后重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。限制：连他人的服务器时改的是**本地**那份 common toml，服务器侧不受影响（单机/局域网主机同进程，正常生效）。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有的 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定，在这里返回 false 就是真正的免疫，而不是"加完再清"）；免疫名单 = **抗性提升** `DAMAGE_RESISTANCE` / **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，**仅当 `music.isPhase2()`** 时生效。**刻意只列这 5 项而不是"所有 beneficial"**：Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后要加（例如某个附属的自定义减伤）加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（Boolean，**默认 true**），false = 回到旧行为；不影响玩家的同类效果，也不影响 Boss 自己的二阶段自施。详见 `TECHNICAL_SUMMARY.md` §3.15。
+>
+> **上一轮（0.0.13）修复**：本轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 仍 10 个）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**（`BossMusicManager`）：原先只以静态字段 `music != null` 当作「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**，且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（症状「整个 BGM 都没了」）；改为每 tick 用 **`SoundManager.isActive(music)`** 核实 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑 + 高潮改细小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、刻度只有 1~2px ⇒ 取整后逐像素跳动；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮「中」字改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音数量与频率降为 1/3**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9），在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮更明显 + 发光**（`TunerOrbLayer`）：高亮改为额外叠加 `glow*0.4` 逐通道**向白靠拢**（原先 `min(1, color*(1+glow*0.8))` 被 `min` 截断、几乎看不出变化），发光用**两层 `entityTranslucentEmissive` 自发光外壳**——**不能用原版发光描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，只能整只 Boss 一起描边，无法只描一颗立方体）。⑥ **药水效果可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（用于 boss 自身 4 处），并完成药水现状审计。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶，对施法者反噬 125%）** 加入 `focus.blacklist`——**配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 toml）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.13
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.14
 > 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 51 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 52 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -17,8 +19,10 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.13 / 第 51 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。
-> **本轮（0.0.13）成果：音乐自愈 + 重音减密 + 表现层微调 + 药水可观测性** —— ① **修「玩家被击杀复活后（未走出索敌范围）Boss 背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 时静默返回），字段却仍非 null ⇒ 服务端 `playing` 为 true 时 `startMusic` **永不重入** = **永久静音**；`onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**（症状「整个 BGM 都没了」）。现每 tick 用 `SoundManager.isActive(music)` 核实 + 10 tick 防抖，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑**（`MusicBarHud` 亚像素覆盖：小数部分按比例摊到相邻两列，亮度重心连续移动）+ **高潮「中」字改小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map`→`List`，二阶段进场连发不再互相顶掉；`MAX_WAVES=32` 兜底）。④ **新增配置 `music.accentDensityDivisor`（默认 3、范围 1~9）**：服务端加载乐谱时「每 N 个保留 1 个」，HUD 刻度/击退/涟漪/提示音一起变稀疏、客户端零改动（默认乐谱 37 → 13 个重音）；配置 **61 → 62 项**（`music` 段 12 → 13）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳**（`entityTranslucentEmissive`；原版发光描边是整实体级 `OutlineBufferSource`，无法只描一颗立方体）。⑥ **药水可观测性**：8 处 `addEffect` 返回值原先全被丢弃（被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时静默失效），新增 `applySelfEffect` 打 WARN（boss 自身 4 处）+ 药水现状审计（低谷效果仅一阶段且 `visible=false` 无粒子、二阶段自施可达且不受亡灵免疫、`SUMMON_DOWN` 免疫确认真实生效）。⑦ 配置侧把 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）加入 `focus.blacklist`（**不在 jar 内**；该 toml **无法在游戏内修改**）。
+当前状态（0.0.14 / 第 52 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。
+> **上一轮（0.0.13）成果：音乐自愈 + 重音减密 + 表现层微调 + 药水可观测性** —— ① **修「玩家被击杀复活后（未走出索敌范围）Boss 背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 时静默返回），字段却仍非 null ⇒ 服务端 `playing` 为 true 时 `startMusic` **永不重入** = **永久静音**；`onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**（症状「整个 BGM 都没了」）。现每 tick 用 `SoundManager.isActive(music)` 核实 + 10 tick 防抖，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑**（`MusicBarHud` 亚像素覆盖：小数部分按比例摊到相邻两列，亮度重心连续移动）+ **高潮「中」字改小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map`→`List`，二阶段进场连发不再互相顶掉；`MAX_WAVES=32` 兜底）。④ **新增配置 `music.accentDensityDivisor`（默认 3、范围 1~9）**：服务端加载乐谱时「每 N 个保留 1 个」，HUD 刻度/击退/涟漪/提示音一起变稀疏、客户端零改动（默认乐谱 37 → 13 个重音）；配置 **61 → 62 项**（`music` 段 12 → 13）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳**（`entityTranslucentEmissive`；原版发光描边是整实体级 `OutlineBufferSource`，无法只描一颗立方体）。⑥ **药水可观测性**：8 处 `addEffect` 返回值原先全被丢弃（被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时静默失效），新增 `applySelfEffect` 打 WARN（boss 自身 4 处）+ 药水现状审计（低谷效果仅一阶段且 `visible=false` 无粒子、二阶段自施可达且不受亡灵免疫、`SUMMON_DOWN` 免疫确认真实生效）。⑦ 配置侧把 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）加入 `focus.blacklist`（**不在 jar 内**；该 toml **无法在游戏内修改**）。
+
+> **本轮（0.0.14）成果：配置界面补上「聚晶黑名单」入口 + 二阶段免疫回复/减伤类效果** —— ① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**（0.0.13 的「拉黑索命聚晶」因此只能靠改文件落地）；现补一个单行 `EditBox`（预填当前值，hint「namespace:path，英文逗号分隔；留空 = 不屏蔽」），**点「完成」关屏时保存**、点「开始评分」时也顺带保存，保存 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效）。**新增 `FocusPoolManager.refreshBlacklist()`** 的理由：`initIfNeeded()` 扫描时**直接 `continue` 跳过**黑名单聚晶（不进 `ALL_ENTRIES`）⇒"**新增**拉黑"靠实时过滤即可生效，但"**取消**拉黑"必须重扫；而重扫若 `new` 出新 `FocusEntry`，会让实体侧**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒「立方体高亮卡住 / 施法收尾回调对不上」。故新方法按 `namespace:path` 建索引**复用已有对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），再重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。⚠️ 连他人的服务器时改的是**本地** toml、服务器侧不受影响。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 返回 false 是**真正的免疫**，不是"加完再清"），名单 = 抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升，**仅当 `music.isPhase2()`** 生效；**刻意只列这 5 项而非"所有 beneficial"**——Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（默认 **true**，false = 回旧行为）；**不影响玩家**、也**不影响 Boss 自己的二阶段自施**。配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**）。
 
 ---
 
@@ -39,7 +43,7 @@
 | 音乐定时器 | ✅ | `music_score.json`分段表+重音表+循环推进 |
 | 阶段行为 | ✅ | 铺垫轮换/高潮三通道并行/低谷禁施法 |
 | 锁血V2 | ✅ | 12 档阶梯锁血（216 血 / 间隔 18），致死伤害截断 + 宽限期免疫 + 覆写 tick() 的死亡自愈 + 旧档迁移 |
-| 二阶段 | ✅ | 半血触发+音乐切换+打断+数据同步 |
+| 二阶段 | ✅ | 半血触发+音乐切换+打断+数据同步；**0.0.14 起二阶段免疫「回复/减伤」类效果**（抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升，走 `canBeAffected`，开关 `phase2_buffs.phase2EffectImmunity` 默认 true） |
 | 效果清除 | ✅ | 低谷清正面/高潮清负面（本次新增）；**0.0.13 新增 `applySelfEffect`**：boss 自身 4 处自施药水被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时打 WARN（此前全类 8 处 `addEffect` 的 boolean 返回值全被丢弃、效果被拒即静默失效） |
 | 重音系统 | ✅ | 分阶段斥力+无前摇瞬发施法 |
 | 仆从管理 | ✅ | 数量上限+迟滞恢复+伤害归因 |
@@ -47,17 +51,17 @@
 | 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段；共 4 个通道（含 0.0.10 新增 `SAccentWavePacket` id 3，限 `PLAY_TO_CLIENT`），协议 2.0 严格匹配 |
 | 正式纹理 | ✅ | `tuner.png` 64x64 身体按参考图服装重画、头部仍是黑立方+蓝渐变（0.0.10）；另有 8 阶披风、立方体与声波贴图，自定义蛋贴图已删（改走原版模板） |
 | 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10；0.0.13 高亮改「向白插值」+ 两层 `entityTranslucentEmissive` 自发光外壳） |
-| 配置系统 | ✅ | **62 项** / 10 个 section（toml） |
+| 配置系统 | ✅ | **63 项** / 10 个 section（toml）；`phase2_buffs` 段 0.0.14 增至 4 项 |
 | 实测验证 | ✅ | quickPlay自动进档验证通过（第 9/11 轮） |
 | 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮）；**0.0.13 修「玩家被击杀复活后（未走出索敌范围）音乐丢失」：每 tick 用 `SoundManager.isActive` 核实实例真的在响 + 10 tick 防抖，失效即清空字段并自愈重建**（第 51 轮） |
 | 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；**0.0.13 起活跃表由 Map 改 List ⇒ 同实体多波共存**，旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮）；**重音密度由 `music.accentDensityDivisor`（默认 3）服务端统一抽稀**（第 51 轮） |
 | 披风渲染层 | ✅ | `TunerCapeModel` + `TunerCapeLayer`（第 19 轮） |
-| 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮） |
+| 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮）；**0.0.14 起配置界面有「聚晶黑名单」输入框**（关屏/开始评分时保存 + `refreshBlacklist()` 热刷新，取代"只能手改 toml"） |
 | 分类三层防线 | ✅ | 手动配置 → `instanceof ISummonSpell` 权威判定 → `describe()` 兼容 `.info`/`.desc` 双后缀 → 关键词兜底（第 29 轮） |
 | 仪式召唤 + 法杖升级 | ✅ | 任务 #118：`goety:ritual_factory` 注册、快照制掉落、10% 巫法（`SPELL_POTENCY` MULTIPLY_TOTAL）+ 40% 魔法伤害、经验×4（第 36 轮） |
 | 调律命令 | ✅ | `/goetytuner tune <witchcraft\|magic\|add\|clear\|info>`（OP2）（第 37b 轮） |
 | 法杖白名单 | ✅ | `wand_whitelist`（第 38 轮） |
-| 游戏内配置界面 + LLM 评分 UI | ✅ | `IConfigScreenFactory` 注册（Mods 菜单出现 Config 按钮）、提示词输入框、`TunerToast` 结果提示、LLM 结果宽松校验（第 41 轮） |
+| 游戏内配置界面 + LLM 评分 UI | ✅ | `IConfigScreenFactory` 注册（Mods 菜单出现 Config 按钮）、提示词输入框、`TunerToast` 结果提示、LLM 结果宽松校验（第 41 轮）；**0.0.14 起界面再加一个「聚晶黑名单」单行输入框**（预填 `focus.blacklist` 当前值，点「完成」关屏或点「开始评分」时 `set + save` 并调 `FocusPoolManager.refreshBlacklist()` 热刷新 ⇒ 改完立即生效） |
 
 ### 未完成
 
@@ -315,11 +319,11 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（62项 / 10个 section，第51轮实况）
+### `run/config/goetytuner-common.toml`（63项 / 10个 section，第52轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
-| **boss**（19项） | maxHealth | 216 | Boss血量 |
+| **boss**（19项，0.0.14 **未变**） | maxHealth | 216 | Boss血量 |
 | | lockHealthInterval | 18 | 锁血档距（12档阶梯锁血：216/18） |
 | | lockGraceTicks | 10 | 每次锁血后的宽限期免疫（tick） |
 | | lockDeathRevive | true | 致死伤害被截断后的死亡自愈开关 |
@@ -338,9 +342,10 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2EntryBurstCount | 6 | 二阶段进场重音连发次数 |
 | | maxHitDamagePercent | 0.25 | 限伤：单次伤害上限 = 最大生命×该值（0=关闭） |
 | | maxDamagePerSecond | 0.0 | 限DPS：滑动 1 秒窗口伤害上限（0=关闭；建议 20/30/40） |
-| **phase2_buffs**（3项） | phase2BuffsEnabled | true | 二阶段强化药水开关 |
+| **phase2_buffs**（4项） | phase2BuffsEnabled | true | 二阶段强化药水开关 |
 | | phase2StrengthLevelLow | 2 | 低档力量等级 |
 | | phase2StrengthLevelHigh | 5 | 高档力量等级 |
+| | **phase2EffectImmunity** | **true** | **0.0.14 新增**：二阶段免疫「回复 / 减伤」类药水效果 —— 抗性提升(`DAMAGE_RESISTANCE`) / 伤害吸收(`ABSORPTION`) / 生命恢复(`REGENERATION`) / 瞬间治疗(`HEAL`) / 生命提升(`HEALTH_BOOST`) **一律无法施加到 Boss**（走 `canBeAffected`，是 `addEffect` 与 `forceAddEffect` 的**第一道**判定）。**刻意只列这 5 项而非"所有 beneficial"**：Boss 自己的二阶段自施（力量 `DAMAGE_BOOST`、重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉。`false` = 回到旧行为；**不影响玩家**。⚠️ 本键在 **`[phase2_buffs]` 段**（不是 `[boss]` 段） |
 | **summon**（4项） | maxMinions | 32 | 召唤上限 |
 | | refillHysteresis | 4 | 满员迟滞（低于 max-N 才恢复） |
 | | survivalWeight | 1.0 | 召唤评分参数1（生存权重） |
@@ -358,7 +363,7 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2TeleportIntervalFactor | 1.0 | 二阶段瞬移间隔系数（范围 0.1~1.0，只能缩短二阶段瞬移间隔） |
 | | phase2BuildupArcRadius | 6.0 | 二阶段铺垫期弧形瞬移半径 |
 | | phase2BuildupArcEveryN | 3 | 每 N 次铺垫攻击触发一次弧形瞬移 |
-| **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，逐段 trim、**大小写敏感**，实时解析不缓存）。**代码默认值只有 `destruction_focus`**；0.0.13 起**游玩实例的 toml** 额外加入 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）。⚠️ **无法在游戏内配置界面修改**（`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器），只能手改文件；`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
+| **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，逐段 trim、**大小写敏感**，实时解析带缓存）。**代码默认值只有 `destruction_focus`**；0.0.13 起**游玩实例的 toml** 额外加入 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）。✅ **0.0.14 起可在游戏内配置界面修改**（新增单行输入框，点「完成」关屏或点「开始评分」时保存 + 热刷新 ⇒ **改完立即生效**）；⚠️ 仍是**唯一**补了入口的 common 键，**其余配置项依旧只能手改 toml**；连他人服务器时改的是**本地** toml。`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
 | **wand_whitelist**（1项） | whitelist | "" | 法杖白名单（格式同上，供未加入 `goety:wands` 标签的附属法杖激活仪式） |
 | **music**（13项） | syncInterval | 20 | 音乐同步间隔 |
 | | accentKnockbackBase | 0.4 | 普通重音斥力 |
@@ -398,9 +403,11 @@ AI自动初评分**已完整实现**。两条路径：
 > ⚠️ **0.0.13 新增键**：`music.accentDensityDivisor`（默认 `3`）是**新增键**，Forge 会**自动补进**老 toml、**无需手改**
 > （实例 toml 在下次启动写入该行之前查不到它属正常——默认值在代码里）。**「新增键自动补齐」与「改默认值不会回填」仍是两件事。**
 >
-> ⚠️ **0.0.13 又一条（可访问性，重要）**：本模组的 `TunerConfigScreen` **顶替**了 Forge 默认的 toml 编辑器，
-> 界面里只有 LLM API Key 与提示词两个输入框 ⇒ **本表里的所有配置项都只能手改 `goetytuner-common.toml`**，
-> **游戏内改不了**（包括 `focus.blacklist`，这也是"拉黑索命聚晶"只能改文件的原因）。
+> ⚠️ **0.0.13 的"可访问性"条目（0.0.14 已部分推翻，保留以便追溯）**：本模组的 `TunerConfigScreen` **顶替**了 Forge 默认的 toml 编辑器，
+> 0.0.13 时该界面只有 LLM API Key 与提示词两个输入框 ⇒ 当时**本表里的所有配置项都只能手改 `goetytuner-common.toml`**。
+> ✅ **0.0.14 更新**：界面已补上 **「聚晶黑名单」输入框**（`focus.blacklist` 不再需要手改文件，改完点「完成」或「开始评分」即保存生效），
+> 但**除黑名单外的其余配置项依旧只能手改 toml**。⚠️ 另外：新增键（如 `phase2_buffs.phase2EffectImmunity`）Forge 会**自动补进**老 toml；
+> 而**连他人服务器**时改的是**本地**那份 toml，服务器侧不受影响（单机 / 局域网主机同进程，正常生效）。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
@@ -423,7 +430,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.13 / 51 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.14 / 52 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -459,6 +466,21 @@ AI自动初评分**已完整实现**。两条路径：
 - [x] ~~**药水效果是否真的生效无从判断**~~：新增 `applySelfEffect`（被 `canBeAffected` / Forge
   `MobEffectEvent.Applicable` 拒绝时打 WARN，已用于 boss 自身 4 处）+ 完成药水现状审计
   （第 51 轮 / 0.0.13，详见 `TECHNICAL_SUMMARY.md` §3.14(6)）
+- [x] ~~**`focus.blacklist` 在游戏内没有入口**~~：0.0.13 的结论是「`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器
+  ⇒ **整个 `goetytuner-common.toml` 都只能手改**」。0.0.14 已在配置界面补上**聚晶黑名单单行输入框**
+  （预填当前值；点「完成」关屏或点「开始评分」时 `FOCUS_BLACKLIST.set + save` 并调新增的
+  `FocusPoolManager.refreshBlacklist()` 热刷新 ⇒ **改完立即生效**，新增拉黑与取消拉黑**两向都即时**）；
+  该方法**按 `namespace:path` 复用已有 `FocusEntry` 对象**，避免重扫 `new` 出新对象而打断实体侧
+  **按对象身份**记录的状态（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）——
+  否则会出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题。
+  ⚠️ 仍只是**黑名单这一个键**有入口，**其余 common 配置项依旧只能手改 toml**
+  （第 52 轮 / 0.0.14，详见 `TECHNICAL_SUMMARY.md` §3.15(1)）
+- [x] ~~**Boss 能被叠上抗性提升 / 伤害吸收 / 生命恢复**~~：二阶段扩展现有 `canBeAffected` 覆写
+  （`addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 真正的免疫，不是"加完再清"），免疫
+  抗性提升 / 伤害吸收 / 生命恢复 / 瞬间治疗 / 生命提升 五项，**仅二阶段**生效；
+  **刻意不按"所有 beneficial"一刀切**（否则会把 Boss 自己的二阶段增益 力量 `DAMAGE_BOOST`
+  与重振 `RALLYING` 一起禁掉）。新增配置 `phase2_buffs.phase2EffectImmunity`（默认 **true**，
+  false = 回旧行为）；不影响玩家（第 52 轮 / 0.0.14，详见 `TECHNICAL_SUMMARY.md` §3.15(2)）
 
 ### 仍待办
 1. **A3 剩余粒子**：传送 / 净化环 / 二阶段碎裂+天空盒 / 施法前摇聚能
@@ -474,12 +496,19 @@ AI自动初评分**已完整实现**。两条路径：
 9. **0.0.13 待验收**：音乐丢失修复需**真机复现路径**（被击杀 → 在死亡界面停留不同时长 → 复活 → 未脱战时音乐应自动恢复）、
    音乐条**亚像素刻度**的平滑观感、涟漪**多波共存**的层叠外扩观感、立方体高亮「变白变亮」与自发光外壳的强度、
    `music.accentDensityDivisor=3` 下的重音密度手感（太密/太疏都调这一项）
-10. **`focus.blacklist` 的可访问性（0.0.13 结论）**：`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器 ⇒
+10. ~~**`focus.blacklist` 的可访问性（0.0.13 结论）**：`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器 ⇒
     **整个 `goetytuner-common.toml` 都只能手改**。是否补一个通用 toml 入口、或在配置屏里加黑名单编辑框，
-    待决策（短期内"把聚晶加入黑名单"必须靠手改文件）
+    待决策（短期内"把聚晶加入黑名单"必须靠手改文件）~~
+    ✅ **已完成（0.0.14 / 第 52 轮）**：配置屏里加了**聚晶黑名单输入框**（点「完成」关屏或点「开始评分」即保存 +
+    `FocusPoolManager.refreshBlacklist()` 热刷新，改完立即生效）。**仍待决策的只剩**：「是否需要再补一个
+    **通用 toml 入口**」——其余 common 配置项（`boss.*` / `music.*` / `casting.*` …）依旧只能手改文件
 11. **药水效果现状（0.0.13 审计结论）**：一阶段低谷的 `SAPPED`/`DARKNESS` 与仆从四效果**机制上生效**，
     但都构造为 `visible=false`（**无粒子**）⇒ **玩家看不出效果**；`tickPhase2Buffs` **零日志** ⇒
     二阶段自施药水的数值收益只能进游戏实测。是否补粒子 / 加日志属**表现层待决策项**（不是 bug）
+12. **0.0.14 待验收**：① 配置界面的**聚晶黑名单输入框**（排版 / 输入 / 保存提示 / 状态行文案，以及
+    "点完成关屏保存"与"点开始评分顺带保存"两条路径）；② 改完黑名单后**取消拉黑是否真的立即回到池里**
+    （`refreshBlacklist()` 的重扫 + 对象复用路径）；③ 二阶段免疫**实际生效**（给 Boss 丢抗性提升/生命恢复
+    应完全不上身；配置改 `false` 后应恢复可施加）
 
 ---
 
@@ -901,6 +930,8 @@ AI自动初评分**已完整实现**。两条路径：
   **整个 `goetytuner-common.toml` 的所有项都只能手改文件**。解析规则：英文逗号分隔、逐段 trim、**大小写敏感**
   （`parseBlacklist`）。另：`RUNTIME_BLACKLIST`（运行期自愈拉黑）与配置黑名单是**并集** —— 配置**无法解禁**
   一个已被运行期拉黑的聚晶。
+  ✅ **0.0.14 更新（历史条目）**：配置界面已补上**聚晶黑名单输入框**，`focus.blacklist` **不再只能手改文件**；
+  **其余** common 配置项仍只能手改 toml。见下一节「第 52 轮（0.0.14）」与 `TECHNICAL_SUMMARY.md` §3.15(1)。
 - 部署产物：`goetytuner-0.0.13.jar`（**1,753,132 B / md5 `AE59EBFE8CF0F2D09C16453A515CE7F5` / jar 内 102 条目**）
   → `versions\测试\mods\`（旧 0.0.12 已删）；构建在主副本就地 `gradlew clean build` 成功
   （50 s，仍只有原有 3 条 Forge 弃用警告）。
@@ -909,6 +940,63 @@ AI自动初评分**已完整实现**。两条路径：
   （不报错也不推进），`gradlew --stop` 清理守护进程后恢复正常（`org.gradle.daemon=false` 也不能完全避免残留的 worker/文件锁）。
 - **待验收**：本轮表现层改动（亚像素刻度、涟漪多波共存、立方体高亮/发光外壳）与**音乐自愈的真机复现路径**
   均**尚未进游戏画面验收**（本轮只做到编译通过 + md5/条目核对）。
+
+### 第 52 轮（0.0.14）
+- **本轮范围**：改动 **4 个 Java 文件** + **2 个 lang** + 版本号，**只改代码、不动任何贴图/资源**；
+  **新增 1 个配置项** `phase2_buffs.phase2EffectImmunity`（`Boolean`，默认 **true**）⇒ 配置 **62 → 63 项**
+  （`phase2_buffs` 段 **3 → 4**，**`boss` 段仍 19、未变**，section 数仍 **10**）；`.java` 文件数仍 **45**、
+  jar 条目仍 **102**（无新增/删除类，只是既有类被改写）。
+  实测行数：`TunerBoss.java` **2050 行**、`TunerConfigScreen.java` **220 行**、`FocusPoolManager.java` **396 行**、
+  `TunerCommonConfig.java` **438 行**；lang `zh_cn.json` / `en_us.json` 各 29 行（**各 +4 键**）。
+- **① 配置界面新增「聚晶黑名单」输入框（`client/TunerConfigScreen` + `focus/FocusPoolManager`）**：
+  - **背景**：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**
+    （注册的是 `IConfigScreenFactory`），该键此前在游戏内**完全没有入口** —— 0.0.13 的「拉黑索命聚晶」
+    因此只能靠改文件落地（§3.14(7)）。
+  - **改法**：加一个单行 `EditBox`（`cx-150, 138`，`300×18`，`maxLength 1024`，标签画在 `y=126`），
+    构造时**预填当前值**（`FOCUS_BLACKLIST.get()`），hint 为「namespace:path，英文逗号分隔；留空 = 不屏蔽」。
+  - **保存时机**：**点「完成」关屏时保存**（`onClose()` → `applyBlacklist()` —— 最自然的"我改完了"信号），
+    **点「开始评分」时也顺带保存**（用户可能只改了黑名单就来点它）；值没变则直接返回、不做无谓重扫。
+    保存动作 = `FOCUS_BLACKLIST.set(v)` + `FOCUS_BLACKLIST.save()` + `FocusPoolManager.refreshBlacklist()`。
+  - **为什么"只改值"就已经生效**：`getBlacklist()` 以 **raw 字符串为缓存键**（`TunerCommonConfig` 里的解析缓存），
+    值一变缓存自动失效 ⇒ `draw()/drawUniform()` 的下一次抽取就会过滤掉新拉黑的聚晶。
+    保存后状态行显示 `config.goetytuner.blacklist.saved`（带当前生效聚晶数）并记 INFO 日志。
+  - **新增 `FocusPoolManager.refreshBlacklist()`（本轮真正的设计点）**：`initIfNeeded()` 扫描时**直接
+    `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`）⇒"**新增**拉黑"靠实时过滤立刻生效，
+    但"**取消**拉黑"**必须重扫**才会回到池里；而重扫若 `new` 出全新 `FocusEntry`，会打断实体侧那些
+    **按对象身份**记录的状态（`TunerBoss.activeVisualCasts` 身份集合、正在施法的 `CastChannel.current`）
+    ⇒ 出现「立方体高亮卡住不熄 / 施法收尾回调对不上（施法计数与蹲姿永久 > 0）」这类**极其隐蔽**的问题。
+    故新方法先按 **`namespace:path`** 建索引、重扫时**复用已有对象**（计入 `reused`），**只为"这次才被解禁"的
+    聚晶新建**（它们此前不在池里、**不可能正在施法**，故安全）；然后重建 `ALL_ENTRIES` / `STATIC_POOLS`
+    并重新 `classification.applyTo(...)`，最后打 INFO `[Tuner] Blacklist refreshed: N foci active (reused X, skipped Y)`。
+    逐项 `try/catch` 兜底照留（某个附属聚晶抛异常只跳过并记 ERROR，不影响其它聚晶）。
+  - **新增 4 个 lang 键**（zh_cn / en_us 各 4 个）：`config.goetytuner.blacklist.label` /
+    `config.goetytuner.blacklist` / `config.goetytuner.blacklist.hint` / `config.goetytuner.blacklist.saved`。
+  - ⚠️ **限制**：连**他人**的服务器时改的是**本地**那份 common toml、**服务器侧不受影响**
+    （单机 / 局域网主机是同进程的集成服务器，故正常生效）；`RUNTIME_BLACKLIST` 与配置黑名单仍是**并集**，
+    配置**无法解禁**一个已被运行期拉黑的聚晶。
+- **② 二阶段免疫「回复 / 减伤」类药水效果（`entity/TunerBoss` + `config/TunerCommonConfig`）**：
+  - **需求**：进入二阶段后，Boss 不再能被打上 抗性提升 / 伤害吸收 / 生命恢复 之类效果。
+  - **实现**：扩展现有的 `canBeAffected` 覆写 —— 它同时是 `LivingEntity.addEffect` 与 `forceAddEffect` 的
+    **第一道**判定，在这里返回 `false` 就是**真正的免疫**，而不是"加完再清"。
+  - **免疫名单**（集中在私有 `isPhase2Immune(MobEffect)`，一行一项）：**抗性提升** `DAMAGE_RESISTANCE` /
+    **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，
+    **仅当 `music.isPhase2()`**（且配置开启）时生效。
+  - **为何刻意只列这 5 项、而不是"所有 beneficial"**：Boss 自己的二阶段增益
+    **力量 `DAMAGE_BOOST`** 与 **重振 `RALLYING`**（`tickPhase2Buffs`）**同样是 beneficial**，
+    按 `isBeneficial()` 一刀切会把它们**一起禁掉**、等于顺手废掉二阶段自 buff；
+    写成显式白名单后，以后要再挡某个效果（例如某个附属的自定义减伤光环）**加一行**即可。
+  - **不影响**：**玩家**的同类效果（本方法只作用于本实体），以及 Boss **自己的二阶段自施**。
+  - **新增配置** `phase2_buffs.phase2EffectImmunity`（`Boolean`，默认 **true**；⚠️ 键在 **`[phase2_buffs]` 段**、
+    不是 `[boss]` 段）：`false` = **回到旧行为**。属**新增键** ⇒ Forge 会自动补进老 toml、无需手改。
+- 部署产物：`goetytuner-0.0.14.jar`（**1,755,283 B / md5 `DA2A20C328B41D71DB9CFCC0AF81DAD2` /
+  jar 内 **102 条目**）→ `versions\测试\mods\`（旧 0.0.13 已删）；构建在主副本就地 `gradlew clean build` 成功
+  （**1m20s**，仍只有原有 3 条 Forge 弃用警告）。
+  ⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`）：判断"部署的 jar 对应哪份源码"
+  要逐条目比对，别看整体 md5。
+- **待验收**：本轮两项**均尚未进游戏实测** —— ① 配置界面的黑名单输入框（排版 / 输入 / 保存提示 / 状态行文案，
+  以及"点完成关屏保存"与"点开始评分顺带保存"两条路径）；② 改完黑名单后**取消拉黑是否真的立即回到池里**
+  （`refreshBlacklist()` 的重扫 + 对象复用路径）；③ 二阶段免疫**实际生效**（给 Boss 丢抗性提升 / 生命恢复
+  药水应完全不上身；把配置改成 `false` 后应恢复可施加）。
 
 ---
 
@@ -955,7 +1043,9 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | **重音太密/太疏** | **`music.accentDensityDivisor`** | **0.0.13 新增**，默认 **3** = 每 3 个重音保留 1 个（数量与频率约为原来的 1/3）；**1 = 不抽稀**（回到乐谱原始的 37 个密度），9 = 最稀疏（约 1/9）。**服务端加载乐谱时统一生效** ⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变，客户端无需改动。⚠️ 配置在启动时读取、乐谱在 Boss 构造时加载 ⇒ **改完需重启游戏**，已存在的 Boss 不会重新抽稀 |
 | 重音特效（声波/粒子） | `accentWave` / `accentParticles` | 0.0.10 起声波 `accentWave=true`（10 环非对称径向涟漪，最高 0.794 格）、旧粒子 `accentParticles=false`；**老 toml 的 `accentParticles` 仍是 `true`，需手改**（见 §六迁移提示）；**0.0.13 起同一实体可同时存在多条波**（连发各成一条、层叠外扩） |
 | 动态评分变化太慢/快 | `dpsAdjustRate` / `dynamicScoreCap` | rate=修正速率，cap=偏移上限 |
-| 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单（逐段 trim、**大小写敏感**），重启后不参与抽签；⚠️ **只能用文本编辑器改 `goetytuner-common.toml`**（游戏内配置界面改不了，见 §六）。0.0.13 起实例 toml 已含 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）；`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
+| **二阶段太肉 / 自动回血打不动** | **`phase2_buffs.phase2EffectImmunity`** | **0.0.14 新增**，默认 **true** = 二阶段**免疫**「回复 / 减伤」类药水效果（抗性提升 `DAMAGE_RESISTANCE` / 伤害吸收 `ABSORPTION` / 生命恢复 `REGENERATION` / 瞬间治疗 `HEAL` / 生命提升 `HEALTH_BOOST`）。它防的是**外部来源**（其它模组的增益光环、玩家丢的增益药水、Goety 治疗类效果等）把二阶段 Boss 变成"打不动 + 自动回血"；**Boss 自己的二阶段自施（力量 / 重振）不受影响，玩家的同类效果也不受影响**。若你**故意**想给 Boss 上增益（例如做机制向整合包），改成 `false` = 回到旧行为。⚠️ 键在 **`[phase2_buffs]` 段**（不是 `[boss]` 段）；属**新增键** ⇒ Forge 会自动补进老 toml |
+| **聚晶黑名单怎么改（不再必须手改文件）** | `focus.blacklist` → **游戏内配置界面** | **0.0.14 起**：Mods 菜单 → Config → 配置界面里的「聚晶黑名单」单行输入框（预填当前值，提示「namespace:path，英文逗号分隔；留空 = 不屏蔽」），**点「完成」关屏时保存**、点「开始评分」时也顺带保存 ⇒ **改完立即生效**（不需要重启；新增拉黑与取消拉黑两个方向都即时）。仍可继续手改 `goetytuner-common.toml`。⚠️ 除黑名单外的**其余** common 配置项**依旧只能手改 toml**；⚠️ 连**他人**的服务器时改的是**本地**那份 toml、服务器侧不受影响（单机/局域网主机同进程，正常生效） |
+| 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单（逐段 trim、**大小写敏感**）；**0.0.14 起可直接在游戏内配置界面填**（见上一行），也可手改 `goetytuner-common.toml`。0.0.13 起实例 toml 已含 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）；`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
 | LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |
 | 打得太快/被秒杀 | **`lockGraceTicks` / 档位数（`maxHealth` ÷ `lockHealthInterval`）**；`maxHitDamagePercent` / `maxDamagePerSecond`（仅作保险） | **实测结论：战斗时长主要由 `lockGraceTicks`（每档最短时长，默认 10t=0.5s）与档位数（默认 216/18 = 12 档）决定**——锁血阶梯把每次命中的有效伤害钳到一档，超出部分被丢弃，所以伤害上限不改变阶梯推进速度。`maxHitDamagePercent`（默认 0.25×216≈54，0=关闭）与 `maxDamagePerSecond`（默认 0=关闭）都只在**阶梯耗尽后**（血量 ≤18 那段）才可能起作用，主要作为防「秒杀式巨额伤害」的保险 |
