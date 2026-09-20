@@ -9,6 +9,8 @@
 
 package com.tiaolvshi.goetytuner.client;
 
+import com.tiaolvshi.goetytuner.GoetyTuner;
+import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.focus.FocusClassificationConfig;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
 import com.tiaolvshi.goetytuner.focus.LLMClassifier;
@@ -40,6 +42,8 @@ public class TunerConfigScreen extends Screen {
     private final Screen parent;
     private EditBox apiKeyBox;
     private MultiLineEditBox promptBox;
+    /** 【0.0.14】聚晶黑名单输入框（对应 common 配置 `focus.blacklist`） */
+    private EditBox blacklistBox;
     private Button runButton;
     /** 状态行（null = 不显示）；直接存 Component，避免每帧 getString() */
     private Component status;
@@ -55,7 +59,7 @@ public class TunerConfigScreen extends Screen {
         int cx = this.width / 2;
 
         // 1. API Key 输入框
-        apiKeyBox = new EditBox(this.font, cx - 150, 40, 300, 18,
+        apiKeyBox = new EditBox(this.font, cx - 150, 34, 300, 18,
                 Component.translatable("config.goetytuner.classify.apikey"));
         apiKeyBox.setMaxLength(256);
         apiKeyBox.setValue(cfg.getApiKey() == null ? "" : cfg.getApiKey());
@@ -64,7 +68,7 @@ public class TunerConfigScreen extends Screen {
 
         // 2. 提示词输入框（多行，预填当前生效的提示词）
         //    构造器签名经 javap 字节码核实：(Font, x, y, width, height, placeholder, message)
-        promptBox = new MultiLineEditBox(this.font, cx - 150, 74, 300, 64,
+        promptBox = new MultiLineEditBox(this.font, cx - 150, 66, 300, 58,
                 Component.translatable("config.goetytuner.classify.prompt.hint"),
                 Component.translatable("config.goetytuner.classify.prompt"));
         // 沿用旧 EditBox 的 4000 字符上限，避免依赖 MultiLineEditBox 的默认上限
@@ -76,21 +80,62 @@ public class TunerConfigScreen extends Screen {
                 : customPrompt);
         this.addRenderableWidget(promptBox);
 
-        // 3. 开始评分 按钮
+        // 3. 【0.0.14】聚晶黑名单输入框
+        //    需求背景：`focus.blacklist` 是 common 配置，而本界面**顶替了 Forge 默认的 toml 编辑器**，
+        //    此前该键在游戏内完全没有入口、只能手改文件。这里补一个输入框。
+        //    格式与 toml 完全一致（英文逗号分隔），失焦/关屏时统一保存并热刷新。
+        blacklistBox = new EditBox(this.font, cx - 150, 138, 300, 18,
+                Component.translatable("config.goetytuner.blacklist"));
+        blacklistBox.setMaxLength(1024);
+        blacklistBox.setValue(TunerCommonConfig.FOCUS_BLACKLIST.get());
+        blacklistBox.setHint(Component.translatable("config.goetytuner.blacklist.hint"));
+        this.addRenderableWidget(blacklistBox);
+
+        // 4. 开始评分 按钮
         runButton = Button.builder(Component.translatable("config.goetytuner.classify.button"),
                         b -> runClassify())
-                .bounds(cx - 150, 146, 300, 20)
+                .bounds(cx - 150, 164, 300, 20)
                 .build();
         this.addRenderableWidget(runButton);
 
-        // 4. 完成 / 返回
+        // 5. 完成 / 返回（同时保存黑名单）
         this.addRenderableWidget(Button.builder(Component.translatable("config.goetytuner.done"),
                         b -> onClose())
-                .bounds(cx - 150, 170, 300, 20)
+                .bounds(cx - 150, 188, 300, 20)
                 .build());
     }
 
+    /**
+     * 【0.0.14】把界面上的黑名单写回 common 配置，并让改动**立即生效**。
+     *
+     * <p>生效路径：`FOCUS_BLACKLIST.set(...)` 改的是 Forge 的内存值（`getBlacklist()` 以 raw 字符串
+     * 为缓存键，值一变缓存自动失效）⇒ `draw()/drawUniform()` 的下一次抽取就会过滤掉新拉黑的聚晶。
+     * 再调 {@link FocusPoolManager#refreshBlacklist()} 重建静态池，使**取消拉黑**也能立刻生效
+     * （否则要重启才会回到池里）。
+     *
+     * <p>⚠️ 仅当客户端与这份 common 配置同进程时才有意义（单机/局域网主机的集成服务器就是如此）；
+     * 连别人的服务器时改的是**本地**那份 toml，服务器侧不受影响。
+     */
+    private void applyBlacklist() {
+        if (blacklistBox == null) {
+            return;
+        }
+        String value = blacklistBox.getValue();
+        value = value == null ? "" : value.trim();
+        String old = TunerCommonConfig.FOCUS_BLACKLIST.get();
+        if (value.equals(old)) {
+            return; // 没改就不动（避免无谓的重新扫描）
+        }
+        TunerCommonConfig.FOCUS_BLACKLIST.set(value);
+        TunerCommonConfig.FOCUS_BLACKLIST.save();
+        FocusPoolManager.refreshBlacklist();
+        GoetyTuner.LOGGER.info("[Tuner] focus.blacklist updated from config screen: '{}' -> '{}'", old, value);
+        status = Component.translatable("config.goetytuner.blacklist.saved",
+                FocusPoolManager.allEntries().size());
+    }
+
     private void runClassify() {
+        applyBlacklist(); // 【0.0.14】顺带保存黑名单（用户可能只改了它就来点这个按钮）
         String key = apiKeyBox.getValue().trim();
         if (key.isEmpty()) {
             status = Component.translatable("config.goetytuner.classify.status.apikeymissing");
@@ -139,6 +184,8 @@ public class TunerConfigScreen extends Screen {
 
     @Override
     public void onClose() {
+        // 【0.0.14】关屏即保存黑名单（这是最自然的"我改完了"信号）
+        applyBlacklist();
         if (parent != null) {
             net.minecraft.client.Minecraft.getInstance().setScreen(parent);
         } else {
@@ -153,12 +200,14 @@ public class TunerConfigScreen extends Screen {
         int cx = this.width / 2;
         gfx.drawCenteredString(this.font, this.title, cx, 12, 0xFFFFFF);
         gfx.drawCenteredString(this.font,
-                Component.translatable("config.goetytuner.classify.apikey"), cx, 28, 0xCCCCCC);
+                Component.translatable("config.goetytuner.classify.apikey"), cx, 22, 0xCCCCCC);
         gfx.drawCenteredString(this.font,
-                Component.translatable("config.goetytuner.classify.prompt"), cx, 62, 0xCCCCCC);
+                Component.translatable("config.goetytuner.classify.prompt"), cx, 54, 0xCCCCCC);
+        gfx.drawCenteredString(this.font,
+                Component.translatable("config.goetytuner.blacklist.label"), cx, 126, 0xCCCCCC);
         if (status != null) {
             // 自动换行（宽度 300）：失败信息可能包含 URL/模型/排查提示，较长
-            gfx.drawWordWrap(this.font, status, cx - 150, 198, 300, 0xAAAAFF);
+            gfx.drawWordWrap(this.font, status, cx - 150, 214, 300, 0xAAAAFF);
         }
     }
 

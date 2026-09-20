@@ -53,6 +53,8 @@ public class TunerCommonConfig {
     // ---- 二阶段自施药水（第三十三轮）----
     /** 二阶段周期性自施药水总开关（原版力量+重振；Goety 的 BUFF/强健 属性加成对boss法术输出无感知，改原版力量保证肉眼可见） */
     public static final ForgeConfigSpec.BooleanValue PHASE2_BUFFS_ENABLED;
+    /** 【0.0.14】二阶段免疫回复/减伤类效果（抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升）。 */
+    public static final ForgeConfigSpec.BooleanValue PHASE2_EFFECT_IMMUNITY;
     /** 二阶段自施原版力量等级：锁血档位<10（正常档） */
     public static final ForgeConfigSpec.IntValue PHASE2_STRENGTH_LEVEL_LOW;
     /** 二阶段自施原版力量等级：锁血档位≥10（狂暴档） */
@@ -220,6 +222,14 @@ public class TunerCommonConfig {
                 .defineInRange("phase2StrengthLevelLow", 2, 1, 10);
         PHASE2_STRENGTH_LEVEL_HIGH = b.comment("二阶段自施原版力量等级：锁血档位≥10 时（狂暴档）。默认5")
                 .defineInRange("phase2StrengthLevelHigh", 5, 1, 10);
+        PHASE2_EFFECT_IMMUNITY = b.comment("【0.0.14】二阶段免疫「回复/减伤」类药水效果：进入二阶段后，"
+                + "抗性提升(DAMAGE_RESISTANCE)、伤害吸收(ABSORPTION)、生命恢复(REGENERATION)、"
+                + "瞬间治疗(HEAL)、生命提升(HEALTH_BOOST) 一律**无法施加到 Boss 身上**（走 canBeAffected）。",
+                "用途：防止外部来源（其它模组的增益光环、玩家丢的增益药水、Goety 的治疗类效果等）"
+                + "把二阶段的 Boss 变得打不动或自动回血。",
+                "注意：**不影响** Boss 自己的二阶段自施力量(phase2BuffsEnabled) —— 那是 DAMAGE_BOOST 与 RALLYING，不在免疫名单里。",
+                "也**不影响**玩家的同类效果。false=不免疫（回到旧行为）。默认 true")
+                .define("phase2EffectImmunity", true);
         b.pop();
 
         b.push("summon");

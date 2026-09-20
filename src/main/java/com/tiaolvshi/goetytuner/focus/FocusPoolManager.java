@@ -20,8 +20,10 @@ import net.minecraftforge.registries.ForgeRegistries;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -144,6 +146,64 @@ public class FocusPoolManager {
     public static FocusClassificationConfig classification() {
         initIfNeeded();
         return classification;
+    }
+
+    /**
+     * 【0.0.14】黑名单热刷新：配置界面改完 `focus.blacklist` 后立即让改动生效（两个方向都生效）。
+     *
+     * <p>为什么需要它：{@link #initIfNeeded()} 在扫描时**直接 `continue` 跳过**黑名单里的聚晶，
+     * 它们根本不进 {@code ALL_ENTRIES}。于是"**新增**拉黑"能靠 `draw()/drawUniform()` 的实时过滤
+     * 立刻生效，但"**取消**拉黑"必须重新扫描才会回来——而上次的实现在重扫时会**new 出全新的
+     * `FocusEntry` 对象**。
+     *
+     * <p>重扫本身是安全的：本方法**复用已存在的 `FocusEntry` 对象**（按 `namespace:path` 建索引），
+     * 只为"这次才被解禁"的聚晶新建对象。这样实体侧那些**按对象身份**记录的状态
+     * （`TunerBoss.activeVisualCasts` 身份集合、正在施法的 `CastChannel.current`）不会失效——
+     * 否则会出现"重新分类后立方体高亮卡住 / 施法收尾回调对不上"这类隐蔽问题。
+     * 被解禁的聚晶此前不可能在施法中，所以它们新建对象是安全的。
+     */
+    public static synchronized void refreshBlacklist() {
+        Map<String, FocusEntry> existing = new HashMap<>();
+        for (FocusEntry e : ALL_ENTRIES) {
+            existing.put(e.getItemId().toString(), e);
+        }
+        List<FocusEntry> rebuilt = new ArrayList<>();
+        int skipped = 0;
+        int reused = 0;
+        for (Item item : ForgeRegistries.ITEMS) {
+            try {
+                if (item instanceof IFocus focus && focus.getSpell() != null) {
+                    ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
+                    if (id == null || isBlacklisted(id.toString())) {
+                        continue;
+                    }
+                    FocusEntry old = existing.get(id.toString());
+                    if (old != null) {
+                        rebuilt.add(old); // 复用：保持对象身份
+                        reused++;
+                    } else {
+                        rebuilt.add(new FocusEntry(id, focus)); // 刚被解禁
+                    }
+                }
+            } catch (Throwable t) {
+                skipped++;
+                GoetyTuner.LOGGER.error("[Tuner] refreshBlacklist: skipping focus item {} — {}",
+                        ForgeRegistries.ITEMS.getKey(item), t.toString());
+            }
+        }
+        ALL_ENTRIES.clear();
+        ALL_ENTRIES.addAll(rebuilt);
+        try {
+            classification.applyTo(ALL_ENTRIES);
+        } catch (Throwable t) {
+            GoetyTuner.LOGGER.error("[Tuner] refreshBlacklist: classification failed, keeping defaults", t);
+        }
+        STATIC_POOLS.values().forEach(List::clear);
+        for (FocusEntry e : ALL_ENTRIES) {
+            STATIC_POOLS.get(e.getCategory()).add(e);
+        }
+        GoetyTuner.LOGGER.info("[Tuner] Blacklist refreshed: {} foci active (reused {}, skipped {})",
+                ALL_ENTRIES.size(), reused, skipped);
     }
 
     /** 重新加载配置文件并重新分类（LLM自动配置完成后调用） */

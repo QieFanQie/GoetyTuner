@@ -37,6 +37,7 @@ import net.minecraft.world.BossEvent;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
+import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
@@ -1535,7 +1536,36 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         if (effect.getEffect() == GoetyEffects.SUMMON_DOWN.get()) {
             return false;
         }
+        // 【0.0.14】二阶段免疫「回复 / 减伤」类效果（用户要求）。
+        //
+        // 目的：二阶段本就靠锁血档位 + 回血撑住强度，若再被外部来源叠上抗性/吸收/再生
+        // （其它模组的增益光环、玩家丢的增益药水、Goety 的治疗类效果、仆从的辅助法术…），
+        // Boss 会变成"打不动 + 自动回血"，战斗直接失去节奏。
+        //
+        // 实现说明：本方法是 `LivingEntity.addEffect(...)` 的**第一道**判定（`forceAddEffect` 同样先走它），
+        // 所以在这里返回 false 就是真正的"免疫"，而不是加完再清。
+        // 注意**不要**误伤 Boss 自己的二阶段自施：那是 DAMAGE_BOOST(力量) 与 RALLYING(重振)，
+        // 不在下面的名单里，因此照常生效（见 tickPhase2Buffs）。
+        if (TunerCommonConfig.PHASE2_EFFECT_IMMUNITY.get() && music.isPhase2()
+                && isPhase2Immune(effect.getEffect())) {
+            return false;
+        }
         return super.canBeAffected(effect);
+    }
+
+    /**
+     * 【0.0.14】二阶段免疫名单：回复 / 减伤类。
+     *
+     * <p>只列**明确的**这几项（而不是"所有 beneficial"）——因为 Boss 自己的二阶段增益
+     * （力量、重振）也是 beneficial，一刀切会把它们一起禁掉。
+     * 若今后要再挡某个效果（例如某个附属模组的自定义减伤），往这里加一行即可。
+     */
+    private static boolean isPhase2Immune(MobEffect effect) {
+        return effect == MobEffects.DAMAGE_RESISTANCE   // 抗性提升
+                || effect == MobEffects.ABSORPTION      // 伤害吸收
+                || effect == MobEffects.REGENERATION    // 生命恢复
+                || effect == MobEffects.HEAL            // 瞬间治疗
+                || effect == MobEffects.HEALTH_BOOST;   // 生命提升
     }
 
     /** 打断全部施法（阶段切换/二阶段进入时） */
