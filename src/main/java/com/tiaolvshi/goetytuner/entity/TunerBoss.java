@@ -1806,6 +1806,9 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     @Override
     public void onCastStart(com.tiaolvshi.goetytuner.focus.FocusEntry entry) {
         changeCastCategory(entry, 1);
+        // 【0.0.16】「逐渐学习」：记一次施法，推进该个体的动态评分权重系数
+        // （只统计"用聚晶施法"的前摇起手；瞬发/重音不经过本回调，故不计入）
+        pools.noteCast();
         // 【第三十一轮】计数器化：并行高潮通道下"任一通道前摇中"即施法中（见 castEnded 注释）
         castStarted();
         // 【2026-08-19 第十七轮】二阶段铺垫期：攻击法术开始前瞬移至 boss 身前半圆弧

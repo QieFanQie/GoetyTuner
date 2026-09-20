@@ -316,9 +316,70 @@ public class FocusPoolManager {
 
     // ---- 抽取（轮盘赌） ----
 
+    // ================= 【0.0.16】「逐渐学习」：动态评分的权重系数 =================
+
+    /**
+     * 该调律师个体已完成的**施法次数**（由 {@code TunerBoss.onCastStart} 递增）。
+     *
+     * <p>存在这里而不是静态字段：{@link #createFightPools()} 每个 Boss 实例各建一份
+     * （`FocusEntry` 也是实例级复制），所以"学习进度"天然是**该个体私有**的，
+     * 与动态偏移的生命周期完全一致（两者一起随实体重建而重置）。
+     */
+    private int castCount = 0;
+
+    /** 当前动态评分系数（0~max），随 castCount 从 learningWeightStart 缓升到 learningWeightMax。 */
+    private double learningWeight = -1.0; // -1 = 尚未初始化（首次访问时按当前配置算）
+
+    /** 已记录日志的里程碑百分比（每跨 10% 打一条 INFO，便于观察"逐渐学习"）。 */
+    private int lastLoggedMilestone = -1;
+
+    /**
+     * 【0.0.16】记一次成功施法，并推进「学习系数」。
+     *
+     * <p>背景（用户反馈）：调律师的**动态评分**（实战学到的偏移）会把**初始评分**（配置/LLM 分类）
+     * 的影响大幅冲淡——开局没打几下，初始分类就基本失效了，"这是个会学习的指挥家"的表现力很弱。
+     *
+     * <p>因此：**动态评分整体乘以一个系数**，开局取一个很低的值（初始分类主导），
+     * 随该个体施法次数**线性**爬升到上限（实战反馈逐步接管）。
+     * 静态评分（`attackScore`/`survivalScore`）**完全不受影响**，所以"初始分类被冲淡"这件事被压住了。
+     */
+    public void noteCast() {
+        castCount++;
+        refreshLearningWeight();
+    }
+
+    /** 按当前 castCount 与配置重算系数；跨 10% 里程碑时打一条 INFO。 */
+    private void refreshLearningWeight() {
+        double start = TunerCommonConfig.LEARNING_WEIGHT_START.get();
+        double max = TunerCommonConfig.LEARNING_WEIGHT_MAX.get();
+        int ramp = Math.max(1, TunerCommonConfig.LEARNING_WEIGHT_RAMP_CASTS.get());
+        double t = Math.min(1.0, castCount / (double) ramp);
+        learningWeight = start + (max - start) * t;
+        int milestone = (int) (t * 100.0) / 10 * 10; // 0/10/.../100
+        if (milestone != lastLoggedMilestone) {
+            lastLoggedMilestone = milestone;
+            GoetyTuner.LOGGER.info("[Tuner] Learning weight {}/{} = {} (casts {}/{})",
+                    String.format("%.0f", start), String.format("%.0f", max),
+                    String.format("%.3f", learningWeight), castCount, ramp);
+        }
+    }
+
+    /** 当前动态评分系数（1.0 = 旧行为）。首次访问时按配置初始化。 */
+    public double learningWeight() {
+        if (learningWeight < 0.0) {
+            refreshLearningWeight(); // 首次：castCount=0 ⇒ 取起始值（并打 0% 里程碑）
+        }
+        return learningWeight;
+    }
+
+    /** 该个体的施法次数（供调试/展示）。 */
+    public int castCount() {
+        return castCount;
+    }
+
     /**
      * 从指定功能池轮盘赌抽取一个聚晶。
-     * 权重 = |静态评分+动态偏移| + 保底基数（详见 FocusEntry#rouletteWeight）
+     * 权重 = |静态评分 + 动态偏移×学习系数| + 保底基数（详见 FocusEntry#rouletteWeight）
      *
      * @param category      功能分块
      * @param minionFill    当前召唤物数/上限（0~1+，召唤池用）
@@ -344,11 +405,12 @@ public class FocusPoolManager {
         double w1 = TunerCommonConfig.SUMMON_SURVIVAL_WEIGHT.get();
         double w2 = TunerCommonConfig.SUMMON_ATTACK_WEIGHT.get();
         double[] ctx = new double[]{minionFill, w1, w2};
+        double dynamicScale = learningWeight(); // 【0.0.16】动态评分缩权系数
 
         double total = 0.0;
         double[] weights = new double[usable.size()];
         for (int i = 0; i < usable.size(); i++) {
-            weights[i] = usable.get(i).rouletteWeight(base, ctx, summonBlocked);
+            weights[i] = usable.get(i).rouletteWeight(base, ctx, summonBlocked, dynamicScale);
             if (weights[i] < 0) weights[i] = 0;
             total += weights[i];
         }

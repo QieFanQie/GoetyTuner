@@ -119,19 +119,26 @@ public class FocusEntry {
     // ---- 轮盘赌权重 ----
 
     /**
-     * 轮盘赌权重：|静态评分+动态偏移| + 保底基数。
+     * 轮盘赌权重：|静态评分 + 动态偏移 × dynamicScale| + 保底基数。
+     *
+     * <p>【0.0.16】新增 {@code dynamicScale} 参数（0~1+）——「逐渐学习」的核心开关：
+     * 它把**动态评分（实战学到的偏移）**整体缩权，而**静态评分（配置/LLM 初始分类）不受影响**。
+     * 系数由 {@link FocusPoolManager} 按"该调律师个体已施法次数"逐次抬升：
+     * 开局动态评分几乎不参与（初始分类主导），随施法次数增加逐步交棒给实战反馈。
      *
      * @param baseWeight      保底基数（保证最低概率占比，防复读）
      * @param summonContext   召唤上下文（可为null，仅召唤类使用）：
      *                        [0]=fillRatio 场上召唤物/上限 [1]=survivalWeight 参数1 [2]=attackWeight 参数2
      *                        若 summonBlocked=true（召唤物满员），权重直接归0
+     * @param dynamicScale    动态偏移的权重系数（1.0 = 旧行为，完全不缩权）
      */
-    public double rouletteWeight(double baseWeight, double[] summonContext, boolean summonBlocked) {
+    public double rouletteWeight(double baseWeight, double[] summonContext, boolean summonBlocked,
+                                 double dynamicScale) {
         if (!category.isScored()) {
             return baseWeight; // 防御/其他：均匀随机
         }
         if (category == FocusCategory.ATTACK) {
-            return Math.abs(getEffectiveAttackScore()) + baseWeight;
+            return Math.abs(attackScore + dynamicAttackOffset * dynamicScale) + baseWeight;
         }
         // 召唤：使用评分 = 生存分*w1 + fillRatio*输出分*w2（公式可在配置调整）
         if (summonBlocked) {
@@ -140,8 +147,8 @@ public class FocusEntry {
         double fillRatio = summonContext != null ? summonContext[0] : 0.0;
         double w1 = summonContext != null ? summonContext[1] : 1.0;
         double w2 = summonContext != null ? summonContext[2] : 1.0;
-        double useScore = getEffectiveSurvivalScore() * w1
-                + fillRatio * getEffectiveAttackScore() * w2;
+        double useScore = (survivalScore + dynamicSurvivalOffset * dynamicScale) * w1
+                + fillRatio * (attackScore + dynamicAttackOffset * dynamicScale) * w2;
         return Math.abs(useScore) + baseWeight;
     }
 }

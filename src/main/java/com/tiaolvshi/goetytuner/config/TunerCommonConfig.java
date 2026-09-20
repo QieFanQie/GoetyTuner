@@ -69,7 +69,11 @@ public class TunerCommonConfig {
     // ---- 评分 ----
     public static final ForgeConfigSpec.DoubleValue BASE_ROULETTE_WEIGHT;  // 保底基数
     public static final ForgeConfigSpec.DoubleValue DYNAMIC_SCORE_CAP;     // 动态偏移上下限
-    public static final ForgeConfigSpec.DoubleValue DPS_ADJUST_RATE;       // dps对比期望的修正速率
+    public static final ForgeConfigSpec.DoubleValue DPS_ADJUST_RATE;
+    /** 【0.0.16】「逐渐学习」：动态评分起始权重 / 上限 / 爬升所需施法次数。 */
+    public static final ForgeConfigSpec.DoubleValue LEARNING_WEIGHT_START;
+    public static final ForgeConfigSpec.DoubleValue LEARNING_WEIGHT_MAX;
+    public static final ForgeConfigSpec.IntValue LEARNING_WEIGHT_RAMP_CASTS;       // dps对比期望的修正速率
 
     // ---- 施法 ----
     public static final ForgeConfigSpec.IntValue EXTRA_CAST_COOLDOWN;    // boss额外施法冷却（防复读，tick）
@@ -250,6 +254,20 @@ public class TunerCommonConfig {
                 .defineInRange("dynamicScoreCap", 5.0, 0.5, 50.0);
         DPS_ADJUST_RATE = b.comment("攻击聚晶动态修正速率：偏移 += (实际dps/期望dps - 1) * rate")
                 .defineInRange("dpsAdjustRate", 0.5, 0.05, 10.0);
+        // ---- 【0.0.16】「逐渐学习」：动态评分的权重系数 ----
+        // 背景：动态评分（实战学到的偏移）会把初始评分（配置/LLM 分类）的影响大幅冲淡，
+        // 开局没打几下初始分类就基本失效，"会学习的指挥家"表现力很弱。
+        // 方案：给**动态偏移**整体乘一个系数，开局很低（初始分类主导），
+        // 随**该调律师个体**的施法次数线性爬升到上限（实战反馈逐步接管）。
+        // 静态评分不受影响；防御/其他类本来就不参与评分，也不受影响。
+        LEARNING_WEIGHT_START = b.comment("【0.0.16】「逐渐学习」起始权重：开局动态评分只按该比例计入轮盘权重",
+                        "（0=完全无视动态评分、纯用初始分类；1=旧行为，一开始就全权重。默认 0.15）")
+                .defineInRange("learningWeightStart", 0.15, 0.0, 1.0);
+        LEARNING_WEIGHT_MAX = b.comment("【0.0.16】「逐渐学习」权重上限：施法次数足够多之后动态评分的权重（1=与旧行为持平）")
+                .defineInRange("learningWeightMax", 1.0, 0.0, 2.0);
+        LEARNING_WEIGHT_RAMP_CASTS = b.comment("【0.0.16】爬升所需施法次数：该个体从起始权重线性升到上限所需的施法次数",
+                        "（按「用聚晶施法」计；每跨 10% 里程碑会在日志打一条 INFO，便于观察学习进度）")
+                .defineInRange("learningWeightRampCasts", 60, 1, 1000);
         b.pop();
 
         b.push("casting");
