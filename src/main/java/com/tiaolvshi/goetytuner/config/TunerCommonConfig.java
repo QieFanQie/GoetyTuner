@@ -55,6 +55,8 @@ public class TunerCommonConfig {
     public static final ForgeConfigSpec.BooleanValue PHASE2_BUFFS_ENABLED;
     /** 【0.0.14】二阶段免疫回复/减伤类效果（抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升）。 */
     public static final ForgeConfigSpec.BooleanValue PHASE2_EFFECT_IMMUNITY;
+    /** 【0.0.17】索命聚晶（goety:death）能否无视锁血直接处决 Boss。 */
+    public static final ForgeConfigSpec.BooleanValue DEATH_CURSE_EXECUTION;
     /** 二阶段自施原版力量等级：锁血档位<10（正常档） */
     public static final ForgeConfigSpec.IntValue PHASE2_STRENGTH_LEVEL_LOW;
     /** 二阶段自施原版力量等级：锁血档位≥10（狂暴档） */
@@ -211,6 +213,14 @@ public class TunerCommonConfig {
                         + "· 与「限伤」的区别（两者互补，不是同一件事）：限伤约束【单次】伤害，限DPS约束【每秒总吞吐】。"
                         + "只有限伤挡不住高频小伤害的叠加；只有限DPS则会把单次巨额伤害整段吃掉、手感突兀。")
                 .defineInRange("maxDamagePerSecond", 0.0D, 0.0D, 10000.0D);
+        DEATH_CURSE_EXECUTION = b.comment("【0.0.17】索命聚晶后门：玩家用索命聚晶（Goety 的 Killing Focus）"
+                        + "命中 Boss 时，它造成的 goety:death 致死伤害**不再被锁血体系拦截**（跳过宽限期免疫、"
+                        + "致死截断、限伤/限DPS，也不做死亡回弹）⇒ 索命能真正打死调律师，无视剩余锁血档位。",
+                        "理由：索命造成的是「等同于目标当前生命值」的伤害，本该是处决；被锁血拦住后会留下"
+                        + "「动画已死、血量回弹」的破状态。代价由施法者承担——索命会对施法者反噬目标当前生命值的 125%。",
+                        "已核实该伤害类型在 Goety 里**只有索命聚晶**使用（整个 jar 内仅 KillingSpell 调用 deathCurse）。",
+                        "false=关闭该后门（索命重新受锁血保护）。默认 true")
+                .define("deathCurseExecution", true);
         b.pop();
 
         b.push("phase2_buffs");

@@ -164,6 +164,33 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      * 击杀完成（实体被移除）后标记自然失效；若该次伤害被其它模组取消，则下一个正常 tick 会清除标记。
      */
     private boolean adminKillPending = false;
+
+    /**
+     * 【0.0.17】索命聚晶（{@code goety:death} 伤害）后门标记。
+     *
+     * <p>起因（用户反馈）：玩家用**索命聚晶**打中调律师时，Boss 会进入
+     * "动画已经死了、血量却回弹"的破状态——因为索命造成的是"等同于目标当前生命值"的致死伤害，
+     * 被锁血体系拦住后又复活，动画却留在了客户端。
+     *
+     * <p>Goety 侧的实现已反编译核实（{@code KillingSpell.SpellResult}）：
+     * {@code ModDamageSource.deathCurse(target)} → {@code MobUtil.hurtCalculation(...)} →
+     * {@code target.hurt(source, amount)}。而 {@code ModDamageSource.DEATH} 对应的伤害类型是
+     * **{@code goety:death}**（jar 内 {@code data/goety/damage_type/death.json}，
+     * {@code message_id = "goety.death"}；静态初始化里 {@code create("death")} → {@code putstatic DEATH}）。
+     * 所以它能被 {@code source.is(ResourceKey)} 精确识别，**且不需要编译期依赖 Goety 的类**
+     * （只用一个资源位置字符串；未装 Goety 时该键永不匹配）。
+     *
+     * <p>置位语义与 {@link #adminKillPending} 一致：宽限期免疫跳过、致死截断跳过、
+     * 限伤/限DPS 也跳过、{@link #maintainDeathState()} 不回弹、{@link #canStillRevive()} 返回 false。
+     * 也就是**"索命成功命中 = 真的能杀"**，这正是这个聚晶该有的样子（代价是施法者要承受目标当前生命值 125% 的反噬）。
+     */
+    private boolean deathCursePending = false;
+
+    /** Goety 索命聚晶的伤害类型：{@code goety:death}（见 {@link #deathCursePending} 的实证说明）。 */
+    private static final net.minecraft.resources.ResourceKey<net.minecraft.world.damagesource.DamageType>
+            GOETY_DEATH_CURSE = net.minecraft.resources.ResourceKey.create(
+            net.minecraft.core.registries.Registries.DAMAGE_TYPE,
+            new net.minecraft.resources.ResourceLocation("goety", "death"));
     // 【2026-08-18 第十三轮】锁血宽限期：触发锁血后 graceTicks 内血量持续钉在 lockGraceFloor，
     // 让"锁血"有存在感（防高频/多段伤害穿透），窗口结束才继续掉血。0=关闭。
     private int lockGraceTicks = 0;
@@ -370,6 +397,20 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     @Override
     public void tick() {
         if (this.level().isClientSide) {
+            // 【0.0.17】客户端自愈：血量已经回正、死亡动画却还挂着 → 本地复位。
+            //
+            // 起因（用户反馈）：被索命聚晶打中后会出现"动画死了但血量回弹"的破状态。根因是
+            // **deathTime 不是同步数据**（见 SEntityRevivePacket 的实证），客户端的 `deathTime`
+            // 由客户端自己的 `LivingEntity.tickDeath()` 递增，而它只看**客户端本地的血量**。
+            // 服务端复活时只发**一次**复位包；若那一刻客户端的血量同步还没落地，
+            // 客户端会在复位后**又自己把 deathTime 加上去**，此后血量虽然变正、动画却再没人清 ⇒ 永久躺着。
+            //
+            // 服务端侧的"情形 A"（{@link #maintainDeathState()}）治不了这一侧，所以在客户端补一条对称的自愈：
+            // 客户端同样知道血量（DATA_HEALTH_ID 是同步数据），血量 > 0 而 deathTime > 0 就是脏状态，直接清。
+            // resetDeathAnimation() 只在服务端发包，这里调用不会产生任何网络流量。
+            if (this.deathTime > 0 && this.getHealth() > 0.0F) {
+                this.resetDeathAnimation("client stale death animation (health=" + this.getHealth() + " > 0)");
+            }
             int mask = isAlive() ? getActiveCastCategories() : 0;
             for (int i = 0; i < 3; i++) {
                 previousOrbHighlight[i] = orbHighlight[i];
@@ -407,12 +448,14 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         boolean inDeathAnimation = this.deathTime > 0;
         // 【0.0.9】/kill 后门：管理员指令造成的死亡不做任何回弹或清理，让死亡流程正常走完
         // （remove(KILLED) 也会因 canStillRevive() 返回 false 而被放行）。
-        if (this.adminKillPending) {
+        // 【0.0.17】索命聚晶后门同理：goety:death 打死的就让它死透，不做回弹。
+        if (this.adminKillPending || this.deathCursePending) {
             return;
         }
         if (!dying && !inDeathAnimation) {
-            // 状态正常 → 清掉可能残留的 /kill 标记（例如那次伤害被其它模组取消，Boss 并没死）
+            // 状态正常 → 清掉可能残留的后门标记（例如那次伤害被其它模组取消，Boss 并没死）
             this.adminKillPending = false;
+            this.deathCursePending = false;
             return; // 状态正常
         }
 
@@ -479,6 +522,9 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     private boolean canStillRevive() {
         if (this.adminKillPending) {
             return false; // 【0.0.9】/kill 后门：不拦 remove(KILLED)，让管理员能真正击杀
+        }
+        if (this.deathCursePending) {
+            return false; // 【0.0.17】索命后门：goety:death 打死的也不拦 remove(KILLED)
         }
         if (!TunerCommonConfig.LOCK_DEATH_REVIVE.get()) {
             return false;
@@ -1359,6 +1405,24 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
                     this.getHealth(), lockMark);
             return super.hurt(source, amount);
         }
+        // 【0.0.17】索命聚晶后门（详见字段注释）：goety:death 伤害不再被锁血体系拦截。
+        // 与 /kill 后门同一套语义——置标记后本次伤害原样交给原版结算（跳过身份免疫/宽限期免疫/致死截断），
+        // 且后续 maintainDeathState() 不回弹、canStillRevive() 放行 remove(KILLED) ⇒ 真正死亡。
+        //
+        // ⚠️ 条件里的 `source.getEntity() != this` 是**必需的防自杀护栏**：
+        // KillingSpell 的字节码实证显示它 `deathCurse(caster)` 造源，然后**施法者与目标双方都吃这个伤害**——
+        // 先 `caster.hurt(deathCurse, …)`（125% 反噬，SpellResult 偏移 172），再 `target.hurt(...)`（偏移 196），
+        // 而伤害源的 getEntity() **始终是施法者**。于是：玩家咒 Boss 时 getEntity()=玩家（≠Boss）→ 后门正常生效；
+        // 而**若 Boss 自己施放索命**，它的反噬会让 getEntity()==Boss 自己 → 被这里挡下，
+        // 否则它会当场把自己处决（对玩家满血时长矛反噬极大，等于自杀）。目前 `goety:killing_focus`
+        // 已被黑名单拉黑、Boss 不会施放它，但这道护栏让"黑名单"不再承担防自杀的唯一责任。
+        if (TunerCommonConfig.DEATH_CURSE_EXECUTION.get() && source.is(GOETY_DEATH_CURSE)
+                && source.getEntity() != this) {
+            this.deathCursePending = true;
+            GoetyTuner.LOGGER.info("[Tuner] Death-curse backdoor (goety:death): bypassing lock-health protection "
+                    + "(health={}, mark={}, amount={})", this.getHealth(), lockMark, amount);
+            return super.hurt(source, amount);
+        }
         // 【第二十三轮】Boss身份伤害免疫：摔落、原版火焰（含火焰/岩浆/燃烧，
         // 覆盖 DamageTypeTags.IS_FIRE 全部火系）、窒息（卡墙）、溺水。
         // （不免疫魔法/爆炸/普通攻击等玩家可造成/可操作的伤害类型）
@@ -1424,8 +1488,11 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         // 否则会出现「管理员杀不死、掉进虚空也不死」的诡异状态。
         // 【0.0.9】额外显式判定 GENERIC_KILL：不依赖 tag 内容的假设（数据包/其它模组可能改动它），
         // 保证 /kill 这条后门在任何环境下都成立。
+        // 【0.0.17】索命聚晶的 goety:death 同样跳过限伤/限DPS —— 否则"等同于目标当前生命值"的致死伤害
+        // 会被限伤削掉、变成打不死，后门也就失效了（它不在任何 BYPASSES_* tag 里，必须显式列出）。
         if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)
-                && !source.is(DamageTypes.GENERIC_KILL)) {
+                && !source.is(DamageTypes.GENERIC_KILL)
+                && !(TunerCommonConfig.DEATH_CURSE_EXECUTION.get() && source.is(GOETY_DEATH_CURSE))) {
             amount = applyHitDamageCap(amount);
             float allowed = applyDpsCap(amount);
             if (allowed < 0.0F) {
