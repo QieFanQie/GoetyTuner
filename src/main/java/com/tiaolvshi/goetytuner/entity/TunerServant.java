@@ -14,6 +14,7 @@ import com.Polarice3.Goety.api.items.magic.IWand;
 import com.Polarice3.Goety.common.effects.GoetyEffects;
 import com.Polarice3.Goety.common.entities.ally.Summoned;
 import com.tiaolvshi.goetytuner.GoetyTuner;
+import com.tiaolvshi.goetytuner.combat.BuffSpellPower;
 import com.tiaolvshi.goetytuner.combat.DamageThrottle;
 import com.tiaolvshi.goetytuner.combat.ServantWandBlessing;
 import com.tiaolvshi.goetytuner.combat.TunerDamageRules;
@@ -337,6 +338,10 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         // 放在所有 early-return 之前：施法中（activeChannel != null 那条 return）也必须照常维持。
         // 内部自带 1 秒降频与"数值未变则跳过"，每 tick 调用的开销只有一次取模。
         ServantWandBlessing.tick(this, this.summonWand);
+        // 【0.0.20】再把「强健」等级换算成法术强度（SPELL_POTENCY，ADDITION）。
+        // 顺序有意放在上一行之后：同一次 aiStep 里先把强健挂上，这里立刻就能读到它。
+        // 用户要求"只对调律师生效"⇒ 只有本模组的两个实体调用这个方法。
+        BuffSpellPower.tick(this);
 
         // 冷却池推进（与 Boss 一样每 tick 推进：到点的聚晶回功能池）
         this.pools.tickCooldowns();

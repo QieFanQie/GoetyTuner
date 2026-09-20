@@ -137,6 +137,12 @@ public class TunerCommonConfig {
      */
     public static final ForgeConfigSpec.BooleanValue SERVANT_WAND_BLESSING_ENABLED;
 
+    /**
+     * 【0.0.20】「强健」每级换算成的**法术强度点数**（Int，默认 1）。
+     * 实现在 {@link com.tiaolvshi.goetytuner.combat.BuffSpellPower}，作用域 = 调律师一族。
+     */
+    public static final ForgeConfigSpec.IntValue BUFF_SPELL_POWER_PER_LEVEL;
+
     // ---- LLM 自动分类 ----
     public static final ForgeConfigSpec.ConfigValue<String> LLM_API_URL;
     public static final ForgeConfigSpec.ConfigValue<String> LLM_MODEL;
@@ -314,6 +320,17 @@ public class TunerCommonConfig {
                         "· ⚠️ 调大有风险：腐化光束这类法术是**每 tick 造成伤害**的（默认 10 点/次），",
                         "  持续段调到 100 以上基本等于必杀。")
                 .defineInRange("channelMaxTicks", 20, 5, 200);
+        BUFF_SPELL_POWER_PER_LEVEL = b.comment("【0.0.20】「强健」(goety:buff) **每级**为本模组调律师一族"
+                + "（调律师本体 + 调律师仆从）增加的**法术强度点数**。默认 1（强健Ⅰ=+1 点、Ⅴ=+5 点）。",
+                "· 作用域：**只对本模组的调律师与调律师仆从**，只读它们**自身**的强健等级；",
+                "  其它模组的生物 / 玩家即便有强健也不会因此变强（用户明确要求\"只对调律师生效\"）。",
+                "· ⚠️ **必须是整数点，不能填小数**：Goety 的 `spell_potency` 属性基础值是 0.0、",
+                "  读取入口 `ModAttributes.getPotency` 是 `(int)` 截断，法术把它当**平铺伤害点数**用；",
+                "  填 0.1 会被截成 0 ⇒ 完全无效果（这也是为什么本键是 Int 而不是 Double）。",
+                "· ⚠️ 顺带说明：同一个属性上的**百分比** modifier（`MULTIPLY_TOTAL`）恒等于 0",
+                "  （0.0 乘任何数还是 0.0），所以本类用 ADDITION。",
+                "· 0 = 关闭（并会主动移除已挂的 modifier）。默认 1")
+                .defineInRange("buffSpellPowerPerLevel", 1, 0, 100);
         CLIMAX_WARMUP_MULTIPLIER = b.comment("高潮期施法前摇倍率（冷却不变）")
                 .defineInRange("climaxWarmupMultiplier", 0.5, 0.1, 1.0);
         PHASE1_BUILDUP_ROTATION = b.comment("一阶段铺垫期轮换序列。数字串：1=防御 2=攻击 3=召唤 4=其他，按序循环")

@@ -12,6 +12,7 @@ package com.tiaolvshi.goetytuner.entity;
 import com.Polarice3.Goety.common.effects.GoetyEffects;
 import com.Polarice3.Goety.init.ModAttributes;
 import com.tiaolvshi.goetytuner.GoetyTuner;
+import com.tiaolvshi.goetytuner.combat.BuffSpellPower;
 import com.tiaolvshi.goetytuner.combat.CombatEvents;
 import com.tiaolvshi.goetytuner.combat.DamageScoreTracker;
 import com.tiaolvshi.goetytuner.combat.DamageThrottle;
@@ -430,6 +431,11 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
         }
         if (!this.level().isClientSide) {
             maintainDeathState();
+            // 【0.0.20】把「强健」(goety:buff) 等级换算成法术强度（SPELL_POTENCY，ADDITION）。
+            // 用户要求"只对调律师生效"⇒ 只有本模组的两个实体调用这个方法；
+            // 本体今天并不自施强健（二阶段给的是原版力量，见 tickPhase2Buffs），
+            // 所以这里平时是"确保没有该 modifier"的幂等短路 —— 将来若给本体加强健，它自动生效。
+            BuffSpellPower.tick(this);
         }
         super.tick();
     }
