@@ -10,35 +10,26 @@
 package com.tiaolvshi.goetytuner.ritual;
 
 import com.Polarice3.Goety.api.items.magic.IWand;
-import com.Polarice3.Goety.init.ModAttributes;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.entity.TunerBoss;
 import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraft.ChatFormatting;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.tags.TagKey;
-import net.minecraft.world.damagesource.DamageSource;
-import net.minecraft.world.damagesource.DamageType;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.event.entity.living.LivingDropsEvent;
 import net.minecraftforge.event.entity.living.LivingEquipmentChangeEvent;
 import net.minecraftforge.event.entity.player.ItemTooltipEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 升级法杖全套机制（任务 #118）：
@@ -48,9 +39,12 @@ import java.util.UUID;
  *       并从掉落列表移除战斗中已被改写的法杖（快照制，见设计文档 5.1 修订）；
  *       【0.0.20】仪式召唤的**仆从**死亡时掉落「召唤用杖快照，不加不减」（见
  *       {@link #dropServantSummonWand}）；</li>
- *   <li><b>10% 巫法加成</b>：玩家手持升级法杖时给实体挂 SPELL_POTENCY 的
- *       MULTIPLY_TOTAL 百分比 modifier（Goety 原生施法通道，天然乘法叠加语义）；</li>
- *   <li><b>40% 魔法伤害加成</b>：LivingDamageEvent 拦截魔法伤害 ×(1+加成)；</li>
+ *   <li><b>巫法加成 / 魔法伤害加成</b>：**都在
+ *       {@link com.tiaolvshi.goetytuner.combat.SpellDamageBonus} 里生效**
+ *       —— 玩家施法造成的法术伤害 ×(1 + 两者之和)。
+ *       ⚠️ 0.0.20 修正：这两条原先一条挂 {@code SPELL_POTENCY} 的 {@code MULTIPLY_TOTAL}、
+ *       一条走伤害事件，而前者在**基础值 0.0** 的属性上**恒等于 0**（从未生效）；
+ *       现在两条统一走伤害事件，**tooltip 写多少就真的加多少**；</li>
  *   <li><b>紫色描述文本</b>：「调律:巫法加成 / 调律:魔法伤害加成」两条 LIGHT_PURPLE
  *       提示（避嫌前缀「调律」，数值随 NBT 实时显示）。</li>
  * </ul>
@@ -64,32 +58,6 @@ public class WandUpgradeEvents {
     public static final String NBT_KEY = "goetytuner";
     public static final String WITCHCRAFT_KEY = "witchcraft_bonus";
     public static final String MAGIC_DAMAGE_KEY = "magic_damage_bonus";
-
-    /** 巫法加成 modifier 的固定 UUID（装备/卸下时成对增删，防重复） */
-    private static final UUID POTENCY_MODIFIER_UUID =
-            UUID.nameUUIDFromBytes("goetytuner:wand_witchcraft_potency".getBytes(StandardCharsets.UTF_8));
-    private static final String POTENCY_MODIFIER_NAME = "TunerWandWitchcraft";
-
-    /**
-     * 1.20.1 魔法伤害判定（无 {@code DamageSource.isMagic()}——那是 1.20.2+ API）：
-     * <ol>
-     *   <li>{@code forge:is_magic} damage_type tag（Goety 经 ModDamageTypeTagsProvider 把
-     *       phobia/ice_bouquet/acid/spike/magic_bolt/wind_blast/soul_leech/life_leech 8 种
-     *       法术伤害标入此 tag，数据驱动可被其它整合包扩展）；</li>
-     *   <li>原版 {@code magic} / {@code indirectMagic} msgId（瞬间伤害/喷溅药水等；
-     *       Goety magic_bolt 的 message_id 也是 {@code indirectMagic}，双重命中）。</li>
-     * </ol>
-     */
-    private static final TagKey<DamageType> FORGE_IS_MAGIC =
-            TagKey.create(Registries.DAMAGE_TYPE, new ResourceLocation("forge", "is_magic"));
-
-    private static boolean isMagicDamage(DamageSource src) {
-        if (src.is(FORGE_IS_MAGIC)) {
-            return true;
-        }
-        String id = src.getMsgId();
-        return id.equals("magic") || id.equals("indirectMagic");
-    }
 
     // ================= 掉落（快照制） =================
 
@@ -153,55 +121,17 @@ public class WandUpgradeEvents {
                 servant.getUUID(), summonWand.getDisplayName().getString());
     }
 
-    // ================= 10% 巫法加成（SPELL_POTENCY 百分比 modifier） =================
-
-    @SubscribeEvent
-    public static void onEquipmentChange(LivingEquipmentChangeEvent event) {
-        if (event.getEntity() instanceof Player player && !player.level().isClientSide) {
-            refreshWitchcraftModifier(player);
-        }
-    }
-
-    /**
-     * 【第三十五轮】登录兜底：LivingEquipmentChangeEvent 只在装备变化时触发，
-     * 玩家登录/重进存档时若主手已是升级法杖，modifier 不会自动挂上。
-     * 每 32 tick（1.6秒，实现为 tickCount &amp; 0x1F == 0x1F）低频检查一次，
-     * 无变化时零写入（幂等跳过）。
-     */
-    @SubscribeEvent
-    public static void onPlayerTick(net.minecraftforge.event.TickEvent.PlayerTickEvent event) {
-        if (event.phase != net.minecraftforge.event.TickEvent.Phase.END) {
-            return;
-        }
-        Player player = event.player;
-        if (player == null || player.level().isClientSide) {
-            return;
-        }
-        if ((player.tickCount & 0x1F) == 0x1F) { // 约每 32 tick 一次（避免与音乐HUD等节奏冲突）
-            refreshWitchcraftModifier(player);
-        }
-    }
-
-    /** 根据主/副手升级法杖重算 SPELL_POTENCY 百分比 modifier（先清后加，幂等） */
-    private static void refreshWitchcraftModifier(Player player) {
-        AttributeInstance attr = player.getAttribute(ModAttributes.SPELL_POTENCY.get());
-        if (attr == null) {
-            return;
-        }
-        double total = 0.0D;
-        total += witchcraftBonus(player.getMainHandItem());
-        total += witchcraftBonus(player.getOffhandItem());
-        AttributeModifier existing = attr.getModifier(POTENCY_MODIFIER_UUID);
-        if (existing != null && Math.abs(existing.getAmount() - total) < 1.0E-4D) {
-            return; // 数值未变：不触碰 attribute（零开销）
-        }
-        attr.removeModifier(POTENCY_MODIFIER_UUID);
-        if (total > 0.0D) {
-            attr.addTransientModifier(new AttributeModifier(
-                    POTENCY_MODIFIER_UUID, POTENCY_MODIFIER_NAME, total,
-                    AttributeModifier.Operation.MULTIPLY_TOTAL));
-        }
-    }
+    // ================= 两条加成怎么生效 =================
+    //
+    // 【0.0.20 修正】原先这里维护一个挂在 SPELL_POTENCY 上的 MULTIPLY_TOTAL modifier
+    // （装备变化 + 每 32 tick 兜底刷新）。但那个属性的**注册基础值是 0.0**、
+    // 读取入口 ModAttributes.getPotency 又是 (int) 截断 ⇒ 0.0 × (1+0.10) = 0.0，
+    // **从未生效过**（tooltip 上那行「调律:巫法加成 +10%」是空头承诺）。
+    // 现在两条加成统一由 combat/SpellDamageBonus 走伤害事件按百分比放大，
+    // 因此本类**不再需要**任何 attribute modifier、也**不再需要**那两个每 tick / 每换装的监听器
+    // （顺带省掉一个常驻 PlayerTickEvent 订阅）。
+    // 本类保留的职责：法杖 NBT 的读写（witchcraftBonus / magicDamageBonus）、
+    // 死亡掉落、tooltip 文本 —— 见下方。
 
     /**
      * 读取法杖的「调律·巫法加成」（**小数**：{@code 0.10} = +10%）。
@@ -225,34 +155,6 @@ public class WandUpgradeEvents {
             return 0.0D;
         }
         return tag.getCompound(NBT_KEY).getDouble(WITCHCRAFT_KEY);
-    }
-
-    // ================= 40% 魔法伤害加成（LivingDamageEvent） =================
-
-    @SubscribeEvent
-    public static void onLivingDamage(LivingDamageEvent event) {
-        DamageSource src = event.getSource();
-        if (!(src.getEntity() instanceof LivingEntity attacker)) {
-            return;
-        }
-        if (!isMagicDamage(src)) {
-            return; // 仅魔法/法术类伤害（forge:is_magic tag 或原版 magic/indirectMagic）
-        }
-        // 实际加成取法杖 NBT 中叠加后的值（多次击败叠加生效），而非配置单次值
-        double magicBonus;
-        if (attacker instanceof Player player) {
-            magicBonus = magicDamageBonus(player.getMainHandItem())
-                    + magicDamageBonus(player.getOffhandItem()); // 双持两把升级杖叠加
-        } else if (attacker instanceof TunerBoss) {
-            // Boss 手持升级法杖时是否同样加成（默认 false，防自伤放大）
-            magicBonus = TunerCommonConfig.WAND_BONUS_APPLIES_TO_BOSS.get()
-                    ? magicDamageBonus(attacker.getMainHandItem()) : 0.0D;
-        } else {
-            magicBonus = 0.0D;
-        }
-        if (magicBonus > 0.0D) {
-            event.setAmount((float) (event.getAmount() * (1.0D + magicBonus)));
-        }
     }
 
     /**

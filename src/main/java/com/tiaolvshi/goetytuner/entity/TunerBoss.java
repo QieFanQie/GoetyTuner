@@ -10,7 +10,6 @@
 package com.tiaolvshi.goetytuner.entity;
 
 import com.Polarice3.Goety.common.effects.GoetyEffects;
-import com.Polarice3.Goety.init.ModAttributes;
 import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.combat.BuffSpellPower;
 import com.tiaolvshi.goetytuner.combat.CombatEvents;
@@ -49,8 +48,6 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.ai.attributes.AttributeInstance;
-import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.monster.Monster;
@@ -61,8 +58,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import javax.annotation.Nullable;
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 import java.util.List;
 
 /**
@@ -1566,10 +1561,6 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
     private int phase2BuffTimer = 0;
     /** 二阶段回血计时器（每40tick=2秒触发一次） */
     private int phase2RegenTimer = 0;
-    /** 二阶段 SPELL_POTENCY 属性 modifier 的固定 UUID（法术伤害加成，非冷却/非前摇） */
-    private static final UUID PHASE2_POTENCY_UUID =
-            UUID.nameUUIDFromBytes("goetytuner:boss_phase2_spell_potency".getBytes(StandardCharsets.UTF_8));
-
     /**
      * 【第二十六轮】二阶段周期性自施药水：每2秒给自己3秒强化。
      * 【第三十三轮】bug2 修复：原自施 Goety 的 BUFF（强健）与 RALLYING（重振）——
@@ -1579,13 +1570,8 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
      * RALLYING 保留作近战补强。总开关 {@link TunerCommonConfig#PHASE2_BUFFS_ENABLED}。
      */
     private void tickPhase2Buffs() {
-        AttributeInstance potAttr = this.getAttribute(ModAttributes.SPELL_POTENCY.get());
         if (!TunerCommonConfig.PHASE2_BUFFS_ENABLED.get()) {
             phase2BuffTimer = 40; // 保持节拍，关闭时不自施
-            // 关闭时清理已挂的属性 modifier（防配置热重载后残留）
-            if (potAttr != null && potAttr.getModifier(PHASE2_POTENCY_UUID) != null) {
-                potAttr.removeModifier(PHASE2_POTENCY_UUID);
-            }
             return;
         }
         if (--phase2BuffTimer > 0) {
@@ -1600,19 +1586,27 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
         int duration = 60; // 3秒
         this.applySelfEffect(new MobEffectInstance(MobEffects.DAMAGE_BOOST, duration, strengthLevel - 1, false, true, true));
         this.applySelfEffect(new MobEffectInstance(GoetyEffects.RALLYING.get(), duration, rallyAmp, false, true, true));
-        // 【第三十七轮】核心修复：力量(RANGE_BOOST)只加近战伤害，Boss 是法系输出，药水粒子"不奏效"。
-        // 额外挂 SPELL_POTENCY 属性 modifier（MULTIPLY_TOTAL），通过 Goety 原生施法通道真正提升法术伤害。
-        // 数值 = strengthLevel * 0.1（等级2=20%、等级5=50%），与力量等级联动配置。
-        if (potAttr != null) {
-            double potency = strengthLevel * 0.1;
-            AttributeModifier existing = potAttr.getModifier(PHASE2_POTENCY_UUID);
-            if (existing == null || Math.abs(existing.getAmount() - potency) > 1.0E-4D) {
-                potAttr.removeModifier(PHASE2_POTENCY_UUID);
-                potAttr.addTransientModifier(new AttributeModifier(
-                        PHASE2_POTENCY_UUID, "TunerPhase2SpellPotency", potency,
-                        AttributeModifier.Operation.MULTIPLY_TOTAL));
-            }
-        }
+        // 【第三十七轮】意图：力量(RANGE_BOOST)只加近战伤害，Boss 是法系输出，所以要额外给法术伤害。
+        // 【0.0.20 修正】**原实现从未生效**：它给 SPELL_POTENCY 挂的是 MULTIPLY_TOTAL，
+        // 而那个属性的注册基础值是 0.0、读取入口是 (int) 截断 ⇒ 0.0 × (1+0.2) = 0.0。
+        // 现在改成"按百分比放大实际法术伤害"，由 combat/SpellDamageBonus 在伤害事件里兑现，
+        // 数值来源就是**本方法挂上的这个力量效果**（读它的 amplifier ⇒ 等级2=+20%、等级5=+50%），
+        // 见 #phase2SpellDamageBonus()。力量 buff 一到期，加成自动消失，无需额外清理。
+    }
+
+    /**
+     * 【0.0.20】二阶段「力量」等级换算出的**法术伤害百分比加成**（小数，{@code 0.2} = +20%）。
+     *
+     * <p>**文字描述与实际的唯一对接点**：{@code phase2_buffs} 段承诺
+     * "等级2=20%、等级5=50%"，本方法就按 {@code (amplifier + 1) × 0.1} 兑现。
+     * 直接读**效果本身**（而不是缓存字段）有两个好处：① buff 到期即自动归零；
+     * ② 玩家用别的途径给 Boss 叠/削力量时，法术加成会跟着变，符合"根据自身的力量等级"。
+     *
+     * <p>由 {@link com.tiaolvshi.goetytuner.combat.SpellDamageBonus#bonusOf} 调用。
+     */
+    public double phase2SpellDamageBonus() {
+        MobEffectInstance strength = this.getEffect(MobEffects.DAMAGE_BOOST);
+        return strength == null ? 0.0D : (strength.getAmplifier() + 1) * 0.1D;
     }
 
     /**

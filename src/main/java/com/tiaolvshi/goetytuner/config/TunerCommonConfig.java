@@ -254,6 +254,10 @@ public class TunerCommonConfig {
                 + "通过 Goety 原生施法通道真正提升法术输出。false=完全关闭自施药水+属性加成。默认 true")
                 .define("phase2BuffsEnabled", true);
         PHASE2_STRENGTH_LEVEL_LOW = b.comment("二阶段自施原版力量等级：锁血档位<10 时（半血至狂暴前）。"
+                + "⚠️ 它同时决定 Boss 的**法术伤害加成** = 等级 × 0.1（等级2=+20%、等级5=+50%），"
+                + "由 combat/SpellDamageBonus 在伤害事件里兑现（0.0.20 起才真的生效）。"
+                + "⚠️ 它同时决定 Boss 的**法术伤害加成** = 等级 × 0.1（等级2=+20%、等级5=+50%），"
+                + "由 combat/SpellDamageBonus 在伤害事件里兑现（0.0.20 起才真的生效）。"
                 + "原版力量每级 +3 近战伤害。默认2")
                 .defineInRange("phase2StrengthLevelLow", 2, 1, 10);
         PHASE2_STRENGTH_LEVEL_HIGH = b.comment("二阶段自施原版力量等级：锁血档位≥10 时（狂暴档）。默认5")
@@ -452,9 +456,11 @@ public class TunerCommonConfig {
                 + "非仪式召唤（刷怪蛋/指令）的Boss不受影响（无快照即原行为）。默认 true")
                 .define("wandUpgradeEnabled", true);
         WAND_WITCHCRAFT_BONUS = b.comment("【任务#118】调律:巫法加成：玩家手持升级法杖时，"
-                + "实体属性 SPELL_POTENCY（施法强度）获得该值的 MULTIPLY_TOTAL 百分比加成。"
-                + "Goety 施法数值全部走施法者实体属性，此为原生通道（非冷却/非施法前摇）。"
-                + "默认0.10=+10%")
+                + "其**施法造成的法术伤害 ×(1+此值)**（主副手两把杖相加）。默认0.10=+10%。",
+                "⚠️ 0.0.20 修正：本键原先挂的是 SPELL_POTENCY 的 MULTIPLY_TOTAL modifier，"
+                + "而该属性基础值 0.0、读取端 (int) 截断 ⇒ 实际恒等于 0，**从未生效**；",
+                "现在与「魔法伤害加成」一起由 combat/SpellDamageBonus 在伤害事件里按百分比兑现，"
+                + "**tooltip 写多少就真的加多少**（tooltip 文案见 tooltip.goetytuner.wand_witchcraft_bonus）。")
                 .defineInRange("wandWitchcraftBonus", 0.10, 0.0, 10.0);
         WAND_MAGIC_DAMAGE_BONUS = b.comment("【任务#118】调律:魔法伤害加成：手持升级法杖造成的"
                 + "魔法/法术类伤害 ×(1+此值)。默认0.40=+40%")

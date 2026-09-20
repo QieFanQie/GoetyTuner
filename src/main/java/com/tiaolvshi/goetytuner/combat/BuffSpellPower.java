@@ -66,16 +66,17 @@ import java.util.UUID;
  * **数值没变就一个字节都不写**（避免每帧碰 attribute 造成同步流量）。
  * 强健一旦消失（被净化 / 自然到期）⇒ 目标值回到 0 ⇒ **主动移除** modifier。
  *
- * <h2>⚠️ 已知问题（本轮只报告、未改，等用户决定）</h2>
+ * <h2>✅ 相关修复（0.0.20 同一轮）</h2>
+ * 上面这条"百分比恒为 0"的实证同时暴露了两处**早已存在**的死代码，已在同一轮修掉：
  * <ul>
- *   <li>{@code WandUpgradeEvents#refreshWitchcraftModifier}：玩家的「调律:巫法加成」
- *       用 {@code MULTIPLY_TOTAL} 挂在同一个 0 基础值属性上 ⇒ **实际不生效**
- *       （tooltip 会显示，但法术伤害不变）；</li>
- *   <li>{@code TunerBoss#tickPhase2Buffs}：二阶段「力量等级 × 0.1」同样用 {@code MULTIPLY_TOTAL}
- *       ⇒ 同样不生效。</li>
+ *   <li>玩家的「调律:巫法加成」（原 {@code WandUpgradeEvents#refreshWitchcraftModifier}）
+ *       —— 那个 attribute modifier 与两个刷新监听器**已整体删除**；</li>
+ *   <li>Boss 二阶段的「力量等级 × 0.1」（原 {@code TunerBoss#tickPhase2Buffs} 里的 modifier）
+ *       —— 同样**已删除**，改为读取力量效果本身（{@code TunerBoss#phase2SpellDamageBonus}）。</li>
  * </ul>
- * 两者若要修，正确做法都是改成 {@code ADDITION} 并重新定义数值含义
- * （百分比 → 点数量级），那是**平衡决策**，不在本轮范围内。
+ * 两者都改走 **{@link SpellDamageBonus}**（伤害事件 ×(1+加成)），
+ * **文字写多少就真的生效多少**。⇒ 分工最终定为：
+ * <b>百分比 → 伤害事件；点数 → SPELL_POTENCY</b>（也就是本类）。
  */
 public final class BuffSpellPower {
 
