@@ -342,12 +342,29 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
     // ================= 主循环 =================
 
     /**
-     * 【第三十三轮】死亡回弹主检测（bug1 修复）：
-     * 反编译确认 LivingEntity.tick 的 AI 区块为
-     * {@code if (isDeadOrDying()) {清零移动输入} else if (isEffectiveAi()) { serverAiStep() }}——
-     * 实体死亡后（血量≤0，死亡动画 20 tick 内）aiStep() 根本不再执行，
-     * 原 applyLockHealth 里的死亡自愈分支在死亡期间永远无法触发（死代码）。
-     * 这里覆写 tick()：每 tick（含死亡动画期）最先维护死亡状态。
+     * 【第三十三轮】死亡回弹主检测。**0.0.11 更正了本注释原先的错误前提**。
+     *
+     * <p><b>原注释（错误）</b>：曾写"反编译确认 LivingEntity.tick 的 AI 区块为
+     * {@code if (isDeadOrDying()) {...} else if (isEffectiveAi()) { serverAiStep() }}——
+     * 死亡后 aiStep() 根本不再执行，原 applyLockHealth 的死亡自愈分支是死代码"。
+     *
+     * <p><b>0.0.11 反编译实证（事实）</b>：
+     * <ul>
+     *   <li>{@code LivingEntity.tick()} 共 366 行字节码，其中 {@code aiStep()} 只有 **1 处调用、
+     *       偏移 179、完全无条件**；`isDeadOrDying` / `serverAiStep` / `tickDeath` 在该方法内
+     *       **一次都没有出现** ⇒ 原文把 {@code aiStep()} 与 {@code serverAiStep()} 混为一谈，
+     *       **死亡期间 {@code aiStep()} 照常执行**（原假设不成立）。</li>
+     *   <li>真正被死亡把关的是 {@code baseTick()}：偏移 357 判 {@code isDeadOrDying()} →
+     *       偏移 375 调 {@code tickDeath()}；{@code tickDeath()} 里 `deathTime++`，
+     *       {@code >= 20} 且非客户端且未移除时播实体事件 60 并 {@code remove(KILLED)}。</li>
+     * </ul>
+     *
+     * <p><b>所以本覆写是必需的</b>：{@code tickDeath()} 在 {@code baseTick()}（即 {@code super.tick()} 内部）
+     * 才递增 {@code deathTime}，而 {@code applyLockHealth()} 又在其后无条件执行——两者都不是回弹该待的地方。
+     * 这里在 {@code super.tick()} **之前**统一维护死亡状态，是唯一能同时满足
+     * "尊重 /kill 后门" 与 "同步复位客户端死亡动画" 的时机。每 tick 调用，
+     * 但热路径只有两次读取（{@code getHealth() <= 0} 判定 + {@code deathTime} 字段），
+     * 真正做事的复位/回弹分支只在确实处于死亡或脏状态时才进入（见 {@link #maintainDeathState()}）。
      */
     @Override
     public void tick() {
@@ -367,6 +384,11 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
 
     /**
      * 【0.0.8】死亡状态维护（每 tick，死亡动画期同样运行）。分两种情形：
+     *
+     * <p><b>⚠️ 0.0.11：这是全类**唯一**的死亡回弹实现。</b>原先 {@code applyLockHealth()} 里另有一段
+     * 重复的"死亡自愈"分支（注释误称为死代码），它既绕过 `/kill` 后门、又不复位客户端动画，
+     * 已在 0.0.11 删除，改为在 {@code applyLockHealth()} 开头直接对死亡状态早退。**任何新的回弹需求
+     * 都应加在这里，不要再在锁血路径里另起一套。**
      *
      * <p><b>情形 A —— 脏状态清理（本轮新增）</b>：血量已经 &gt; 0，但死亡动画还挂着
      * （{@code deathTime > 0}）。实测由多种"特殊手段"造成，例如：
@@ -1228,17 +1250,28 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
         }
         int maxMark = (int) (maxHealth / interval); // 默认 216/18 = 12
 
-        // 死亡状态自愈（兜底分支）：主检测在 tick() 覆写（aiStep 在死亡后不执行，
-        // 本分支在死亡期间实际不可达，保留以防 tick 覆写被其他调用路径绕过）。
-        // 平时每 tick 检测；锁血未耗尽（lockMark < maxMark-1）时任何死亡状态都回弹到下一档地板。
-        if (TunerCommonConfig.LOCK_DEATH_REVIVE.get()
-                && (this.isDeadOrDying() || this.deathTime > 0)
-                && lockMark < maxMark - 1) {
-            float reviveHp = Math.max(maxHealth - interval * (float) (lockMark + 1), 1.0F);
-            this.deathTime = 0;
-            this.setHealth(reviveHp);
-            lockMark++;
-            onLockTriggered(level, reviveHp, maxMark, "Revived from death");
+        // 【0.0.11 修复】死亡 / 死亡动画期间一律不碰锁血。
+        //
+        // 这里原有一段"死亡状态自愈（兜底分支）"，注释断言它"在死亡期间实际不可达"（理由是
+        // "aiStep 在死亡后不执行"）。**该断言是错的，且已造成实测 bug**：
+        //   · 反编译实证：`LivingEntity.tick()`（366 行字节码）里 `aiStep()` 只有 **1 处调用、偏移 179、
+        //     完全无条件**；`isDeadOrDying` / `serverAiStep` / `tickDeath` 在该方法内**一次都没出现**。
+        //     真正被死亡把关的是 `baseTick()`：偏移 357 判 `isDeadOrDying()` → 偏移 375 调 `tickDeath()`
+        //     （`tickDeath` 里 `deathTime++`，≥20 时播事件 60 并 `remove(KILLED)`）。
+        //     ⇒ 注释把 `aiStep()` 与 `serverAiStep()` 混为一谈，**死亡期间 `aiStep()` 照常执行**。
+        //   · 后果（用户日志铁证，latest.log L4793~L4799）：
+        //     `10:15:24.577 /kill backdoor (health=29.48, mark=10)`
+        //     → 下一 tick 的 aiStep 里本分支命中，`10:15:24.625 Revived from death → lock at 18.0 (mark=11/12)`
+        //     ⇒ **`/kill` 被这条兜底分支击败**（Boss 带 18 血复活，还白吃一档锁血），用户只能再打一次 `/kill`；
+        //       而且本分支只写 `deathTime = 0`，**不走 `resetDeathAnimation()`**（不发 `SEntityRevivePacket`、
+        //       不清 hurtTime/pose）⇒ 客户端停在死亡动画 = 用户最初反馈的"血量不为 0 但已是死亡动画"复发。
+        //     （第二次 `/kill` 之所以成功：此时 lockMark=11=maxMark-1，本分支的 `lockMark < maxMark-1` 不再成立。）
+        //
+        // 因此：**死亡回弹的唯一权威实现是 `tick()` 里的 `maintainDeathState()`**
+        // （它尊重 `/kill` 后门、且通过 `resetDeathAnimation()` 同步复位客户端动画）。
+        // 本方法只负责"活着时的锁血地板 / 宽限期"，不再承担任何回弹职责。
+        // 保留这个早退守卫，是为了让"锁血逻辑绝不与死亡流程抢同一具尸体"这一约束显式可见。
+        if (this.isDeadOrDying() || this.deathTime > 0) {
             return;
         }
 
