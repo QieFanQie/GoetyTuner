@@ -1,8 +1,8 @@
 # Goety Tuner（调律师）技术摘要
 
-> **0.0.10 美术交付**：参考身体贴图（头部原样）、8 阶披风、红/蓝/灰悬浮立方体与并行施法高亮、非对称径向声波、原版紫/亮蓝刷怪蛋已实现。配置 61 项，`accentWave=true`、`accentParticles=false`；已有配置需迁移旧粒子开关。网络协议 2.0，联机双方须同时更新。参数、预览、验证及游戏待验项见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.11 修复**：修掉「每 tick 检测死亡状态」的真 bug —— `applyLockHealth()` 里那段与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（原注释误称其不可达），它击败了 `/kill` 后门（Boss 死后约 48 ms 带 18 血复活，管理员得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 而不复位客户端动画（「血量不为 0 但已是死亡动画」复发）。现已删除该分支、改为死亡时直接早退，死亡回弹的**唯一**实现是 `tick()` 里的 `maintainDeathState()`。本轮只改 2 个文件（`gradle.properties` 版本号 + `TunerBoss`），**无新增类/贴图/配置**（仍 61 项 / 10 段，`music` 12 项）。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> 版本：0.0.10 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~48 轮
+> 版本：0.0.11 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~49 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -18,7 +18,7 @@
 | 依赖 mod | goety 2.5.56.5、patchouli、curios-forge、configured（均为 dev 坐标式依赖） |
 | 作者 | toniat0, vibe-coding（https://github.com/QieFanQie/） |
 | 协议 | MIT |
-| 源码规模 | 45 个 Java 源文件（约 357 KB），包根 `com.tiaolvshi.goetytuner` |
+| 源码规模 | 45 个 Java 源文件（约 360 KB / 368,475 B），包根 `com.tiaolvshi.goetytuner` |
 
 **定位**：为 Goety 提供一位可召唤的 Boss「调律师」。Boss **主手常驻一把实体法杖**
 `goety:dark_wand`（`TunerBoss` 构造函数 `setItemInHand(MAIN_HAND, ModItems.DARK_WAND)`；
@@ -42,7 +42,7 @@ com.tiaolvshi.goetytuner
 │   ├── ModEvents.java               # 实体加入拦截 / 掉落 / 召唤物归属等
 │   └── ModBusEvents.java            # MOD 总线：属性、图层、屏幕
 ├── entity/
-│   ├── TunerBoss.java               # Boss 主体（1964 行核心类：AI 状态机 / 阶段 / 战斗数值）
+│   ├── TunerBoss.java               # Boss 主体（1998 行核心类：AI 状态机 / 阶段 / 战斗数值）
 │   ├── BossPhase.java               # 三阶段枚举（铺垫/高潮/低谷）
 │   ├── MusicController.java         # 服务端乐谱推进 / 阶段转换 / 重音触发
 │   └── ai/CastChannel.java          # 施法通道（前摇/高潮并行通道/瞬发）
@@ -208,7 +208,7 @@ TunerBoss.aiStep ─┐
   SEntityRevivePacket（id 2，0.0.8）、SAccentWavePacket（id 3，0.0.10，声波涟漪触发，
   注册时显式限 `PLAY_TO_CLIENT`）。**0.0.10 起网络协议版本由 `"1.0"` 提升为 `"2.0"`，且从宽松匹配
   改为严格匹配**（注册处写 `"2.0"::equals`）——因为本轮新增了实体同步字段（施法分类位掩码，见 §3.12）
-  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10**，否则协议不匹配、连接被拒。
+  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10 及以上版本**（协议号 `2.0` 在 0.0.11 未再变动），否则协议不匹配、连接被拒。
   0.0.5 起 `SMusicSyncPacket` 改为**先检测 128 格内有无玩家，无人接收时不构造、不发送**
   （原先先构造包体——`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组——再判断；
   Boss 设了 `setPersistenceRequired`，附近无玩家时仍会空跑）。
@@ -466,7 +466,8 @@ protected void actuallyHurt(DamageSource source, float amount) {
    该判断**合并进类里原有的 `remove(RemovalReason)` 覆写**（那里还要执行 `CombatEvents.unregisterBoss(this)`）。
    只拦 `KILLED`：区块卸载（UNLOADED_*）、和平模式消失（DISCARDED）照常放行；锁血耗尽时也放行（正常击杀路径不变）。
    但 **`/kill` 是例外**（管理员指令的 `DamageTypes.GENERIC_KILL`）：0.0.9 起该拦截对 `/kill` 放行，见本节末尾「0.0.9：为 `/kill` 打开后门」。
-4. 保留 `applyLockHealth()` 里的「死亡自愈兜底分支」（注释已说明其在死亡动画期不可达）。
+4. ~~保留 `applyLockHealth()` 里的「死亡自愈兜底分支」（注释已说明其在死亡动画期不可达）~~ ——
+   **⚠️ 那条注释的前提是错的：该分支实际可达，已于 0.0.11 删除**，见本节末尾「0.0.11」小节。
 
 **0.0.9：为 `/kill` 打开后门（0.0.8 两项保护的必要配套）**
 
@@ -511,6 +512,59 @@ KillCommand → Entity.kill() →（虚分派）LivingEntity.kill() → hurt(dam
    （其它模组直接 `setHealth(0)`）才会触发回弹。这是打开后门的必然结果。
 3. **情形 A（脏状态清理，`stale death animation`）不受影响**，仍然照常生效——那才是用户最初反馈的
    「血量不为 0 但已在死亡动画」的修复，其触发源是外部回血/复活而非 `/kill`。
+
+**0.0.11：删除 `applyLockHealth()` 里重复的「死亡自愈」分支（击败 `/kill` 后门的真 bug）**
+
+**起因（用户玩出来的）**：用户反馈「每 tick 检测死亡状态似乎有 bug」。查用户实例 `versions\测试\logs\latest.log` 得**日志铁证**：
+
+```
+L4793  10:15:24.577  /kill backdoor: bypassing lock-health protection (health=29.485922, mark=10)
+L4794  10:15:24.625  Revived from death → lock at 18.0 (mark=11/12)
+L4799  10:15:25.477  /kill backdoor: bypassing lock-health protection (health=18.0, mark=11)
+```
+
+即：`/kill` 刚把 Boss 打死，**48 ms 后 Boss 又带着 18 血复活了**，用户只能再打一次 `/kill`。
+
+**根因**：`applyLockHealth()`（由 `aiStep()` 调用）里有一段**与 `maintainDeathState()` 重复**的「死亡自愈」分支，
+其注释断言「实体死亡后 `aiStep()` 根本不执行 ⇒ 本分支是死代码、不可达」。**该断言是错的**：
+
+- **反编译实证 1**：`LivingEntity.tick()` 共 **366 行字节码**，其中 **`aiStep()` 只有 1 处调用（偏移 179、完全无条件）**；
+  `isDeadOrDying` / `serverAiStep` / `tickDeath` 在该方法内**一次都没出现**。
+- **反编译实证 2**：真正被死亡把关的是 `baseTick()`——**偏移 357** 判 `isDeadOrDying()` → **偏移 375** 调 `tickDeath()`
+  （`tickDeath()` 里 `deathTime++`，`>= 20` 时播实体事件 60 并 `remove(KILLED)`）。
+- 原注释把 **`aiStep()` 与 `serverAiStep()` 混为一谈**，所以「死亡期间 `aiStep()` 不执行」不成立，**该分支实际可达**。
+
+**三重后果**：
+
+1. 该分支**不看 `adminKillPending`** ⇒ **`/kill` 后门被它击败**（管理员指令刚生效就被回弹）；
+2. 它**白吃一档锁血**（`lockMark++`），把本该留给玩家输出的档位消耗掉；
+3. 它只写 `deathTime = 0`、**不走 `resetDeathAnimation()`**（既不发 `SEntityRevivePacket`、也不清
+   `hurtTime` / `hurtDuration` / `Pose.DYING`）⇒ **客户端停在死亡动画**，即用户更早反馈的
+   「血量不为 0 但已是死亡动画」复发。
+
+**为何第二次 `/kill` 就成功了**：第二次时 `lockMark = 11 = maxMark-1`，该分支的 `lockMark < maxMark-1` 条件不再成立
+（锁血耗尽即放行）——与日志 `L4799` 完全吻合。
+
+**修复（只改 `entity/TunerBoss.java`）**：
+
+1. **删除** `applyLockHealth()` 里那段重复的回弹分支；改为在方法**开头**对死亡状态直接早退：
+   `if (this.isDeadOrDying() || this.deathTime > 0) return;`
+2. 明确「**死亡回弹的唯一权威实现是 `tick()` 里的 `maintainDeathState()`**」（它尊重 `/kill` 后门，
+   并通过 `resetDeathAnimation()` 同步复位客户端动画），并把这条写进 `maintainDeathState()` 的 javadoc。
+3. 重写 `tick()` 的 javadoc：删掉基于错误前提的旧说明（原写 `if (isDeadOrDying()) {...} else if (isEffectiveAi()) { serverAiStep() }`
+   所以 death 期间 `aiStep()` 不跑），换成上面两条反编译实证的调用链，并说明**为什么必须放在 `super.tick()` 之前**
+   ——`tickDeath()` 在 `baseTick()` 里才递增 `deathTime`，而 `aiStep()` 又在其后无条件执行，两者都不是回弹该待的地方。
+4. 已用 `javap` 验证：部署版 jar 的 `applyLockHealth` **不再包含** `Revived from death` 调用
+   （该类里仍有该字符串，来自 `maintainDeathState`，属正常）。
+
+**「要不要给死亡检测降频」的结论：不需要，它几乎不花钱。**
+
+- `maintainDeathState()` 每 tick 调用的**热路径只有两次读取**（`getHealth() <= 0` 判定 + `deathTime` 字段比较）后立即 `return`；
+  真正有开销的动作（`resetDeathAnimation()` 复位、发 `SEntityRevivePacket`、打日志、`onLockTriggered()` 里的强制瞬移）
+  **只在确实处于死亡或脏状态时才执行**，属极少数 tick。
+- 而且**不能简单降采样**：「情形 A」（血量 > 0 但死亡动画残留）需要**及时**发现，隔 N tick 才查会让玩家多看到几帧躺倒。
+- 若将来真要省，正确做法是**事件驱动**（在 `hurt()` / `setHealth()` 里置「待检查」标志 + 末端加低频兜底），
+  而非降低检查频率。
 
 ### 3.12 0.0.10 美术交付的技术要点（立方体高亮 / 声波涟漪 / 渲染实证）
 
@@ -611,13 +665,13 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10→0.0.11`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~48 轮浓缩）
+## 五、版本演进时间线（第 1~49 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -652,6 +706,7 @@ bit0=ATTACK / bit1=DEFENSE / bit2=SUMMON / bit3=OTHER），客户端据此决定
 | v0.0.8 | 46 | 附属模组变化健壮性加固（扫描逐项兜底、beginCast/instantCast/interrupt/finishCast 全流程兜底、returnEntry 幂等）+ 死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不吃档位、拦截 remove(KILLED)） |
 | v0.0.9 | 47 | 为 /kill 打开后门：识别 DamageTypes.GENERIC_KILL 后跳过宽限期免疫/致死截断/死亡回弹/remove 拦截（字节码实证调用链 KillCommand→Entity.kill()→LivingEntity.kill()→hurt(genericKill, MAX_VALUE)） |
 | v0.0.10 | 48 | 美术交付：身体贴图按参考图重画（头部区逐像素不变）+ 8 阶色带披风 + 红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）+ 非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）+ 刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；网络协议 1.0→**2.0 严格匹配**，联机需双方同版本 |
+| v0.0.11 | 49 | 修「每 tick 检测死亡状态」的真 bug：`applyLockHealth()` 里与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（反编译实证 `LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用、`tickDeath()` 由 `baseTick()` 把关；原注释把它与 `serverAiStep()` 混为一谈），它击败 `/kill` 后门（日志：`/kill` 后 48 ms 带 18 血复活）、白吃一档锁血、且不复位客户端死亡动画 ⇒ 已删除该分支并改为死亡时早退，死亡回弹唯一实现为 `tick()`/`maintainDeathState()`。只改版本号 + `TunerBoss`，无新增类/贴图/配置 |
 
 ---
 
@@ -677,7 +732,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
-| 0.0.10 | `goetytuner-0.0.10.jar` | 1,750,152 B | `5C05779CEC4CD4765BD2510EB4D4A6ED` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+| 0.0.11 | `goetytuner-0.0.11.jar` | 1,750,088 B | `14B6ABD6EDE84786ED125DB6B10EB8D1` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar；旧 0.0.10 已删） |
 
 > 部署前务必确认**没有 java 进程在运行**（jar 被占用会导致替换静默失败）；
 > 部署后需**重启游戏**才会加载新 jar。
@@ -709,12 +764,12 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    透明声波与地形/水面/着色器的交互、原版刷怪蛋并排观感，均**尚未进游戏实测**——
    离线脚本只证明了尺寸/参数/逐像素一致与代码编译通过，不能替代画面验收
    （详见 `ART_ASSETS_REPORT.md`「验证与待验收」）。
-   另本轮**发现但未改动**的既有边界：`CastChannel` 在开始回调之后仍有日志调用，
-   异常路径下外层兜底的回调可能不配平（本轮未触碰施法流程，故保留现状）。
+   另**发现但未改动**的既有边界（0.0.10 轮发现，0.0.11 轮同样未触碰施法流程，故保留现状）：`CastChannel` 在开始回调之后仍有日志调用，
+   异常路径下外层兜底的回调可能不配平。
 
-### 已知缺陷与待办（0.0.10 时点）
+### 已知缺陷与待办（0.0.11 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.10** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.11** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。

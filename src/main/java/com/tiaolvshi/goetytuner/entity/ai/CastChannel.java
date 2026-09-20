@@ -54,6 +54,20 @@ public class CastChannel {
     private int castTicksElapsed;
     private ItemStack wandSnapshot = ItemStack.EMPTY;
 
+    /**
+     * 【0.0.12】本次施法是否已经发出过 {@code onCastStart}。
+     *
+     * <p>回调必须**严格成对**：{@code TunerBoss} 的施法状态计数（`DATA_CAST_STATE` 蹲姿）与
+     * 0.0.10 新增的立方体类别位掩码都靠 start/end 配对增减。若发出 start 后异常逃逸且无人补发 end，
+     * 计数会**永久 > 0** ⇒ 对应立方体一直高亮、蹲姿卡住；而 {@code TunerBoss} 那边用
+     * `FocusEntry` 身份集合做幂等去重，会让这个 `entry` 之后**再也无法计入**，状态无法自愈。
+     *
+     * <p>{@code startCast} 已把 {@code onCastStart} 挪到 `return true` 前的最后一步（结构上无法再被
+     * 后续代码打断），本标志是第二道保险：万一将来又有人在它后面加代码抛异常，
+     * {@code beginCast} 的兜底 catch 会据此补发一次 {@code onCastFailed} 让计数平衡。
+     */
+    private boolean startEmitted;
+
     /** 施法事件的宿主回调（由TunerBoss实现） */
     public interface TunerCastCallback {
         LivingEntity boss();
@@ -142,6 +156,7 @@ public class CastChannel {
         if (state != State.IDLE) {
             return false;
         }
+        startEmitted = false; // 【0.0.12】新一轮施法：清掉上一轮的成对性标记
         FocusEntry entry = category.isScored()
                 ? callback.pools().draw(category, minionFill, summonBlocked)
                 : callback.pools().drawUniform(category);
@@ -160,6 +175,19 @@ public class CastChannel {
             GoetyTuner.LOGGER.error("[Tuner] beginCast failed for focus {} ({}); auto-blacklisting",
                     entry.getItemId(), t.toString(), t);
             FocusPoolManager.runtimeBlacklist(entry.getItemId().toString());
+            // 【0.0.12】回调成对性：若 startCast 已经发出 onCastStart（异常发生在它之后），
+            // 这里必须补发一次结束回调，否则 TunerBoss 的施法状态计数与立方体类别掩码会永久 > 0。
+            // （startCast 已把 onCastStart 放到 return 前最后一步，所以正常不会走到这里；
+            //  这是防将来有人在它后面加代码的第二道保险。）
+            if (startEmitted) {
+                startEmitted = false;
+                try {
+                    callback.onCastFailed(entry);
+                } catch (Throwable cb) {
+                    GoetyTuner.LOGGER.error("[Tuner] onCastFailed (balancing) threw for {}",
+                            entry.getItemId(), cb);
+                }
+            }
             callback.pools().returnEntry(entry); // 幂等：已归还/未锁池时不会重复添加
             current = null;
             state = State.IDLE;
@@ -238,8 +266,15 @@ public class CastChannel {
             level.playSound(null, boss.getX(), boss.getY(), boss.getZ(), sound,
                     net.minecraft.sounds.SoundSource.HOSTILE, spell.castingVolume(), spell.castingPitch());
         }
-        callback.onCastStart(entry);
+        // 【0.0.12】先记日志，再发 onCastStart —— 顺序很关键：
+        // logCast 也是会调第三方/IO 的一步，原先它排在 onCastStart **之后**，一旦它抛异常，
+        // 异常会逃逸到 beginCast 的兜底 catch，而那里不补发结束回调 ⇒ onCastStart 成了"孤儿回调"，
+        // TunerBoss 的施法状态计数与立方体类别掩码永久 > 0（立方体一直亮、蹲姿卡住），
+        // 且身份集合幂等会让该聚晶之后再也无法计入。调换顺序后 onCastStart 是 return 前最后一步，
+        // **结构上不可能**再被后续代码打断。（beginCast 的 startEmitted 兜底是第二道保险。）
         BossWandHelper.logCast(level, boss, entry);
+        callback.onCastStart(entry);
+        startEmitted = true;
         return true;
     }
 

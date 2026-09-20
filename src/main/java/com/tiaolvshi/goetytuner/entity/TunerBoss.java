@@ -1238,8 +1238,11 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback 
      * lockMark = 已触发锁血次数。下一档地板 = maxHealth - interval*(lockMark+1)。
      * 血量跌破地板 → setHealth(地板)，lockMark++，进入宽限期（默认0.5秒）。
      * 宽限期内血量持续钉在本次地板值（回弹机制保持），窗口结束才继续掉血。
-     * 同时检测死亡状态自愈：若 boss 因 /kill 等绕过 hurt 拦截的方式进入死亡状态，
-     * 且锁血未耗尽，则复活到下一档地板。
+     *
+     * <p><b>本方法只负责"活着时的锁血地板与宽限期"，<u>不做任何死亡回弹</u>。</b>
+     * （0.0.11 删除了此处原本那段与 {@link #maintainDeathState()} 重复的"死亡自愈"分支：
+     * 它不看 `/kill` 后门、白吃一档锁血、且不复位客户端动画，实测把被 `/kill` 打死的 Boss 又复活了。
+     * 死亡回弹的唯一权威实现是 `tick()` 里的 {@code maintainDeathState()}。详见 0.0.11 提交说明。）
      */
     private void applyLockHealth() {
         ServerLevel level = (ServerLevel) this.level();

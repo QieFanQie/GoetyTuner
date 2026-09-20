@@ -10,7 +10,6 @@ import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.util.Mth;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.event.TickEvent;
@@ -27,7 +26,19 @@ public final class AccentWaveRenderer {
     // entityTranslucent installs NO_CULL itself, including during deferred batch submission.
     private static final RenderType WAVE = RenderType.entityTranslucent(
             new ResourceLocation(GoetyTuner.MOD_ID, "textures/entity/accent_wave.png"));
-    private static final Map<Integer, Long> ACTIVE = new HashMap<>();
+
+    /**
+     * 【0.0.12】一次涟漪的完整状态：**锚定在触发瞬间的坐标**。
+     *
+     * <p>0.0.10 只存了 `startTick`，渲染时每帧去读 Boss 当前位置，于是涟漪**跟着 Boss 跑**；
+     * 而调律师在每次锁血触发时都会**强制瞬移**（`onLockTriggered` → `tryTeleportNear`），
+     * 跟着跑会让"由内向外荡开的声波"看起来被拖着走，观感完全不对。
+     * 现在触发时就把脚下的世界坐标记下来，整条波都在这个固定点上播完。
+     */
+    private record Wave(long startTick, double x, double y, double z) {
+    }
+
+    private static final Map<Integer, Wave> ACTIVE = new HashMap<>();
     private static ClientLevel activeLevel;
 
     private static void checkLevel(ClientLevel level) {
@@ -40,8 +51,9 @@ public final class AccentWaveRenderer {
     public static void trigger(int entityId) {
         ClientLevel level = Minecraft.getInstance().level;
         checkLevel(level);
-        if (level != null && level.getEntity(entityId) instanceof TunerBoss) {
-            ACTIVE.put(entityId, level.getGameTime()); // Retrigger replaces, never stacks.
+        if (level != null && level.getEntity(entityId) instanceof TunerBoss boss) {
+            // Retrigger replaces, never stacks. 坐标取"触发瞬间"的脚下位置（实体位置=脚底）。
+            ACTIVE.put(entityId, new Wave(level.getGameTime(), boss.getX(), boss.getY(), boss.getZ()));
         }
     }
 
@@ -51,8 +63,10 @@ public final class AccentWaveRenderer {
         ClientLevel level = Minecraft.getInstance().level;
         checkLevel(level);
         if (level == null || ACTIVE.isEmpty()) return;
-        ACTIVE.entrySet().removeIf(entry -> level.getGameTime() - entry.getValue() >= DURATION
-                || !(level.getEntity(entry.getKey()) instanceof TunerBoss boss) || !boss.isAlive());
+        // 【0.0.12】只按时间清理。**不再**因为 Boss 死亡/被移除/离开视野就掐掉涟漪：
+        // 波已经锚定在固定坐标上，与实体无关，应当把 34 tick 播完（否则 Boss 一死波就凭空消失）。
+        long now = level.getGameTime();
+        ACTIVE.entrySet().removeIf(entry -> now - entry.getValue().startTick() >= DURATION);
     }
 
     @SubscribeEvent
@@ -66,14 +80,14 @@ public final class AccentWaveRenderer {
         PoseStack pose = event.getPoseStack();
         var camera = event.getCamera().getPosition();
         float partial = event.getPartialTick();
+        long now = mc.level.getGameTime();
         for (var entry : ACTIVE.entrySet()) {
-            if (!(mc.level.getEntity(entry.getKey()) instanceof TunerBoss boss) || !boss.isAlive()
-                    || boss.isInvisible()) continue;
-            float elapsed = mc.level.getGameTime() - entry.getValue() + partial;
+            Wave wave = entry.getValue();
+            float elapsed = now - wave.startTick() + partial;
+            if (elapsed < 0 || elapsed >= DURATION) continue;
             pose.pushPose();
-            pose.translate(Mth.lerp(partial, boss.xOld, boss.getX()) - camera.x,
-                    Mth.lerp(partial, boss.yOld, boss.getY()) - camera.y + 0.01,
-                    Mth.lerp(partial, boss.zOld, boss.getZ()) - camera.z);
+            // 锚点固定：worldPos - cameraPos（与 Goety 本体 PrismaBeamRenderer 的写法一致）
+            pose.translate(wave.x() - camera.x, wave.y() - camera.y + 0.01, wave.z() - camera.z);
             for (int ring = RINGS - 1; ring >= 0; ring--) {
                 float progress = (elapsed - ring * DELAY) / LIFE;
                 if (progress <= 0 || progress >= 1) continue;

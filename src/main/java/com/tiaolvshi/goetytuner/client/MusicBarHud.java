@@ -28,22 +28,32 @@ import net.minecraftforge.fml.common.Mod;
  * - 一阶段：内容固定（真实分段颜色+重音刻度），指针从左往右匀速滑动 —— "演奏进行中"
  * - 二阶段：条带坠落（以当前播放进度为锚点）——判定线（最左）永远对齐"正在播放"的内容：
  *   左侧是刚坠落的过去、右侧是即将坠落的未来；乐谱周期循环补位（±total 各画一份处理
- *   wrap），槽始终保持填满、丝滑连续。此前的实现判定线对应 progress/2 位置，
- *   与服务端实际音乐状态（phase）对不上，已修正为锚定当前 tick。
+ *   wrap），槽始终保持填满、丝滑连续。
  * - playing=false（无仇恨停演）时隐藏整个音乐条。
  * - 分段/重音数据由 SMusicSyncPacket 全量同步（服务端乐谱），不再用三等分近似。
  * - 【2026-08-19 第十七轮】进度改浮点连续推进（MusicStateClient.progressTickF），
  *   消除整数tick台阶造成的"蠕动"，实现逐帧平移。
  *
- * 分段三色（第十九轮提亮）：
- * - 铺垫 buildup：亮蓝
- * - 高潮 climax：亮橙红
- * - 低谷 valley：亮紫
- * 重音标记（第二十轮分阶段样式）：
- * - 铺垫：普通白色细线
- * - 高潮："中"字样式（贯通竖线+中间细线方框）
- * - 低谷：略加粗白线
- * 重音反馈（第十九轮）：服务端粒子冲击环+音符爆发+紫水晶音；客户端HUD亮黄描边闪烁。
+ * 【0.0.12】外观重做（用户反馈"太突兀"），四项一起改：
+ * 1. **尺寸**：260×6（又长又薄）→ 见 {@link #BAR_WIDTH}/{@link #BAR_HEIGHT}，改短加厚。
+ * 2. **柔顺渐变**：分段不再是硬边纯色块 —— 每行按"顶部提亮、底部压暗"逐行混色
+ *    （{@link #fillSegment}），并在分段交界处叠 2px 半透明过渡缝（{@link #drawSeam}），
+ *    消除"一刀切"的接缝。
+ * 3. **边框更自然**：原来的单一硬矩形底（`0xAA000000`）换成三层由外向内渐深的柔和投影，
+ *    且最外层四角留空以模拟圆角（{@link #drawSoftBackdrop}）。
+ * 4. **阶段提示改为隐晦符号**：原先在条上方画"铺垫/高潮/低谷"**文字**，现改为**像素绘制**的
+ *    `● ● ●`（高潮）/ `●`（铺垫）/ `- - - - - -`（低谷）。**之所以用像素画而不是 `⚪` 字符**：
+ *    实测本客户端字体只有拉丁/希腊/西里尔等位图字形（`include/unifont.json` 的 providers 是**空数组**、
+ *    jar 内无任何 ttf、也无 unicode 字形页），**U+26AA 没有字形，直接写会显示成空白方块**。
+ *    像素画必定可见，且更符合"隐晦"的要求。
+ *    ⇒ 由此 lang 里的 `info.goetytuner.music.buildup/climax/valley` **当前已无任何代码引用**
+ *      （保留未删：它们是三个阶段的地道中/英名称，将来若想改回文字提示可直接复用）。
+ *
+ * 分段三色（第十九轮提亮；0.0.12 改为逐行混色以产生渐变）：
+ * - 铺垫 buildup：亮蓝 / 高潮 climax：亮橙红 / 低谷 valley：亮紫
+ * 重音标记（第二十轮分阶段样式；0.0.12 降低对比度使其不刺眼）：
+ * - 铺垫：细线 / 高潮："中"字样式（贯通竖线+中间细线方框）/ 低谷：略加粗
+ * 重音反馈：服务端粒子/声波+紫水晶音；客户端HUD亮黄描边闪烁（0.0.12 同样调淡）。
  *
  * 美术接入点：BACKGROUND_TEXTURE 替换为实际贴图即可。
  */
@@ -53,36 +63,45 @@ public class MusicBarHud {
     private static final ResourceLocation BACKGROUND_TEXTURE =
             new ResourceLocation("goetytuner", "textures/gui/music_bar.png"); // TODO(美术)
 
-    // 【2026-08-19 第十九轮】样式调整：更扁更长（182x12 → 260x6）、配色提亮、指针加粗
-    private static final int BAR_WIDTH = 260;
-    private static final int BAR_HEIGHT = 6;
+    // 【0.0.12】尺寸重做：260×6 → 204×8。
+    // 原值又长又薄、贴脸感强；改短 56px、加厚 2px 后更像一条"乐器滑轨"而不是一条线，
+    // 重音刻度在 8px 高度上也有余量画出可辨认的形状（不至于被压成一根线）。
+    private static final int BAR_WIDTH = 204;
+    private static final int BAR_HEIGHT = 8;
+    /** 条底距屏幕底部的距离（比原来的 64 略抬，避开物品栏上沿的拥挤区）。 */
+    private static final int BAR_BOTTOM_MARGIN = 62;
 
-    // ---- 重音闪烁状态（第十九轮：客户端本地检测进度越过重音tick，无需额外网络包） ----
+    // ---- 分段主色（RGB，不含 alpha） ----
+    private static final int C_BUILDUP = 0x5B9BE0;
+    private static final int C_CLIMAX = 0xF26A4B;
+    private static final int C_VALLEY = 0xB068E8;
+
+    // ---- 重音闪烁状态（客户端本地检测进度越过重音tick，无需额外网络包） ----
     private static int flashTicks = 0;          // 剩余闪烁帧
     private static int flashBossId = -1;        // 上帧boss实体id（切换boss时重置基准）
     private static float lastProgressF = -1.0F; // 上帧浮点进度（用于越线检测）
     private static final int FLASH_MAX_TICKS = 8;
 
-    // ---- 【0.0.5 性能】阶段文字缓存 ----
-    // I18n.get(String, Object...) 内部无条件走一遍 String.format（即使模板无占位符），
-    // 叠加 "§c" 拼接，每帧会产生若干临时对象；而文字只依赖 phase（3 值）与语言数据。
-    // 以 Language 实例身份作为失效键：资源/语言重载会安装新 Language 对象，缓存随之失效。
-    private static BossPhase labelPhase;
-    private static net.minecraft.locale.Language labelLang;
-    private static String labelText;
+    private static int phaseRgb(BossPhase p) {
+        return switch (p) {
+            case BUILDUP -> C_BUILDUP;
+            case CLIMAX -> C_CLIMAX;
+            case VALLEY -> C_VALLEY;
+        };
+    }
 
-    private static String phaseLabel(BossPhase p) {
-        net.minecraft.locale.Language lang = net.minecraft.locale.Language.getInstance();
-        if (p != labelPhase || lang != labelLang) {
-            labelPhase = p;
-            labelLang = lang;
-            labelText = switch (p) {
-                case BUILDUP -> "§7" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.buildup");
-                case CLIMAX -> "§c" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.climax");
-                case VALLEY -> "§5" + net.minecraft.client.resources.language.I18n.get("info.goetytuner.music.valley");
-            };
-        }
-        return labelText;
+    /** 把两个 RGB 按 t（0..1）线性混合。 */
+    private static int lerpRgb(int a, int b, float t) {
+        int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
+        int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
+        int r = Math.round(ar + (br - ar) * t);
+        int g = Math.round(ag + (bg - ag) * t);
+        int bl = Math.round(ab + (bb - ab) * t);
+        return (r << 16) | (g << 8) | bl;
+    }
+
+    private static int argb(int alpha, int rgb) {
+        return (alpha << 24) | rgb;
     }
 
     @SubscribeEvent
@@ -95,10 +114,6 @@ public class MusicBarHud {
             return;
         }
         // 【0.0.5 性能】零分配早退：没有任何 Boss 在演奏时直接返回。
-        // 下方为找到可见调律师会遍历 level.entitiesForRendering()（客户端全部已加载实体，
-        // 整合包可达数百个），而"无人演奏"时后续逻辑必然 return、一个像素都不画。
-        // 等价性：所有状态 playing=false ⇒ 任何 boss 的 smoothed() 都不满足
-        // "playing && totalDuration>0"，故提前返回不改变任何像素与闪烁时序。
         if (!MusicStateClient.anyPlaying()) {
             return;
         }
@@ -155,11 +170,10 @@ public class MusicBarHud {
 
     private static void renderBar(GuiGraphics gfx, Minecraft mc, MusicStateClient.State s) {
         int x = (gfx.guiWidth() - BAR_WIDTH) / 2;
-        int y = gfx.guiHeight() - 64;
+        int y = gfx.guiHeight() - BAR_BOTTOM_MARGIN;
 
         RenderSystem.enableBlend();
-        // 背景
-        gfx.fill(x - 2, y - 2, x + BAR_WIDTH + 2, y + BAR_HEIGHT + 2, 0xAA000000);
+        drawSoftBackdrop(gfx, x, y);
 
         // 【第十七轮】浮点连续进度：wrap到 [0,total) 后用于所有渲染计算，逐帧平移不蠕动
         float progress = s.progressTickF % s.totalDuration;
@@ -169,22 +183,25 @@ public class MusicBarHud {
 
         if (!s.phase2) {
             // ============ 一阶段：内容固定，指针左→右 ============
+            // 【0.0.12】内容按条宽裁剪：分段像素宽由浮点换算取整而来，总和可能比 BAR_WIDTH 多 1~2px，
+            // 不裁剪会溢出到右侧边框上（1px 缝）。指针要探出条外，故画指针前先解除裁剪。
+            gfx.enableScissor(x, y, x + BAR_WIDTH, y + BAR_HEIGHT);
             renderSegments(gfx, s, x, y, 0.0F, pxPerTick);
+            gfx.disableScissor();
+            // 指针：3px 宽、上下各探出 3px，改半透明白以免过于刺眼
             int pointerX = x + Math.round(BAR_WIDTH * ratio);
-            // 【第十九轮】指针加粗：5px宽，上下各探出4px
-            gfx.fill(pointerX - 2, y - 4, pointerX + 2, y + BAR_HEIGHT + 4, 0xFFFFFFFF);
+            gfx.fill(pointerX - 1, y - 3, pointerX + 2, y + BAR_HEIGHT + 3, 0xE8FFFFFF);
         } else {
             // ============ 二阶段：条带坠落（第十六轮：判定线对齐当前播放位置） ============
-            // 【第十九轮】判定线加粗：5px宽
-            gfx.fill(x - 2, y - 4, x + 2, y + BAR_HEIGHT + 4, 0xFFFFFFFF); // 判定线（最左）
+            gfx.fill(x - 1, y - 3, x + 2, y + BAR_HEIGHT + 3, 0xE8FFFFFF); // 判定线（最左）
             gfx.enableScissor(x, y - 1, x + BAR_WIDTH, y + BAR_HEIGHT + 1);
             renderStripAtAnchor(gfx, s, x, y, progress);
             gfx.disableScissor();
         }
 
-        // 【第十九轮】重音瞬间闪烁：亮黄描边渐隐（8帧）
+        // 重音瞬间闪烁：亮黄描边渐隐（8帧）——0.0.12 调淡并贴合新边框尺寸
         if (flashTicks > 0) {
-            int alpha = (int) (0xC0 * flashTicks / (float) FLASH_MAX_TICKS);
+            int alpha = (int) (0x88 * flashTicks / (float) FLASH_MAX_TICKS);
             int c = (alpha << 24) | 0xFFE070;
             gfx.fill(x - 3, y - 3, x + BAR_WIDTH + 3, y - 2, c);
             gfx.fill(x - 3, y + BAR_HEIGHT + 2, x + BAR_WIDTH + 3, y + BAR_HEIGHT + 3, c);
@@ -193,13 +210,60 @@ public class MusicBarHud {
             flashTicks--;
         }
 
-        // 当前阶段文字（【0.0.5】按阶段+语言缓存，避免每帧 I18n.get 内部的 String.format 与拼接）
-        gfx.drawString(mc.font, phaseLabel(s.phase), x, y - 13, 0xFFFFFF);
+        // 【0.0.12】阶段提示：像素符号，替代原先的文字
+        drawPhaseIndicator(gfx, s.phase, x, y - 11);
         RenderSystem.disableBlend();
     }
 
     /**
-     * 画乐谱内容（分段颜色 + 重音刻度）。
+     * 【0.0.12】柔和投影底：三层由外向内渐深 + 最外层四角留空（模拟圆角）。
+     *
+     * <p>原来是一个 2px 内边距的纯 `0xAA000000` 硬矩形，边缘生硬、和游戏 UI 格格不入。
+     * 现在最外一圈只有 ~25% 黑、往里逐层加深，视觉上像一层柔和的阴影而不是一个黑框；
+     * 四角不画最外层像素，在 1px 尺度下就能读作"圆角"。
+     */
+    private static void drawSoftBackdrop(GuiGraphics gfx, int x, int y) {
+        int x0 = x - 3, y0 = y - 3, x1 = x + BAR_WIDTH + 3, y1 = y + BAR_HEIGHT + 3;
+        // 最外层（~25% 黑）：四边各 1px，四角留空
+        gfx.fill(x0 + 1, y0, x1 - 1, y0 + 1, 0x40000000);
+        gfx.fill(x0 + 1, y1 - 1, x1 - 1, y1, 0x40000000);
+        gfx.fill(x0, y0 + 1, x0 + 1, y1 - 1, 0x40000000);
+        gfx.fill(x1 - 1, y0 + 1, x1, y1 - 1, 0x40000000);
+        // 中间层（~45% 黑）
+        gfx.fill(x - 2, y - 2, x + BAR_WIDTH + 2, y + BAR_HEIGHT + 2, 0x73000000);
+        // 最内层（~65% 黑）：紧贴内容，让分段颜色更稳、不与背景糊在一起
+        gfx.fill(x - 1, y - 1, x + BAR_WIDTH + 1, y + BAR_HEIGHT + 1, 0xA6000000);
+    }
+
+    /**
+     * 【0.0.12】画一段渐变条：逐行把主色往"顶部提亮 / 底部压暗"方向混色，
+     * 使每个分段自身有竖向明暗过渡（原实现是整块纯色，扁平且边缘发死）。
+     *
+     * @param x0 左边界（含）　@param x1 右边界（不含）
+     */
+    private static void fillSegment(GuiGraphics gfx, int x0, int x1, int y, int rgb) {
+        if (x1 <= x0) {
+            return;
+        }
+        for (int r = 0; r < BAR_HEIGHT; r++) {
+            float t = (r + 0.5F) / BAR_HEIGHT; // 0=顶 1=底
+            int rowRgb = t < 0.5F
+                    ? lerpRgb(rgb, 0xFFFFFF, (0.5F - t) * 0.20F)  // 上半：向白提亮
+                    : lerpRgb(rgb, 0x000000, (t - 0.5F) * 0.34F); // 下半：向黑压暗
+            gfx.fill(x0, y + r, x1, y + r + 1, argb(0xFF, rowRgb));
+        }
+    }
+
+    /**
+     * 【0.0.12】分段交界处的过渡缝：叠一条 2px 的半透明"上一段颜色"，
+     * 把生硬的直角接缝揉开，读数上仍是分段、观感上不再"一刀切"。
+     */
+    private static void drawSeam(GuiGraphics gfx, int boundaryX, int y, int leftRgb) {
+        gfx.fill(boundaryX - 1, y, boundaryX + 1, y + BAR_HEIGHT, argb(0x4D, leftRgb));
+    }
+
+    /**
+     * 画乐谱内容（分段渐变颜色 + 重音刻度）。
      *
      * @param scrollX  内容整体左移像素量（一阶段=0；二阶段=progress/total*BAR_WIDTH）
      * @param pxPerTick 每tick像素宽
@@ -212,23 +276,29 @@ public class MusicBarHud {
             int climax = (int) (s.totalDuration * 0.27F * pxPerTick);
             int valley = Math.max(1, (int) (s.totalDuration * pxPerTick) - buildup - climax);
             int sx = x - (int) scrollX;
-            gfx.fill(sx, y, sx + buildup, y + BAR_HEIGHT, 0xFF5B9BE0);
-            gfx.fill(sx + buildup, y, sx + buildup + climax, y + BAR_HEIGHT, 0xFFF26A4B);
-            gfx.fill(sx + buildup + climax, y, sx + buildup + climax + valley, y + BAR_HEIGHT, 0xFFB068E8);
+            fillSegment(gfx, sx, sx + buildup, y, C_BUILDUP);
+            fillSegment(gfx, sx + buildup, sx + buildup + climax, y, C_CLIMAX);
+            fillSegment(gfx, sx + buildup + climax, sx + buildup + climax + valley, y, C_VALLEY);
+            drawSeam(gfx, sx + buildup, y, C_BUILDUP);
+            drawSeam(gfx, sx + buildup + climax, y, C_CLIMAX);
             return;
         }
         // 真实乐谱分段
         int cursor = 0; // 当前分段在条上的起始偏移（像素，未减去scroll）
+        int prevBoundary = Integer.MIN_VALUE;
+        int prevRgb = 0;
         for (MusicStateClient.Segment seg : s.segments) {
             int segPx = Math.max(1, (int) (seg.ticks * pxPerTick));
             int segStart = x + cursor - (int) scrollX;
             int segEnd = segStart + segPx;
-            int color = switch (seg.phase) {
-                case BUILDUP -> 0xFF5B9BE0;
-                case CLIMAX -> 0xFFF26A4B;
-                case VALLEY -> 0xFFB068E8;
-            };
-            gfx.fill(segStart, y, segEnd, y + BAR_HEIGHT, color);
+            int rgb = phaseRgb(seg.phase);
+            fillSegment(gfx, segStart, segEnd, y, rgb);
+            // 与上一段的接缝（只画落在可视区内的）
+            if (prevBoundary != Integer.MIN_VALUE && prevBoundary > x - 2 && prevBoundary < x + BAR_WIDTH + 2) {
+                drawSeam(gfx, prevBoundary, y, prevRgb);
+            }
+            prevBoundary = segEnd;
+            prevRgb = rgb;
             cursor += segPx;
         }
         // 重音刻度（第二十轮分阶段样式，随内容滚动）
@@ -250,29 +320,70 @@ public class MusicBarHud {
     }
 
     /**
-     * 【第二十轮】重音刻度分阶段样式：
+     * 重音刻度分阶段样式：
      * - 铺垫/未知：普通细线（1px）
      * - 高潮："中"字——贯通竖线 + 中间细线空心方框（视觉如汉字"中"）
-     * - 低谷：略加粗（3px）
+     * - 低谷：略加粗（2px）
+     * 【0.0.12】整体改为半透明白（原先纯白 `0xFFFFFFFF` 在深色条上过于扎眼）。
      */
     private static void drawAccentMark(GuiGraphics gfx, int ax, int y, BossPhase phase) {
+        final int c = 0xB8FFFFFF;
         if (phase == BossPhase.CLIMAX) {
             // "中"字：贯通竖线
-            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, 0xFFFFFFFF);
+            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, c);
             // 中部细线方框（上/下/左/右四条边，1px描边）
-            int bx0 = ax - 2, bx1 = ax + 3;          // 5px宽，竖线居中
-            int by0 = y + 1, by1 = y + BAR_HEIGHT - 1; // 上下各留1px
-            gfx.fill(bx0, by0, bx1, by0 + 1, 0xFFFFFFFF); // 上边
-            gfx.fill(bx0, by1 - 1, bx1, by1, 0xFFFFFFFF); // 下边
-            gfx.fill(bx0, by0, bx0 + 1, by1, 0xFFFFFFFF); // 左边
-            gfx.fill(bx1 - 1, by0, bx1, by1, 0xFFFFFFFF); // 右边
+            int bx0 = ax - 2, bx1 = ax + 3;             // 5px宽，竖线居中
+            int by0 = y + 2, by1 = y + BAR_HEIGHT - 2;  // 8px 高时上下各留 2px
+            gfx.fill(bx0, by0, bx1, by0 + 1, c);        // 上边
+            gfx.fill(bx0, by1 - 1, bx1, by1, c);        // 下边
+            gfx.fill(bx0, by0, bx0 + 1, by1, c);        // 左边
+            gfx.fill(bx1 - 1, by0, bx1, by1, c);        // 右边
         } else if (phase == BossPhase.VALLEY) {
-            // 低谷：加粗3px
-            gfx.fill(ax - 1, y, ax + 2, y + BAR_HEIGHT, 0xFFFFFFFF);
+            // 低谷：加粗 2px
+            gfx.fill(ax - 1, y, ax + 1, y + BAR_HEIGHT, c);
         } else {
-            // 铺垫/未知：普通1px
-            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, 0xFFFFFFFF);
+            // 铺垫/未知：普通 1px
+            gfx.fill(ax, y, ax + 1, y + BAR_HEIGHT, c);
         }
+    }
+
+    /**
+     * 【0.0.12】阶段提示：像素符号（隐晦），替代原先的"铺垫/高潮/低谷"文字。
+     *
+     * <p>高潮 = 三颗圆点、铺垫 = 一颗圆点、低谷 = 一排短横线。全部由 {@code fill} 拼出，
+     * **不使用字体**——本客户端字体没有 `⚪`(U+26AA) 的字形，直接写会变成空白方块。
+     * 颜色取各阶段主色再压到低对比度的近白色调，第一眼不抢戏、盯一眼能读出阶段。
+     */
+    private static void drawPhaseIndicator(GuiGraphics gfx, BossPhase phase, int x, int y) {
+        int rgb = lerpRgb(phaseRgb(phase), 0xFFFFFF, 0.55F); // 淡化的阶段色
+        final int color = argb(0xB0, rgb);
+        int centerX = x + BAR_WIDTH / 2;
+        if (phase == BossPhase.VALLEY) {
+            // ------ ：6 段短横，4px 宽 2px 高，间距 2px
+            final int dashW = 4, gap = 2, dashes = 6;
+            int totalW = dashes * dashW + (dashes - 1) * gap;
+            int sx = centerX - totalW / 2;
+            for (int i = 0; i < dashes; i++) {
+                int dx = sx + i * (dashW + gap);
+                gfx.fill(dx, y + 1, dx + dashW, y + 3, color);
+            }
+            return;
+        }
+        int dots = (phase == BossPhase.CLIMAX) ? 3 : 1;
+        final int dot = 4, gap = 3;
+        int totalW = dots * dot + (dots - 1) * gap;
+        int sx = centerX - totalW / 2;
+        for (int i = 0; i < dots; i++) {
+            drawDot(gfx, sx + i * (dot + gap), y, dot, color);
+        }
+    }
+
+    /** 4×4 的圆点（四角留空，1px 尺度下读作圆形）。 */
+    private static void drawDot(GuiGraphics gfx, int x, int y, int size, int color) {
+        int s = size;
+        gfx.fill(x + 1, y, x + s - 1, y + 1, color);              // 上边（两端内缩）
+        gfx.fill(x, y + 1, x + s, y + s - 1, color);              // 中部整宽
+        gfx.fill(x + 1, y + s - 1, x + s - 1, y + s, color);      // 下边（两端内缩）
     }
 
     /**
@@ -302,12 +413,11 @@ public class MusicBarHud {
                     if (segEnd <= clipL || segStart >= clipR) {
                         continue; // 可视区外跳过
                     }
-                    int color = switch (seg.phase) {
-                        case BUILDUP -> 0xFF5B9BE0;
-                        case CLIMAX -> 0xFFF26A4B;
-                        case VALLEY -> 0xFFB068E8;
-                    };
-                    gfx.fill(Math.max(segStart, clipL), y, Math.min(segEnd, clipR), y + BAR_HEIGHT, color);
+                    int c0 = Math.max(segStart, clipL), c1 = Math.min(segEnd, clipR);
+                    fillSegment(gfx, c0, c1, y, phaseRgb(seg.phase));
+                    if (segEnd > clipL && segEnd < clipR) {
+                        drawSeam(gfx, segEnd, y, phaseRgb(seg.phase));
+                    }
                 }
             } else {
                 // 健壮回退：三等分近似（同样以锚点画）
@@ -318,9 +428,9 @@ public class MusicBarHud {
                 int bPx = Math.round(bTicks * pxPerTick);
                 int cPx = Math.round(cTicks * pxPerTick);
                 int vPx = Math.max(1, Math.round(vTicks * pxPerTick));
-                gfx.fill(Math.max(sx, clipL), y, Math.min(sx + bPx, clipR), y + BAR_HEIGHT, 0xFF5B9BE0);
-                gfx.fill(Math.max(sx + bPx, clipL), y, Math.min(sx + bPx + cPx, clipR), y + BAR_HEIGHT, 0xFFF26A4B);
-                gfx.fill(Math.max(sx + bPx + cPx, clipL), y, Math.min(sx + bPx + cPx + vPx, clipR), y + BAR_HEIGHT, 0xFFB068E8);
+                fillSegment(gfx, Math.max(sx, clipL), Math.min(sx + bPx, clipR), y, C_BUILDUP);
+                fillSegment(gfx, Math.max(sx + bPx, clipL), Math.min(sx + bPx + cPx, clipR), y, C_CLIMAX);
+                fillSegment(gfx, Math.max(sx + bPx + cPx, clipL), Math.min(sx + bPx + cPx + vPx, clipR), y, C_VALLEY);
             }
             // 重音刻度（第二十轮分阶段样式，随内容一起坠落）
             if (s.accents != null) {

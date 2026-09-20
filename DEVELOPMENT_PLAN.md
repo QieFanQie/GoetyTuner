@@ -1,14 +1,14 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> **0.0.10 美术交付**：参考身体贴图（头部原样）、8 阶披风、红/蓝/灰悬浮立方体与并行施法高亮、非对称径向声波、原版紫/亮蓝刷怪蛋已实现。配置 61 项，`accentWave=true`、`accentParticles=false`；已有配置需迁移旧粒子开关。网络协议 2.0，联机双方须同时更新。参数、预览、验证及游戏待验项见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.11 修复**：修掉「每 tick 检测死亡状态」的真 bug —— `applyLockHealth()` 里那段与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（原注释误称其不可达），它击败了 `/kill` 后门（Boss 死后约 48 ms 带 18 血复活，管理员得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 而不复位客户端动画（「血量不为 0 但已是死亡动画」复发）。现已删除该分支、改为死亡时直接早退，死亡回弹的**唯一**实现是 `tick()` 里的 `maintainDeathState()`。本轮只改 2 个文件（`gradle.properties` 版本号 + `TunerBoss`），**无新增类/贴图/配置**（仍 61 项 / 10 段，`music` 12 项）。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.10
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.11
 > 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 48 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 49 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -17,7 +17,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.10 / 第 48 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；本轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；上一轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；本轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）。
+当前状态（0.0.11 / 第 49 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；上一轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；上一轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**本轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。
 
 ---
 
@@ -411,7 +411,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.10 / 48 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.11 / 49 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -420,6 +420,9 @@ AI自动初评分**已完整实现**。两条路径：
 - [x] ~~**A1-A2 原版渲染打磨**~~：初版贴图 + `TunerCapeModel`/`TunerCapeLayer`（第 19 轮）
 - [x] ~~**重音特效**~~：冲击环 + 音符爆发 + 阶段差异化音效（第 19/31 轮；**0.0.10 改为 10 环非对称径向声波涟漪，旧粒子默认关闭**）
 - [x] ~~实测验证效果清除、锁血V2、传送间隔手感~~（数值已于第 25~34 轮重调）
+- [x] ~~**死亡状态检测 bug**~~：删除 `applyLockHealth()` 里与 `maintainDeathState()` 重复的「死亡自愈」分支
+  （它实际可达，曾击败 `/kill` 后门 + 白吃一档锁血 + 把客户端留在死亡动画）；死亡回弹**唯一**权威实现改为
+  `tick()` → `maintainDeathState()`（第 49 轮 / 0.0.11，详见 `TECHNICAL_SUMMARY.md` §3.11）
 
 ### 仍待办
 1. **A3 剩余粒子**：传送 / 净化环 / 二阶段碎裂+天空盒 / 施法前摇聚能
@@ -686,6 +689,42 @@ AI自动初评分**已完整实现**。两条路径：
 - 部署产物：`goetytuner-0.0.10.jar`（1,750,152 B / md5 `5C05779CEC4CD4765BD2510EB4D4A6ED`）→ `versions\测试\mods\`。
 - **待验收**：披风摆动、立方体轨道与高潮并行高亮、声波与地形/水面/着色器交互、原版刷怪蛋观感均**尚未进游戏实测**
   （离线校验只证明参数/逐像素/编译正确），见 `ART_ASSETS_REPORT.md`。
+
+### 第 49 轮（0.0.11）
+- **本轮只修一个真 bug，只改 2 个文件**（`gradle.properties` 版本号 + `entity/TunerBoss.java`）：
+  **无新增类、无新增贴图、无新增配置项**（仍 61 项 / 10 段，`music` 段 12 项），战斗数值与施法流程未动。
+- **起因（用户玩出来的）**：用户反馈「每 tick 检测死亡状态似乎有 bug」。查用户实例 `versions\测试\logs\latest.log` 得铁证：
+  `L4793 10:15:24.577 /kill backdoor: bypassing lock-health protection (health=29.485922, mark=10)`
+  → `L4794 10:15:24.625 Revived from death → lock at 18.0 (mark=11/12)`
+  → `L4799 10:15:25.477 /kill backdoor: bypassing lock-health protection (health=18.0, mark=11)`。
+  即 `/kill` 刚打死 Boss，**48 ms 后 Boss 又带 18 血复活**，用户只能再打一次 `/kill`。
+- **根因**：`applyLockHealth()`（由 `aiStep()` 调用）里有一段与 `maintainDeathState()` **重复**的「死亡自愈」分支，
+  其注释断言「实体死亡后 `aiStep()` 根本不执行 ⇒ 本分支是死代码、不可达」。**该断言是错的**：
+  ① 反编译实证 `LivingEntity.tick()` 共 **366 行字节码**，其中 **`aiStep()` 只有 1 处调用（偏移 179、完全无条件）**，
+  `isDeadOrDying` / `serverAiStep` / `tickDeath` 在该方法内**一次都没出现**；
+  ② 真正被死亡把关的是 `baseTick()`：**偏移 357** 判 `isDeadOrDying()` → **偏移 375** 调 `tickDeath()`。
+  原注释把 `aiStep()` 与 `serverAiStep()` 混为一谈，故该分支**实际可达**。
+- **三重后果**：① 该分支**不看 `adminKillPending`** ⇒ `/kill` 后门被它击败；② 它**白吃一档锁血**（`lockMark++`）；
+  ③ 它只写 `deathTime = 0`、**不走 `resetDeathAnimation()`**（不发 `SEntityRevivePacket`、不清 `hurtTime`/`hurtDuration`/`Pose.DYING`）
+  ⇒ **客户端停在死亡动画**，即更早反馈的「血量不为 0 但已是死亡动画」复发。
+  **为何第二次 `/kill` 就成功**：此时 `lockMark = 11 = maxMark-1`，该分支的 `lockMark < maxMark-1` 不再成立（与日志吻合）。
+- **修复**：① 删除该重复分支，改为在 `applyLockHealth()` **开头**对死亡状态直接早退
+  （`if (this.isDeadOrDying() || this.deathTime > 0) return;`）；
+  ② 明确「**死亡回弹的唯一权威实现是 `tick()` 里的 `maintainDeathState()`**」（它尊重 `/kill` 后门，
+  并通过 `resetDeathAnimation()` 同步复位客户端动画），并写进 `maintainDeathState()` 的 javadoc；
+  ③ 重写 `tick()` 的 javadoc：删掉基于错误前提的旧说明，换成上述反编译实证的调用链，并说明**为什么必须放在 `super.tick()` 之前**
+  （`tickDeath()` 在 `baseTick()` 里才递增 `deathTime`，`aiStep()` 又在其后无条件执行，两者都不是回弹该待的地方）；
+  ④ 以 `javap` 验证部署版 jar 的 `applyLockHealth` **不再包含** `Revived from death` 调用
+  （该类仍含该字符串，来自 `maintainDeathState`，属正常）。
+- **「死亡检测要不要降频」的结论：不需要**。`maintainDeathState()` 每 tick 的**热路径只有两次读取**
+  （`getHealth() <= 0` 判定 + `deathTime` 字段比较）后立即 return；真正有开销的动作（复位、发 `SEntityRevivePacket`、
+  打日志、`onLockTriggered()` 里的强制瞬移）**只在确实死亡或脏状态时才执行**，属极少数 tick。且**不能简单降采样**：
+  「情形 A」（血量 > 0 但死亡动画残留）必须**及时**发现，隔 N tick 才查会让玩家多看到几帧躺倒；
+  将来真要省应走**事件驱动**（`hurt()`/`setHealth()` 置「待检查」标志 + 末端低频兜底），而非降低检查频率。
+- 部署产物：`goetytuner-0.0.11.jar`（**1,750,088 B / md5 `14B6ABD6EDE84786ED125DB6B10EB8D1` / jar 内 101 条目**）→ `versions\测试\mods\`（旧 0.0.10 已删）；
+  构建在主副本就地 `gradlew build` 成功（48 s，仍只有原有 3 条 Forge 弃用警告）。
+- **仍未修（不要误记为本轮已修）**：`CastChannel` 开始回调之后仍有日志调用、异常路径下外层兜底回调可能不配平
+  —— 本轮没碰施法流程，见 `TECHNICAL_SUMMARY.md` §七；0.0.10 美术项的游戏画面验收也仍未做。
 
 ---
 

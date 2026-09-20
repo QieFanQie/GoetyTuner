@@ -1,19 +1,19 @@
 # Goety Tuner · 调律师
 
-> **0.0.10 美术交付**：参考身体贴图（头部原样）、8 阶披风、红/蓝/灰悬浮立方体与并行施法高亮、非对称径向声波、原版紫/亮蓝刷怪蛋已实现。配置 61 项，`accentWave=true`、`accentParticles=false`；已有配置需迁移旧粒子开关。网络协议 2.0，联机双方须同时更新。参数、预览、验证及游戏待验项见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.11 修复**：修掉「每 tick 检测死亡状态」的真 bug —— `applyLockHealth()` 里那段与 `maintainDeathState()` 重复的「死亡自愈」分支**实际可达**（原注释误称其不可达），它击败了 `/kill` 后门（Boss 死后约 48 ms 带 18 血复活，管理员得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 而不复位客户端动画（「血量不为 0 但已是死亡动画」复发）。现已删除该分支、改为死亡时直接早退，死亡回弹的**唯一**实现是 `tick()` 里的 `maintainDeathState()`。本轮只改 2 个文件（`gradle.properties` 版本号 + `TunerBoss`），**无新增类/贴图/配置**（仍 61 项 / 10 段，`music` 12 项）。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
 诡厄巫法（Goety）附属Boss模组 —— 1.20.1 Forge。
 
 人形无头指挥家「调律师」，以音乐（铺垫/高潮/低谷）驱动战斗节奏，
 轮番演奏诡厄巫法及其附属注册的全部聚晶，并带有自学习式聚晶评分系统。
 
-**当前版本：0.0.10**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
+**当前版本：0.0.11**（MC 1.20.1 Forge 47.3.22 / Goety 2.5.56.5 附属）
 
 ## 文档索引（按优先级）
 
 | 文档 | 定位 | 时效 |
 |---|---|---|
-| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.10 / 第 48 轮，最新一轮；覆盖轮次口径以该文档为准） |
+| **[TECHNICAL_SUMMARY.md](TECHNICAL_SUMMARY.md)** | 技术现状权威文档：架构/核心系统/工程红线/版本时间线 | **最新**（已覆盖至 0.0.11 / 第 49 轮，最新一轮；覆盖轮次口径以该文档为准） |
 | [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) | 阶段性开发计划书：完成度/未完成项/配置总览/实测记录 | 进度表可能滞后，以技术摘要为准 |
 | [DESIGN_RITUAL_WAND_UPGRADE.md](DESIGN_RITUAL_WAND_UPGRADE.md) | 单任务设计稿（任务 #118 仪式召唤 + 法杖升级） | 已实施，保留作设计留痕 |
 
@@ -71,7 +71,7 @@ cd ../goety-tuner
 源码包 `com.tiaolvshi.goetytuner`（45 个类）：
 
 - `init/` 注册（实体/物品/音效/属性/事件），含链锤实体级拦截
-- `entity/` Boss 实体 `TunerBoss`（核心，1964 行）、`MusicController` 乐谱与阶段、`BossPhase`
+- `entity/` Boss 实体 `TunerBoss`（核心，1998 行）、`MusicController` 乐谱与阶段、`BossPhase`
 - `entity/ai/` `CastChannel` 施法通道（前摇/锁池/朝向钉死/异常自愈）
 - `focus/` 聚晶池系统（分类/评分/轮盘/冷却池/黑名单/LLM与启发式分类/主手杖装配）
 - `combat/` 动态评分（伤害 DPS 200tick 归因、召唤物输出/生存二维追踪）
@@ -83,10 +83,11 @@ cd ../goety-tuner
 - `client/render/` 原版 HumanoidModel 渲染 + 自定义披风层 `TunerCapeLayer`/`TunerCapeModel` + 悬浮立方体层 `TunerOrbLayer`/`TunerOrbModel`（模型层 `goetytuner:tuner_orb`，无 GeckoLib）
 - 资源：`assets/goetytuner/`（中英 lang、贴图、内置 boss 音乐 ogg）、`data/goety/recipes/tuner_boss_ritual.json`
 
-## 已知事项（0.0.10）
+## 已知事项（0.0.11）
 
+- **0.0.11 死亡状态修复**：`applyLockHealth()` 里曾有一段与 `tick()` / `maintainDeathState()` **重复**的「死亡自愈」分支，注释断言它「实体死亡后 `aiStep()` 不执行 ⇒ 不可达」——**该断言是错的**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处调用、完全无条件；真正被死亡把关的是 `baseTick()` 里的 `isDeadOrDying()` → `tickDeath()`）。该分支实际可达，后果有三：① 不看 `adminKillPending`，把 `/kill` 后门击败（实测 `/kill` 后约 48 ms Boss 带 18 血复活）；② 白吃一档锁血；③ 只写 `deathTime = 0`、不走 `resetDeathAnimation()`，客户端停在死亡动画。现已**删除**该分支，改为在 `applyLockHealth()` 开头对死亡状态直接早退，死亡回弹**唯一**权威实现是 `maintainDeathState()`。详见 `TECHNICAL_SUMMARY.md` §3.11。
 - **0.0.10 配置迁移（需手动改一次）**：`music.accentParticles` 是**已存在的键**，而 Forge 按 key 合并配置、**不会用新默认值覆盖你已有的 toml** —— 所以老配置里它仍然写着 `true`，会出现「旧粒子冲击环/音符 + 新声波涟漪」同时播放。请在 `config/goetytuner-common.toml` 里手动改成 `accentParticles = false`；新声波开关 `music.accentWave` 是**本次新增的键**，会自动补进老 toml（默认 `true`）。这与「新增键会自动补齐、不必删 toml」是两件事：**新增键会回填，改默认值不会**。本机已在 `versions\测试` 实例的 toml 里手工迁移完毕。
-- **0.0.10 联机注意**：网络协议由 `1.0` 提升为 `2.0`，且从宽松匹配改为**严格匹配**（`"2.0"::equals`），并新增服务端→客户端包 `SAccentWavePacket`（**通道 id 3**）。**联机双方必须同时更新到 0.0.10**，否则协议不匹配会被拒绝连接（旧客户端无法正确解码新增的实体同步字段与包）。
+- **0.0.10 联机注意**：网络协议由 `1.0` 提升为 `2.0`，且从宽松匹配改为**严格匹配**（`"2.0"::equals`），并新增服务端→客户端包 `SAccentWavePacket`（**通道 id 3**）。**联机双方必须同时更新到 0.0.10 及以上（协议 2.0 在 0.0.11 未变，当前版本 0.0.11）**，否则协议不匹配会被拒绝连接（旧客户端无法正确解码新增的实体同步字段与包）。
 - **换/加附属模组后重启即可**：聚晶池是**运行期扫描**（服务器启动时扫 `ForgeRegistries.ITEMS` 里所有 `IFocus`），增删附属只需重启游戏，系统自动适配——配置里多出来的聚晶条目不会被匹配（无害），缺少的走启发式兜底。另外，单个附属的聚晶实现有 bug 也**只会被跳过并拉黑**（启动扫描与施法流程都已逐项/全流程兜底），不会影响其它聚晶，也不会崩服。
 - **死亡动画已修复**：原版 `deathTime` **不是同步数据**，服务端复活 Boss 后客户端模型会一直保持"倒下"姿势；0.0.8 增加了专用同步包把它一并复位（同时清掉红色受伤叠加层）。其它模组直接置血等特殊手段也无法再把 Boss 卡在"血量不为 0 却在死亡动画"的状态——锁血未耗尽时连 `remove(KILLED)` 都会被挡下（防止实体被移除后再也回弹不了），但 **`/kill` 是例外**：管理员指令（`DamageTypes.GENERIC_KILL`）会跳过锁血体系的全部保护（身份免疫 / 宽限期免疫 / 致死伤害截断 / 死亡回弹 / `remove(KILLED)` 拦截），能真正击杀 Boss。这是 0.0.9 新增的 `/kill` 后门，详见 `TECHNICAL_SUMMARY.md` §3.11。
 - **限伤默认已开启**：`boss.maxHitDamagePercent = 0.25`，即单次命中最多打掉最大生命的 25%（默认 216 血 → 约 54 点）。**实测结论：限伤在锁血阶梯耗尽前基本不改变战斗推进速度**——血量一旦跌破本档地板就会被恢复到该档地板并进入宽限期（宽限期内完全免疫），超出该档的伤害被丢弃，打 1000 点与打 18 点在阶梯上都只推进一档。它主要作为**一道保险**：避免阶梯耗尽后被单次巨额伤害瞬间带走；**设为 `0` 可关闭**。
