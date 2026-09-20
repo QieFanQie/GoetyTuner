@@ -1,14 +1,14 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> **0.0.12 修复**：本轮三件事 —— 功能改动落在 3 个 Java 文件（`client/AccentWaveRenderer`、`client/MusicBarHud`、`entity/ai/CastChannel`），另 `entity/TunerBoss` **只动了一处方法 javadoc**（无行为变化），加版本号；**无新增类/贴图/配置项**（仍 61 项 / 10 段，`music` 12 项；`.java` 文件数仍 45）。① **径向声波涟漪改为锚定在触发瞬间的坐标**（原先只存 `startTick`、渲染时每帧读 Boss 当前位置 ⇒ 涟漪跟着 Boss 跑；而调律师每次锁血都会强制瞬移，观感完全不对）——触发时记下脚下世界坐标（新增私有 `record Wave`），整条波在固定点上播完，**清理只按时间**（34 tick），不再因 Boss 死亡/被移除/离开视野提前掐掉。② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6` → **`204×8`**（底距 64→62）、硬边纯色块 → **逐行混色**渐变 + 2px 过渡缝、单一硬矩形底 → **三层柔和投影**（四角留空模拟圆角）、阶段**文字** → **像素符号** `● ● ●`/`●`/`- - - - - -`（本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度与闪烁调淡、一阶段分段按条宽做 scissor 裁剪防溢出。③ **`CastChannel` 回调成对性修复**（此前本文档记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前** + 新增 `startEmitted` 兜底补发 `onCastFailed`。0.0.10 美术项（参考身体贴图 / 8 阶披风 / 悬浮立方体 / 径向声波 / 原版刷怪蛋）仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
+> **0.0.13 修复**：本轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 仍 10 个）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**（`BossMusicManager`）：原先只以静态字段 `music != null` 当作「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**，且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（症状「整个 BGM 都没了」）；改为每 tick 用 **`SoundManager.isActive(music)`** 核实 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑 + 高潮改细小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、刻度只有 1~2px ⇒ 取整后逐像素跳动；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮「中」字改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音数量与频率降为 1/3**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9），在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮更明显 + 发光**（`TunerOrbLayer`）：高亮改为额外叠加 `glow*0.4` 逐通道**向白靠拢**（原先 `min(1, color*(1+glow*0.8))` 被 `min` 截断、几乎看不出变化），发光用**两层 `entityTranslucentEmissive` 自发光外壳**——**不能用原版发光描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，只能整只 Boss 一起描边，无法只描一颗立方体）。⑥ **药水效果可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（用于 boss 自身 4 处），并完成药水现状审计。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶，对施法者反噬 125%）** 加入 `focus.blacklist`——**配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 toml）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.12
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.13
 > 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 50 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 51 轮），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -17,7 +17,8 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.12 / 第 50 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**本轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。
+当前状态（0.0.13 / 第 51 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。
+> **本轮（0.0.13）成果：音乐自愈 + 重音减密 + 表现层微调 + 药水可观测性** —— ① **修「玩家被击杀复活后（未走出索敌范围）Boss 背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 时静默返回），字段却仍非 null ⇒ 服务端 `playing` 为 true 时 `startMusic` **永不重入** = **永久静音**；`onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**（症状「整个 BGM 都没了」）。现每 tick 用 `SoundManager.isActive(music)` 核实 + 10 tick 防抖，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑**（`MusicBarHud` 亚像素覆盖：小数部分按比例摊到相邻两列，亮度重心连续移动）+ **高潮「中」字改小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map`→`List`，二阶段进场连发不再互相顶掉；`MAX_WAVES=32` 兜底）。④ **新增配置 `music.accentDensityDivisor`（默认 3、范围 1~9）**：服务端加载乐谱时「每 N 个保留 1 个」，HUD 刻度/击退/涟漪/提示音一起变稀疏、客户端零改动（默认乐谱 37 → 13 个重音）；配置 **61 → 62 项**（`music` 段 12 → 13）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳**（`entityTranslucentEmissive`；原版发光描边是整实体级 `OutlineBufferSource`，无法只描一颗立方体）。⑥ **药水可观测性**：8 处 `addEffect` 返回值原先全被丢弃（被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时静默失效），新增 `applySelfEffect` 打 WARN（boss 自身 4 处）+ 药水现状审计（低谷效果仅一阶段且 `visible=false` 无粒子、二阶段自施可达且不受亡灵免疫、`SUMMON_DOWN` 免疫确认真实生效）。⑦ 配置侧把 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）加入 `focus.blacklist`（**不在 jar 内**；该 toml **无法在游戏内修改**）。
 
 ---
 
@@ -39,17 +40,17 @@
 | 阶段行为 | ✅ | 铺垫轮换/高潮三通道并行/低谷禁施法 |
 | 锁血V2 | ✅ | 12 档阶梯锁血（216 血 / 间隔 18），致死伤害截断 + 宽限期免疫 + 覆写 tick() 的死亡自愈 + 旧档迁移 |
 | 二阶段 | ✅ | 半血触发+音乐切换+打断+数据同步 |
-| 效果清除 | ✅ | 低谷清正面/高潮清负面（本次新增） |
+| 效果清除 | ✅ | 低谷清正面/高潮清负面（本次新增）；**0.0.13 新增 `applySelfEffect`**：boss 自身 4 处自施药水被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时打 WARN（此前全类 8 处 `addEffect` 的 boolean 返回值全被丢弃、效果被拒即静默失效） |
 | 重音系统 | ✅ | 分阶段斥力+无前摇瞬发施法 |
 | 仆从管理 | ✅ | 数量上限+迟滞恢复+伤害归因 |
-| 客户端HUD | ✅ | **204×8** 音乐条（0.0.12 重做：逐行混色分段 + 2px 过渡缝、三层柔和投影（四角留空模拟圆角）、阶段**像素符号** `● ● ●`/`●`/`- - - - - -`）、三色分段（铺垫 0xFF5B9BE0 / 高潮 0xFFF26A4B / 低谷 0xFFB068E8）、分阶段重音样式（细线/「中」字/加粗，半透明白 0xB8FFFFFF）、二阶段锚定坠落条带 + scissor 裁剪 + wrap 补位、越线亮黄闪烁（峰值 0x88） |
+| 客户端HUD | ✅ | **204×8** 音乐条（0.0.12 重做：逐行混色分段 + 2px 过渡缝、三层柔和投影（四角留空模拟圆角）、阶段**像素符号** `● ● ●`/`●`/`- - - - - -`）、三色分段（铺垫 0xFF5B9BE0 / 高潮 0xFFF26A4B / 低谷 0xFFB068E8）、分阶段重音刻度（0.0.13 起**亚像素覆盖**平滑滚动，不再逐像素跳动；高潮 2×6 / 低谷 1×6 / 铺垫 1×4 小长条，半透明白 0xB8FFFFFF）、二阶段锚定坠落条带 + scissor 裁剪 + wrap 补位、越线亮黄闪烁（峰值 0x88） |
 | 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段；共 4 个通道（含 0.0.10 新增 `SAccentWavePacket` id 3，限 `PLAY_TO_CLIENT`），协议 2.0 严格匹配 |
 | 正式纹理 | ✅ | `tuner.png` 64x64 身体按参考图服装重画、头部仍是黑立方+蓝渐变（0.0.10）；另有 8 阶披风、立方体与声波贴图，自定义蛋贴图已删（改走原版模板） |
-| 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10） |
-| 配置系统 | ✅ | 61 项 / 10 个 section（toml） |
+| 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10；0.0.13 高亮改「向白插值」+ 两层 `entityTranslucentEmissive` 自发光外壳） |
+| 配置系统 | ✅ | **62 项** / 10 个 section（toml） |
 | 实测验证 | ✅ | quickPlay自动进档验证通过（第 9/11 轮） |
-| 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮） |
-| 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮） |
+| 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮）；**0.0.13 修「玩家被击杀复活后（未走出索敌范围）音乐丢失」：每 tick 用 `SoundManager.isActive` 核实实例真的在响 + 10 tick 防抖，失效即清空字段并自愈重建**（第 51 轮） |
+| 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；**0.0.13 起活跃表由 Map 改 List ⇒ 同实体多波共存**，旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮）；**重音密度由 `music.accentDensityDivisor`（默认 3）服务端统一抽稀**（第 51 轮） |
 | 披风渲染层 | ✅ | `TunerCapeModel` + `TunerCapeLayer`（第 19 轮） |
 | 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮） |
 | 分类三层防线 | ✅ | 手动配置 → `instanceof ISummonSpell` 权威判定 → `describe()` 兼容 `.info`/`.desc` 双后缀 → 关键词兜底（第 29 轮） |
@@ -314,7 +315,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（61项 / 10个 section，第50轮实况）
+### `run/config/goetytuner-common.toml`（62项 / 10个 section，第51轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
@@ -357,9 +358,9 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2TeleportIntervalFactor | 1.0 | 二阶段瞬移间隔系数（范围 0.1~1.0，只能缩短二阶段瞬移间隔） |
 | | phase2BuildupArcRadius | 6.0 | 二阶段铺垫期弧形瞬移半径 |
 | | phase2BuildupArcEveryN | 3 | 每 N 次铺垫攻击触发一次弧形瞬移 |
-| **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，实时解析不缓存） |
+| **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，逐段 trim、**大小写敏感**，实时解析不缓存）。**代码默认值只有 `destruction_focus`**；0.0.13 起**游玩实例的 toml** 额外加入 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）。⚠️ **无法在游戏内配置界面修改**（`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器），只能手改文件；`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
 | **wand_whitelist**（1项） | whitelist | "" | 法杖白名单（格式同上，供未加入 `goety:wands` 标签的附属法杖激活仪式） |
-| **music**（12项） | syncInterval | 20 | 音乐同步间隔 |
+| **music**（13项） | syncInterval | 20 | 音乐同步间隔 |
 | | accentKnockbackBase | 0.4 | 普通重音斥力 |
 | | accentKnockbackValley | 0.8 | 低谷重音斥力 |
 | | accentKnockbackClimax | 1.2 | 高潮重音斥力 |
@@ -367,8 +368,9 @@ AI自动初评分**已完整实现**。两条路径：
 | | accentShakeTicks | 10 | 重音镜头抖动持续 tick |
 | | accentShakeStrength | 2.0 | 重音镜头抖动强度 |
 | | accentParticles | false | 旧重音粒子开关（兼容选项） |
-| | accentWave | true | 非对称径向声波涟漪（0.0.12 起锚定在触发瞬间的坐标、只按 34 tick 计时清理） |
+| | accentWave | true | 非对称径向声波涟漪（0.0.12 起锚定在触发瞬间的坐标、只按 34 tick 计时清理；**0.0.13 起活跃表改 List，同一实体多波共存**、连发不再互相顶掉） |
 | | accentSound | true | 重音音效开关 |
+| | **accentDensityDivisor** | **3** | **0.0.13 新增**：重音抽稀「**每 N 个保留 1 个**」（1~9；1=不抽稀，默认 3 ⇒ 数量与频率约为原来的 1/3）。在**服务端加载乐谱时**统一生效 ⇒ HUD 刻度（经 `SMusicSyncPacket` 全量同步）/ 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动；加载时打 INFO `Accent thinning x3: 37 -> 13 accents` |
 | | volume | 4.0 | Boss 音乐音量 |
 | | pitchPhase1 | 1.0 | 音乐播放速度（一/二阶段共用同一速度） |
 | **llm**（2项） | apiUrl | "https://api.openai.com/v1/chat/completions" | LLM 端点 |
@@ -392,12 +394,22 @@ AI自动初评分**已完整实现**。两条路径：
 > 而本次新增的 `music.accentWave`（默认 `true`）会被 Forge **自动补进**老 toml。
 > **⇒「新增键会自动补齐、无需删 toml」与「改默认值不会回填老 toml」是两件事，不要混为一谈。**
 > 本次已在用户实例 `versions\测试` 的 toml 手工迁移完毕（`accentParticles=false` + `accentWave=true`）。
+>
+> ⚠️ **0.0.13 新增键**：`music.accentDensityDivisor`（默认 `3`）是**新增键**，Forge 会**自动补进**老 toml、**无需手改**
+> （实例 toml 在下次启动写入该行之前查不到它属正常——默认值在代码里）。**「新增键自动补齐」与「改默认值不会回填」仍是两件事。**
+>
+> ⚠️ **0.0.13 又一条（可访问性，重要）**：本模组的 `TunerConfigScreen` **顶替**了 Forge 默认的 toml 编辑器，
+> 界面里只有 LLM API Key 与提示词两个输入框 ⇒ **本表里的所有配置项都只能手改 `goetytuner-common.toml`**，
+> **游戏内改不了**（包括 `focus.blacklist`，这也是"拉黑索命聚晶"只能改文件的原因）。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
 {"segments":[{"phase":"buildup","ticks":80},{"phase":"climax","ticks":960},{"phase":"valley","ticks":700},{"phase":"buildup","ticks":225}],"accents":[0,80,120,160,200,240,280,320,360,400,440,480,520,560,600,640,680,720,760,800,840,880,920,960,1000,1040,1120,1200,1280,1360,1440,1520,1600,1680,1740,1820,1900]}
 ```
 - 总 1965 tick = 98.25 秒，与内置 ogg（98.27 秒）对齐；共 37 个重音
+- ⚠️ **0.0.13 起文件里仍是 37 个，但运行时被 `music.accentDensityDivisor`（默认 3）抽稀为 13 个**
+  （`MusicController.loadScore()` 里「每 N 个保留 1 个」，加载时打 INFO `Accent thinning x3: 37 -> 13 accents`；
+  **抽稀只在内存里做、不回写文件**）——**两个数字都对，引用时请注明是"文件"还是"运行时"**
 
 ### `run/config/goetytuner/focus_classification.json`
 - 结构为 `{apiKey, prompt, foci{<id>:{category,attackScore,survivalScore}}}`
@@ -411,7 +423,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.12 / 50 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.13 / 51 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -430,6 +442,23 @@ AI自动初评分**已完整实现**。两条路径：
 - [x] ~~**音乐条 HUD「太突兀」**~~：外观重做（`260×6`→`204×8`、逐行混色 + 2px 过渡缝、三层柔和投影、
   阶段文字改像素符号、刻度与闪烁调淡）；同轮把**径向声波涟漪锚定到触发瞬间的坐标**并改为**只按时间清理**
   （第 50 轮 / 0.0.12，详见 `TECHNICAL_SUMMARY.md` §3.13(1)(2)）
+- [x] ~~**玩家死亡复活后 Boss 音乐永久丢失**~~：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、
+  **从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量 0 / channel 停止 /
+  `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 静默返回）⇒ 只要没脱战就**永不重播**，
+  且 `onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**。现每 tick 用 `SoundManager.isActive(music)`
+  核实实例是否真的在响 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建
+  （第 51 轮 / 0.0.13，详见 `TECHNICAL_SUMMARY.md` §3.14(1)）
+- [x] ~~**重音太密 / 标记滚动不平滑 / 连发涟漪互相顶掉**~~：新增 `music.accentDensityDivisor`（默认 3、范围 1~9）
+  在**服务端加载乐谱时**统一抽稀（HUD 刻度/击退/涟漪/提示音一起变稀疏，客户端零改动）；HUD 刻度改**亚像素覆盖**
+  平滑滚动、高潮「中」字改**小长条**；涟漪活跃表 `Map`→`List` 实现**多波共存**（`MAX_WAVES=32` 兜底）
+  （第 51 轮 / 0.0.13，详见 `TECHNICAL_SUMMARY.md` §3.14(2)(3)(4)）
+- [x] ~~**立方体高亮几乎看不出变化 / 想要发光**~~：高亮改「向白插值」（额外叠加 `glow*0.4` 逐通道向白靠拢）
+  + 两层 `entityTranslucentEmissive` 自发光外壳（**原版发光描边是整实体级 `OutlineBufferSource`，
+  只能整只 Boss 一起描边、无法只描一颗立方体**）
+  （第 51 轮 / 0.0.13，详见 `TECHNICAL_SUMMARY.md` §3.14(5)）
+- [x] ~~**药水效果是否真的生效无从判断**~~：新增 `applySelfEffect`（被 `canBeAffected` / Forge
+  `MobEffectEvent.Applicable` 拒绝时打 WARN，已用于 boss 自身 4 处）+ 完成药水现状审计
+  （第 51 轮 / 0.0.13，详见 `TECHNICAL_SUMMARY.md` §3.14(6)）
 
 ### 仍待办
 1. **A3 剩余粒子**：传送 / 净化环 / 二阶段碎裂+天空盒 / 施法前摇聚能
@@ -442,6 +471,15 @@ AI自动初评分**已完整实现**。两条路径：
 8. **美术/表现项游戏验收**：0.0.10 美术项（披风摆动、三颗立方体轨道与高潮并行高亮、透明声波与地形/水面/着色器交互、原版刷怪蛋观感）；
    以及 **0.0.12 的新外观**（音乐条 204×8 混色/柔和投影/像素阶段符号、涟漪锚定触发点坐标的观感）
    ——离线校验与编译/字节码核对**不能替代画面验收**
+9. **0.0.13 待验收**：音乐丢失修复需**真机复现路径**（被击杀 → 在死亡界面停留不同时长 → 复活 → 未脱战时音乐应自动恢复）、
+   音乐条**亚像素刻度**的平滑观感、涟漪**多波共存**的层叠外扩观感、立方体高亮「变白变亮」与自发光外壳的强度、
+   `music.accentDensityDivisor=3` 下的重音密度手感（太密/太疏都调这一项）
+10. **`focus.blacklist` 的可访问性（0.0.13 结论）**：`TunerConfigScreen` 顶替了 Forge 的 toml 编辑器 ⇒
+    **整个 `goetytuner-common.toml` 都只能手改**。是否补一个通用 toml 入口、或在配置屏里加黑名单编辑框，
+    待决策（短期内"把聚晶加入黑名单"必须靠手改文件）
+11. **药水效果现状（0.0.13 审计结论）**：一阶段低谷的 `SAPPED`/`DARKNESS` 与仆从四效果**机制上生效**，
+    但都构造为 `visible=false`（**无粒子**）⇒ **玩家看不出效果**；`tickPhase2Buffs` **零日志** ⇒
+    二阶段自施药水的数值收益只能进游戏实测。是否补粒子 / 加日志属**表现层待决策项**（不是 bug）
 
 ---
 
@@ -791,6 +829,87 @@ AI自动初评分**已完整实现**。两条路径：
 - **待验收**：0.0.10 美术项 + 本轮新外观（音乐条 204×8 混色/柔和投影/像素阶段符号、涟漪锚定观感）
   均**尚未进游戏画面验收**（本轮只做到编译通过 + `javap` 字节码核对）。
 
+### 第 51 轮（0.0.13）
+- **本轮范围**：改动 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**；**新增 1 个配置项**
+  `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 **12 → 13**）；`.java` 文件数仍 **45**、
+  jar 条目仍 **102**（无新增/删除类，只是既有类被改写）。实测行数：`TunerBoss.java` **2020 行**、
+  `MusicBarHud.java` **463 行**、`BossMusicManager.java` **181 行**、`AccentWaveRenderer.java` **138 行**、
+  `MusicController.java` **319 行**、`TunerOrbLayer.java` **83 行**、`TunerCommonConfig.java` **428 行**。
+- **① 修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」（`BossMusicManager`）**：
+  - 症状：玩家被击杀 → 复活、且**没走出索敌范围**时，Boss 背景音乐**有时**再也不响；用户形容为「整个 BGM 都没了」。
+  - **根因**：起播唯一入口是 `if (music == null) startMusic()`，而"是否在播"**只**记录为静态字段 `music != null`、
+    **从不与声音引擎核对**。死亡/复活时引擎会把循环实例**悄悄摘除**，已知四条通道：`RECORDS` 音量为 0、
+    channel 停止、`SoundEngine.reload()→destroy()→stopAll()`、`play()` 在未 loaded 时静默返回。
+    字段仍非 null ⇒ 只要服务端 `playing` 一直为 true（**没脱战**），`startMusic` **永不重入** = **永久静音**。
+  - **症状被放大**：`onPlaySound` 的判据同样只是 `music != null` ⇒ 假死状态下把原版背景音乐
+    （含 `MusicManager` 延迟调度的曲目）**一并永久取消**，这才是"整个 BGM 都没了"。
+  - **修法**：每 tick 用 **`SoundManager.isActive(music)`**（1.20.1 自带 API，反编译确认存在）核实实例**真的在响**；
+    失效即清空字段、下一 tick 自动重建（**自愈**，覆盖上述全部通道，也覆盖 `/stopsound`、切音频设备等）；
+    加 **10 tick 防抖**避免"播不起来 → 每 tick 重建"的抖动。`onPlaySound` 判据同步改为
+    `music != null && isActive(music)`。
+  - **调查中另确认（三条实证）**：**死亡本身不停声音**（`DeathScreen` 无任何 soundManager 调用）；
+    **同维度复活不替换 `ClientLevel`**（`handleRespawn` 仅**换维度**才 `setLevel`，不能把问题归因于"世界被换掉"）；
+    「有时」取决于 `playing=false` 是否越过 `STOP_GRACE_TICKS(30t)` 与 `SYNC_TIMEOUT_MS(3000ms)` 两条计时线
+    ——**单人死亡界面会暂停集成服务器**，死亡停留时长不同就走不同分支。
+- **② 重音标记滚动平滑 + 高潮改细小长条（`MusicBarHud`）**：
+  - **不平滑的根因**：`fill()` **只能落在整数像素**，而刻度是 1~2px 细条，位置取整后**逐像素跳动**。
+  - **改法**：**亚像素覆盖** —— 小数部分按比例分摊到相邻两列（`x=10.3` ⇒ 第 10 列 70% 透明度、第 11 列 30%），
+    亮度重心随浮点位置**连续移动** ⇒ 滚动平滑；调用点不再预先取整。
+  - **高潮标记**：原「中」字（贯通竖线 + 空心方框，8px 条高上又粗又花）改为**小长条**：
+    高潮 **2×6** 最亮 / 低谷 **1×6** / 铺垫 **1×4**，全部**竖向居中**，只用「宽 × 高 × 亮度」区分强度。
+- **③ 涟漪多波共存（`AccentWaveRenderer`）**：0.0.12 用 `Map<entityId, Wave>`，语义是"重复触发**覆盖**旧的"，
+  而二阶段进场重音**每 5 tick 一发、连发多次** ⇒ 后一发**顶掉**前一发，玩家只看到**一条波反复重播**；
+  改为 `List<Wave>`：每发各成一条波、各自计时，呈现**层叠外扩**；加 **`MAX_WAVES = 32`** 硬上限兜底
+  （单发波活 34 tick、最快 5 tick 一发 ⇒ 同时最多约 7 条，上限只作防御）。
+- **④ 重音数量与频率降为原来的 1/3（新配置 `music.accentDensityDivisor`）**：`IntValue`，**默认 3**、范围 1~9，
+  从乐谱重音表"**每 N 个保留 1 个**"。抽稀在**服务端加载乐谱时**统一进行（`MusicController.loadScore()`）
+  ⇒ HUD 刻度（经 `SMusicSyncPacket` **全量同步**）、击退、涟漪、提示音**一起**变稀疏，**客户端无需任何改动**，
+  也不会出现"HUD 密、实际触发疏"的不一致。加载时打 INFO `Accent thinning x3: 37 -> 13 accents`
+  （⚠️ **乐谱文件仍 37 个、运行时 13 个，不回写文件**——两个数字都对，引用时注明口径）。
+  配置总数 **61 → 62**（`music` 段 **12 → 13**）。
+- **⑤ 小立方体高亮更明显 + 发光（`TunerOrbLayer`）**：高亮原为 `min(1, color * (1 + glow*0.8))`，
+  而红/蓝/灰的分量本就接近 1（红 = 1.0/0.231/0.188）⇒ 乘法被 `min(1, …)` 截断后**几乎看不出变化**；
+  改为额外叠加 `glow * 0.4` **逐通道向白靠拢** ⇒ 高亮时明显"变白变亮"。
+  「发光」用**两层自发光外壳**（1.30×/alpha 0.36、再叠 1.35×/alpha 0.18，都乘 `glow`），渲染类型
+  **`RenderType.entityTranslucentEmissive`**（着色器忽略光照 ⇒ 稳定发亮；**已实证它与 `ENTITY_TRANSLUCENT`
+  同理无条件 `NO_CULL`**，放大后的壳无背面剔除空洞）。
+  **为何不用原版发光描边**：MC 的「发光」是**整实体级**的 framebuffer 后处理（`OutlineBufferSource`），
+  **只能整只 Boss 一起描边、无法只描一颗立方体**；外壳方案能精确地只让"高亮的那一颗"发光（代价是 2 个额外 draw call）。
+- **⑥ 药水效果可观测性（`TunerBoss`）**：审计发现全类 **8 处** `addEffect(...)` 的 **boolean 返回值全被丢弃**，
+  而 `canBeAffected` 与 Forge 的 `MobEffectEvent.Applicable` 都在这一步否掉 ⇒ 效果被拒时**静默失效、日志无一字**。
+  新增私有 `applySelfEffect(...)`：被拒时打 WARN `[Tuner] addEffect rejected: <effect> amp=N`，
+  已用于 boss 自身 4 处（低谷 `SAPPED`/`DARKNESS`、二阶段 `DAMAGE_BOOST`/`RALLYING`）。
+- **药水现状审计结论（详见 `TECHNICAL_SUMMARY.md` §3.14(6)）**：
+  - 一阶段低谷：boss 自施 `GoetyEffects.SAPPED`(amp 11) + `MobEffects.DARKNESS`，每 tick 刷新=常驻，**机制上生效**；
+    但两者都 `visible=false`（**无粒子**）⇒ **玩家看不出效果**。仆从四效果（REGEN/ABSORPTION/SLOW/WEAKNESS）同样只在一阶段低谷。
+  - **二阶段不跑 `tickValley`**：`MusicController` 把二阶段 VALLEY 段重映射为 BUILDUP，且二阶段**清空仆从**
+    ⇒ 上述低谷效果**仅一阶段**。
+  - 二阶段自施 `DAMAGE_BOOST` + `RALLYING`（每 40 tick 一次、持续 60 tick）**可达**、**不会被 `cleanseEffects` 抹掉**、
+    也**不受亡灵免疫影响**（`TunerBoss` **未覆写 `getMobType`**，为 `UNDEFINED` 而非 `UNDEAD`）；
+    `RALLYING` 按定义**只加近战**攻击、对法系无感，故另挂 `SPELL_POTENCY` 属性 modifier（值 = `strengthLevel*0.1`）。
+  - **`SUMMON_DOWN` 免疫确认真实生效**：反编译 Goety 的 `ISummonSpell`，施加上走 `LivingEntity.addEffect` →
+    `canBeAffected` → 被本类拒绝 ⇒ `hasSummonDown` **恒 false**。
+  - **局限**：`tickPhase2Buffs` 自身**零日志** ⇒ 二阶段自施药水的**实际数值收益只能进游戏实测**
+    （新增的 WARN 只能证明"没被拒"，不能证明"数值符合预期"）。
+- **⑦ 索命聚晶加入黑名单（配置侧，不在 jar 内）**：`focus.blacklist` 改为
+  `goetytwilight:destruction_focus, goety:killing_focus`。索命聚晶 = **`goety:killing_focus`**
+  （**五重核实**：翻译键 `item.goety.killing_focus`=索命聚晶、注册代码 `ModItems.KILLING_FOCUS`、物品模型、
+  合成配方、手册条目）；本模组把它评为 `attack` / attackScore 0 ⇒ 轮盘**基础权重 2.0**，**确实会被抽到**，
+  且该法术会对施法者**反噬 125%**。
+  ⚠️ **重要可访问性结论**：`focus.blacklist` **无法在游戏内配置界面修改** —— 本模组的 `TunerConfigScreen`
+  **顶替**了 Forge 默认的 toml 编辑器，而该界面只有 LLM API Key 与提示词两个输入框 ⇒
+  **整个 `goetytuner-common.toml` 的所有项都只能手改文件**。解析规则：英文逗号分隔、逐段 trim、**大小写敏感**
+  （`parseBlacklist`）。另：`RUNTIME_BLACKLIST`（运行期自愈拉黑）与配置黑名单是**并集** —— 配置**无法解禁**
+  一个已被运行期拉黑的聚晶。
+- 部署产物：`goetytuner-0.0.13.jar`（**1,753,132 B / md5 `AE59EBFE8CF0F2D09C16453A515CE7F5` / jar 内 102 条目**）
+  → `versions\测试\mods\`（旧 0.0.12 已删）；构建在主副本就地 `gradlew clean build` 成功
+  （50 s，仍只有原有 3 条 Forge 弃用警告）。
+  ⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`）：判断"部署的 jar 对应哪份源码"
+  要逐条目比对，别看整体 md5。另追加一条运维经验：本轮 build 前因 **Gradle 守护进程锁残留**出现过一次构建**挂起**
+  （不报错也不推进），`gradlew --stop` 清理守护进程后恢复正常（`org.gradle.daemon=false` 也不能完全避免残留的 worker/文件锁）。
+- **待验收**：本轮表现层改动（亚像素刻度、涟漪多波共存、立方体高亮/发光外壳）与**音乐自愈的真机复现路径**
+  均**尚未进游戏画面验收**（本轮只做到编译通过 + md5/条目核对）。
+
 ---
 
 ## 十、构建与运行
@@ -833,9 +952,10 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 高潮太难/太易 | `climaxWarmupMultiplier` | 0.5=前摇减半（更快施法），1.0=正常；施法窗口上限见 `maxCastWindowTicks`（当前 50） |
 | 重音推力太强/弱 | `accentKnockback*` | 0.4/0.8/1.2 = 普通/低谷/高潮；二阶段低谷已替换为铺垫，`phase2ValleyKnockbackMultiplier` 不可达 |
 | 重音手感 | `accentShakeTicks` / `accentShakeStrength` | 当前 10 tick / 2.0，调低可减轻镜头晃动 |
-| 重音特效（声波/粒子） | `accentWave` / `accentParticles` | 0.0.10 起声波 `accentWave=true`（10 环非对称径向涟漪，最高 0.794 格）、旧粒子 `accentParticles=false`；**老 toml 的 `accentParticles` 仍是 `true`，需手改**（见 §六迁移提示） |
+| **重音太密/太疏** | **`music.accentDensityDivisor`** | **0.0.13 新增**，默认 **3** = 每 3 个重音保留 1 个（数量与频率约为原来的 1/3）；**1 = 不抽稀**（回到乐谱原始的 37 个密度），9 = 最稀疏（约 1/9）。**服务端加载乐谱时统一生效** ⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变，客户端无需改动。⚠️ 配置在启动时读取、乐谱在 Boss 构造时加载 ⇒ **改完需重启游戏**，已存在的 Boss 不会重新抽稀 |
+| 重音特效（声波/粒子） | `accentWave` / `accentParticles` | 0.0.10 起声波 `accentWave=true`（10 环非对称径向涟漪，最高 0.794 格）、旧粒子 `accentParticles=false`；**老 toml 的 `accentParticles` 仍是 `true`，需手改**（见 §六迁移提示）；**0.0.13 起同一实体可同时存在多条波**（连发各成一条、层叠外扩） |
 | 动态评分变化太慢/快 | `dpsAdjustRate` / `dynamicScoreCap` | rate=修正速率，cap=偏移上限 |
-| 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单，重启后不参与抽签 |
+| 附属聚晶崩溃 | `focus.blacklist` | 逗号分隔 id 加入黑名单（逐段 trim、**大小写敏感**），重启后不参与抽签；⚠️ **只能用文本编辑器改 `goetytuner-common.toml`**（游戏内配置界面改不了，见 §六）。0.0.13 起实例 toml 已含 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）；`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
 | 附属法杖无法启仪式 | `wand_whitelist` | 填入法杖 id（未加入 `goety:wands` 标签的附属法杖） |
 | LLM 评分请求超时/失败 | `llm.apiUrl` / `llm.model` | 默认 OpenAI 端点（国际）；中国大陆环境改为 `https://api.deepseek.com/v1/chat/completions` + `deepseek-chat`；失败提示会带目标 URL 与模型名 |
 | 打得太快/被秒杀 | **`lockGraceTicks` / 档位数（`maxHealth` ÷ `lockHealthInterval`）**；`maxHitDamagePercent` / `maxDamagePerSecond`（仅作保险） | **实测结论：战斗时长主要由 `lockGraceTicks`（每档最短时长，默认 10t=0.5s）与档位数（默认 216/18 = 12 档）决定**——锁血阶梯把每次命中的有效伤害钳到一档，超出部分被丢弃，所以伤害上限不改变阶梯推进速度。`maxHitDamagePercent`（默认 0.25×216≈54，0=关闭）与 `maxDamagePerSecond`（默认 0=关闭）都只在**阶梯耗尽后**（血量 ≤18 那段）才可能起作用，主要作为防「秒杀式巨额伤害」的保险 |
