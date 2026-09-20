@@ -10,6 +10,7 @@
 package com.tiaolvshi.goetytuner.combat;
 
 import com.Polarice3.Goety.common.effects.GoetyEffects;
+import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.config.TunerCommonConfig;
 import com.tiaolvshi.goetytuner.ritual.WandUpgradeEvents;
 import net.minecraft.world.effect.MobEffect;
@@ -160,9 +161,27 @@ import net.minecraft.world.item.ItemStack;
             return;
         }
         double pct = bonusPctOf(summonWand);
-        apply(servant, GoetyEffects.BUFF.get(), buffLevel(pct));
-        apply(servant, MobEffects.REGENERATION, regenerationLevel(pct));
-        apply(servant, MobEffects.DAMAGE_RESISTANCE, resistanceLevel(pct));
+        int rawBuff = buffLevel(pct);
+        int maxLevel = TunerCommonConfig.SERVANT_BUFF_MAX_LEVEL.get();
+        int buff = Math.min(rawBuff, maxLevel);
+        int regen = regenerationLevel(pct);
+        int resistance = resistanceLevel(pct);
+
+        boolean changed = apply(servant, GoetyEffects.BUFF.get(), buff);
+        changed |= apply(servant, MobEffects.REGENERATION, regen);
+        changed |= apply(servant, MobEffects.DAMAGE_RESISTANCE, resistance);
+
+        // 【0.0.20】等级变化时打一条 INFO：等级在这里是**可查证**的 ——
+        // 因为原版只在 amplifier 1..9（等级 II..X）时才显示罗马数字，
+        // 等级 ≥11 时 HUD/物品栏里只剩「强健」两个字，看不出到底几级（用户实测踩到）。
+        if (changed) {
+            GoetyTuner.LOGGER.info(
+                    "[Tuner] Servant {} blessing from wand '{}': bonus {}% -> Buff {}{} / Regen {} / Resistance {}",
+                    servant.getUUID(), summonWand.isEmpty() ? "<none>" : summonWand.getHoverName().getString(),
+                    (int) Math.round(pct), buff,
+                    rawBuff > buff ? " (raw " + rawBuff + ", capped by servant.buffMaxLevel=" + maxLevel + ")" : "",
+                    regen, resistance);
+        }
     }
 
     /**
@@ -172,17 +191,19 @@ import net.minecraft.world.item.ItemStack;
      * 效果本来就会自然到期，而且"杖被换掉"在本模组里不可能发生
      * （召唤用杖存在仆从自己的 NBT 里、不随装备变化）。
      */
-    private static void apply(LivingEntity servant, MobEffect effect, int level) {
+    private static boolean apply(LivingEntity servant, MobEffect effect, int level) {
         if (level <= 0) {
-            return;
+            return false;
         }
         int amplifier = level - 1;
         MobEffectInstance current = servant.getEffect(effect);
-        if (current != null && current.getAmplifier() == amplifier
-                && current.getDuration() > DURATION_TICKS / 2) {
-            return; // 已经是目标档位且不会很快过期
+        boolean levelChanged = current == null || current.getAmplifier() != amplifier;
+        if (!levelChanged && current.getDuration() > DURATION_TICKS / 2) {
+            return false; // 已经是目标档位且不会很快过期
         }
         // ambient=false（正常粒子）、visible=true、showIcon=true：让玩家一眼看出"这只是被强化过的"
         servant.addEffect(new MobEffectInstance(effect, DURATION_TICKS, amplifier, false, true, true));
+        // 只有"等级真的变了"才告诉调用方去打日志；纯粹的时长续期不算变化（否则每 2 秒刷一条）
+        return levelChanged;
     }
 }

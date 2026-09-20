@@ -13,6 +13,7 @@ import com.Polarice3.Goety.api.items.magic.IWand;
 import com.Polarice3.Goety.common.blocks.entities.DarkAltarBlockEntity;
 import com.Polarice3.Goety.common.crafting.RitualRecipe;
 import com.Polarice3.Goety.common.ritual.SummonRitual;
+import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.LivingEntity;
@@ -136,6 +137,14 @@ public class TunerServantSummonRitual extends SummonRitual {
         super.initSummoned(living, level, pos, altar, player);
         if (living instanceof TunerServant servant && !wandCopy.isEmpty()) {
             servant.setSummonWand(wandCopy); // 强度依据 + 死亡掉落，都读这一份
+            // 【0.0.20】把"捕获到的是哪把杖、加成多少"打进日志：
+            // 仆从的增益等级完全由这份快照决定，日后出现"等级不对"的反馈时，
+            // 这一行能立刻区分"杖不对/快照是空的"与"等级公式不对"。
+            GoetyTuner.LOGGER.info("[Tuner] Servant summon: captured wand '{}' (witchcraft=+{}%, magic=+{}%) -> {}",
+                    wandCopy.getHoverName().getString(),
+                    (int) Math.round(WandUpgradeEvents.witchcraftBonus(wandCopy) * 100.0D),
+                    (int) Math.round(WandUpgradeEvents.magicDamageBonus(wandCopy) * 100.0D),
+                    servant.getUUID());
             wandCopy = ItemStack.EMPTY;
         }
     }

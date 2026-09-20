@@ -143,6 +143,19 @@ public class TunerCommonConfig {
      */
     public static final ForgeConfigSpec.IntValue BUFF_SPELL_POWER_PER_LEVEL;
 
+    /**
+     * 【0.0.20】仆从「强健」效果的**等级上限**（Int，默认 10）。
+     * 实现在 {@link com.tiaolvshi.goetytuner.combat.ServantWandBlessing}。
+     * ⚠️ 默认 10 是**显示上限**，不是平衡上限 —— 原因见该键的配置注释。
+     */
+    public static final ForgeConfigSpec.IntValue SERVANT_BUFF_MAX_LEVEL;
+
+    /** 【0.0.20】仆从**单次**伤害上限（占最大生命的比例，默认 0.15）。 */
+    public static final ForgeConfigSpec.DoubleValue SERVANT_MAX_HIT_DAMAGE_PERCENT;
+
+    /** 【0.0.20】仆从**每秒**伤害上限（占最大生命的比例，默认 0.50）。 */
+    public static final ForgeConfigSpec.DoubleValue SERVANT_MAX_DAMAGE_PER_SECOND;
+
     // ---- LLM 自动分类 ----
     public static final ForgeConfigSpec.ConfigValue<String> LLM_API_URL;
     public static final ForgeConfigSpec.ConfigValue<String> LLM_MODEL;
@@ -441,6 +454,29 @@ public class TunerCommonConfig {
                 + "⚠️ 只对**仪式召唤**（中心放带调律加成的法杖）出来的仆从生效；"
                 + "刷怪蛋 / /summon 出来的仆从没有召唤用杖，本来就没有增益。默认 true")
                 .define("wandBlessingEnabled", true);
+        SERVANT_BUFF_MAX_LEVEL = b.comment("【0.0.20】召唤用杖加成换来的「强健」**等级上限**。默认 10。",
+                "· 为什么默认是 10：**这是原版的显示限制，不是平衡限制** ——",
+                "  1.20.1 客户端 EffectRenderingInventoryScreen#getEffectName 的字节码是",
+                "  `if (amplifier >= 1 && amplifier <= 9) 才附罗马数字`，",
+                "  ⇒ **等级 ≥ 11 时原版连数字都不显示，HUD/物品栏里只剩「强健」两个字**。",
+                "  用户实测 +1000% 巫法加成（按公式 = 50 级）时看到的就是这个现象。",
+                "  钉在 10 之后，任何时候都能看到 `强健 X`，等级一眼可读。",
+                "· 调大它（1~255）会按公式给更高的真实等级，但**超过 10 就看不见数字了**；",
+                "  真实等级（含被截断前的原始值）永远写进日志，见 `[Tuner] Servant ... blessing`。")
+                .defineInRange("buffMaxLevel", 10, 1, 255);
+        SERVANT_MAX_HIT_DAMAGE_PERCENT = b.comment("【0.0.20】调律师仆从的**单次伤害上限**（占最大生命的比例）。",
+                "· 与本体**各自独立**（本体用 [boss].maxHitDamagePercent=0.25、"
+                + "且 [boss].maxDamagePerSecond 默认 0=关闭）：",
+                "  用户要求「加强仆从的限伤机制」，所以这里给了**更狠**的一组默认值。",
+                "· 默认 0.15 ⇒ 216 血时单次最多掉 32 点（本体是 54 点）。",
+                "· 0 = 关闭限伤。")
+                .defineInRange("maxHitDamagePercent", 0.15D, 0.0D, 1.0D);
+        SERVANT_MAX_DAMAGE_PER_SECOND = b.comment("【0.0.20】调律师仆从的**每秒伤害上限**（占最大生命的比例）。",
+                "· 与单次限伤互补：单次限伤管「一击爆发」，本键管「高频多段/多来源的持续爆发」。",
+                "· 默认 0.50 ⇒ 216 血时每秒最多掉 108 点 ⇒ **无论 DPS 多高，至少 2 秒才能打死它**。",
+                "  （本体默认 0 = 关闭，所以仆从现在比本体更抗打。）",
+                "· 0 = 关闭限DPS。⚠️ 窗口是**滑动 1 秒**；预算耗尽的那次伤害被**整段吸收**。")
+                .defineInRange("maxDamagePerSecond", 0.50D, 0.0D, 10.0D);
         b.pop();
 
         b.push("llm");

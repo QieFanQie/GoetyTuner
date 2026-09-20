@@ -1,6 +1,6 @@
 # Goety Tuner（调律师）技术摘要
 
-> **0.0.20（第 59 轮 · 当前工作版本）**：用户提了**一条回归反馈 + 三条新功能**，本轮全部处理。新增 **4 个类**（`.java` **55 → 59** = `combat/ServantWandBlessing`、`ritual/TunerServantSummonRitual`）+ **1 个仪式配方 json**；改 **6 个既有 Java 文件** + **2 个 lang**（键数 **34 → 43**，**+9 / −0**）；**配置 71 → 73 项**（`[servant]` 段 **3 → 4**，新增 `wandBlessingEnabled`；段数仍 **11**）；jar 条目 **117 → 122**（新增 3、**无删除**）；协议仍 **2.1**。**① 【回归】左右键的聚晶指令提示被我误删了，已回补** —— 第 58 轮用户说"不要冗余提示"，我把 `TunerServantInteractions` 里**所有**动作栏提示都删了，连**操作结果反馈**一起删掉；用户指出"这个提示是需要的" ⇒ 现在明确分开：**要有**"一次主动操作产生了什么状态变化"（`不释放：X` / `已取消不释放：X` / `优先释放：X` / `已取消优先释放：X` / 批量版 / `这不是你的调律师仆从`，共 9 个新 lang 键），**不要**物品介绍与刷怪蛋放置提示（那部分没有回退）。**② 仆从的仪式召唤** —— **每秒 10 能量、10 秒、魔法仪式**：`soulCost: 10` + `duration: 10`（反编译 `DarkAltarBlockEntity` 实证**两者都是"每秒"口径**：灵魂扣除与 `currentTime++` 同在 `gameTime % 20 == 0` 分支里），材料 **紫水晶碎片 ×4 / 红石 / 钻石 / 金锭 / 青金石** 共 8 个基座，**中心放一把带"调律加成"的法杖**才能激活（`activation_item` 表达不了 NBT ⇒ 完全重写 `identify`；两种调律加成**任一 > 0** 即认），召唤出的仆从 **tame=true 认主**，法杖被祭坛消耗但快照留给仆从。**③ 杖的加成决定仆从强度** —— `combat/ServantWandBlessing` 按 **`调律·巫法加成`** 的 `pct = 加成 × 100` 给持续性增益：**强健**（`goety:buff`）`1 + floor((pct−10)/20)` 级、**生命恢复**（>20 Ⅰ / >60 Ⅱ）、**抗性提升**（>80 Ⅰ / >100 Ⅱ，封顶）。⚠️ 0.0.20 按用户反馈**把判定来源从「魔法伤害加成」改成「巫法加成」**（前者单次默认 +40% —— 打一次就几乎满配；后者 +10% —— 要反复击杀才爬得上去），**阈值一个都没动**；做法是**低频自愈式刷新**（1 秒一次、每次挂 3 秒，数值未变则跳过）。⚠️ **一个必须告知用户的坑**：`goety:buff`（强健）实际**只加 `ATTACK_DAMAGE`**（Goety 原文："每级增加 1 点的近战攻击伤害"），而本模组的仆从**刻意没有近战手段** ⇒ 强健对它的战斗力**几乎无影响**（忠实照搬了规格，但"越强"的直觉不成立，可选修法见 §七.14）。**④ 仆从死亡掉落召唤用杖**（**原样返回**：保留原有加成、不再额外升级 —— 与 Boss"快照 + 叠加升级"刻意对照）。**⑤ 聚晶包 / 多晶大袋批量指令** —— 手持袋子左键 = 袋内**全部**设为不释放、右键 = 全部设为优先；**全部已是该状态 ⇒ 整体清除**（与单晶的"再按一次取消"语义一致）；用通用 `ForgeCapabilities.ITEM_HANDLER` 读内容物（聚晶包 11 格 / 多晶大袋 21 格，字节码实证），非聚晶物品跳过、同 id 去重。**⑥ 顺带的做法收敛**：`WandUpgradeEvents#magicBonusOf` 提升为 `public static magicDamageBonus`（"法杖加成是多少"的唯一实现，现有三个消费方）；`TunerServant` 的互斥语义收敛到 `setDisabledExclusive` / `setPriorityExclusive` 两个私有方法（单个与批量共用）。**⑦ 【追加·用户要求】「强健」等级 → 法术强度**（`combat/BuffSpellPower` + 新增 `[casting] buffSpellPowerPerLevel`，**Int 默认 1**）：作用域**只限本模组的调律师一族**（本体 + 仆从，各按自身强健等级）。⚠️ **本轮最重要的实证**：`goety:spell_potency` 注册基础值是 **0.0**、读取是 `(int)` 截断、法术当**平铺点数**用 ⇒ **任何百分比 modifier（`MULTIPLY_TOTAL`）在该属性上恒等于 0**；因此本类用 **`ADDITION`**、比例必须是**整数点**（0.1 会被截成 0）。⚠️ 顺带查出**两处早已存在的死代码**（玩家的「调律:巫法加成」、Boss 二阶段的「力量等级×0.1」，**都是 MULTIPLY_TOTAL ⇒ 从未生效**），本轮**只报告未改**（修法需重新定义数值语义，属平衡决策），详见 §七.17。**⑧ 【追加】修掉两处「百分比法术加成从未生效」的死代码**（用户："保证实际生效和文字描述相同"）—— 新增 `combat/SpellDamageBonus`（百分比法术伤害的**唯一实现**，走 `LivingDamageEvent` ×(1+加成)），删除 `WandUpgradeEvents#refreshWitchcraftModifier` + 它的两个监听器、以及 `TunerBoss#tickPhase2Buffs` 里的 `SPELL_POTENCY` modifier；Boss 改为新增 `phase2SpellDamageBonus()`（读自身力量效果等级）。⚠️ 同时修掉**判定覆盖面**：原判定只认 `forge:is_magic`（Goety 39 个伤害类型里只有 8 个），Boss 的腐化光束/火球/hellfire 全都不在内 ⇒ 现在并上「`goety` 命名空间」判定。⚠️ 顺带不再放大自伤（索命反噬不再被自己的加成放大）。⚠️ **平衡影响**：Boss 二阶段法术伤害从"实际 +0%"变成 **+20%/+50%**，玩家巫法加成从 0 变成真 **+10%**（都是文字早就承诺过的）。⚠️ **本轮同样只做到编译 + 字节码 / 资源核对，未进游戏实测**（见 §3.21 与 §七.13）。
+> **0.0.20（第 59 轮 · 当前工作版本）**：用户提了**一条回归反馈 + 三条新功能**，本轮全部处理。新增 **4 个类**（`.java` **55 → 59** = `combat/ServantWandBlessing`、`ritual/TunerServantSummonRitual`）+ **1 个仪式配方 json**；改 **6 个既有 Java 文件** + **2 个 lang**（键数 **34 → 43**，**+9 / −0**）；**配置 71 → 76 项**（`[servant]` 段 **3 → 7**，新增 `wandBlessingEnabled`；段数仍 **11**）；jar 条目 **117 → 122**（新增 3、**无删除**）；协议仍 **2.1**。**① 【回归】左右键的聚晶指令提示被我误删了，已回补** —— 第 58 轮用户说"不要冗余提示"，我把 `TunerServantInteractions` 里**所有**动作栏提示都删了，连**操作结果反馈**一起删掉；用户指出"这个提示是需要的" ⇒ 现在明确分开：**要有**"一次主动操作产生了什么状态变化"（`不释放：X` / `已取消不释放：X` / `优先释放：X` / `已取消优先释放：X` / 批量版 / `这不是你的调律师仆从`，共 9 个新 lang 键），**不要**物品介绍与刷怪蛋放置提示（那部分没有回退）。**② 仆从的仪式召唤** —— **每秒 10 能量、10 秒、魔法仪式**：`soulCost: 10` + `duration: 10`（反编译 `DarkAltarBlockEntity` 实证**两者都是"每秒"口径**：灵魂扣除与 `currentTime++` 同在 `gameTime % 20 == 0` 分支里），材料 **紫水晶碎片 ×4 / 红石 / 钻石 / 金锭 / 青金石** 共 8 个基座，**中心放一把带"调律加成"的法杖**才能激活（`activation_item` 表达不了 NBT ⇒ 完全重写 `identify`；两种调律加成**任一 > 0** 即认），召唤出的仆从 **tame=true 认主**，法杖被祭坛消耗但快照留给仆从。**③ 杖的加成决定仆从强度** —— `combat/ServantWandBlessing` 按 **`调律·巫法加成`** 的 `pct = 加成 × 100` 给持续性增益：**强健**（`goety:buff`）`1 + floor((pct−10)/20)` 级、**生命恢复**（>20 Ⅰ / >60 Ⅱ）、**抗性提升**（>80 Ⅰ / >100 Ⅱ，封顶）。⚠️ 0.0.20 按用户反馈**把判定来源从「魔法伤害加成」改成「巫法加成」**（前者单次默认 +40% —— 打一次就几乎满配；后者 +10% —— 要反复击杀才爬得上去），**阈值一个都没动**；做法是**低频自愈式刷新**（1 秒一次、每次挂 3 秒，数值未变则跳过）。⚠️ **一个必须告知用户的坑**：`goety:buff`（强健）实际**只加 `ATTACK_DAMAGE`**（Goety 原文："每级增加 1 点的近战攻击伤害"），而本模组的仆从**刻意没有近战手段** ⇒ 强健对它的战斗力**几乎无影响**（忠实照搬了规格，但"越强"的直觉不成立，可选修法见 §七.14）。**④ 仆从死亡掉落召唤用杖**（**原样返回**：保留原有加成、不再额外升级 —— 与 Boss"快照 + 叠加升级"刻意对照）。**⑤ 聚晶包 / 多晶大袋批量指令** —— 手持袋子左键 = 袋内**全部**设为不释放、右键 = 全部设为优先；**全部已是该状态 ⇒ 整体清除**（与单晶的"再按一次取消"语义一致）；用通用 `ForgeCapabilities.ITEM_HANDLER` 读内容物（聚晶包 11 格 / 多晶大袋 21 格，字节码实证），非聚晶物品跳过、同 id 去重。**⑥ 顺带的做法收敛**：`WandUpgradeEvents#magicBonusOf` 提升为 `public static magicDamageBonus`（"法杖加成是多少"的唯一实现，现有三个消费方）；`TunerServant` 的互斥语义收敛到 `setDisabledExclusive` / `setPriorityExclusive` 两个私有方法（单个与批量共用）。**⑦ 【追加·用户要求】「强健」等级 → 法术强度**（`combat/BuffSpellPower` + 新增 `[casting] buffSpellPowerPerLevel`，**Int 默认 1**）：作用域**只限本模组的调律师一族**（本体 + 仆从，各按自身强健等级）。⚠️ **本轮最重要的实证**：`goety:spell_potency` 注册基础值是 **0.0**、读取是 `(int)` 截断、法术当**平铺点数**用 ⇒ **任何百分比 modifier（`MULTIPLY_TOTAL`）在该属性上恒等于 0**；因此本类用 **`ADDITION`**、比例必须是**整数点**（0.1 会被截成 0）。⚠️ 顺带查出**两处早已存在的死代码**（玩家的「调律:巫法加成」、Boss 二阶段的「力量等级×0.1」，**都是 MULTIPLY_TOTAL ⇒ 从未生效**），本轮**只报告未改**（修法需重新定义数值语义，属平衡决策），详见 §七.17。**⑧ 【追加】修掉两处「百分比法术加成从未生效」的死代码**（用户："保证实际生效和文字描述相同"）—— 新增 `combat/SpellDamageBonus`（百分比法术伤害的**唯一实现**，走 `LivingDamageEvent` ×(1+加成)），删除 `WandUpgradeEvents#refreshWitchcraftModifier` + 它的两个监听器、以及 `TunerBoss#tickPhase2Buffs` 里的 `SPELL_POTENCY` modifier；Boss 改为新增 `phase2SpellDamageBonus()`（读自身力量效果等级）。⚠️ 同时修掉**判定覆盖面**：原判定只认 `forge:is_magic`（Goety 39 个伤害类型里只有 8 个），Boss 的腐化光束/火球/hellfire 全都不在内 ⇒ 现在并上「`goety` 命名空间」判定。⚠️ 顺带不再放大自伤（索命反噬不再被自己的加成放大）。⚠️ **平衡影响**：Boss 二阶段法术伤害从"实际 +0%"变成 **+20%/+50%**，玩家巫法加成从 0 变成真 **+10%**（都是文字早就承诺过的）。⚠️ **本轮同样只做到编译 + 字节码 / 资源核对，未进游戏实测**（见 §3.21 与 §七.13）。
 
 > **0.0.19 修补（第 58 轮）**：用户对第 57 轮交付**又提三条反馈，本轮全部处理**（**不升版本号**）。改 **5 个既有 Java 文件**（`entity/ai/CastChannel`、`entity/TunerServant`、`entity/TunerServantInteractions`、`init/TunerServantSpawnEggItem`、`focus/FocusPoolManager`）+ **2 个 lang**（键数 **43 → 34**，**−9 / +0**）；**没有新增或删除任何类与资源** ⇒ jar 条目 **仍 117**；**配置项数仍 71 / 11 段（一个键都没动）**；协议仍 **2.1**。**① 提示精简到一行** —— 只留 `tooltip.goetytuner.servant.spawn_egg`；刷怪蛋**不再有放置提示**（`useOn` 覆写已删）、`appendHoverText` **不再调 `super`**；仆从交互的 `wild_hint` / `not_owner_hint` **两条提示已删**（⚠️ **行为不变**：被拒绝的交互**仍然不吞掉**，只是**不再弹字**，拒绝原因改打 **INFO 日志**）⇒ 规律：**诊断信息走日志、不走动作栏**。**② 修「不释放的调整功能似乎完全不起效了」** —— 两条可能的病根都堵掉：**（a）野生仆从被拒（最可能的真凶）** —— 第 57 轮把 `isOwner` 收紧成"只认主人"，而刷怪蛋**默认直接放 = 野生** ⇒ **用户按默认方式放的仆从有一条算一条全被 `canCommand` 拒绝**；现在 **`owner == null`（野生）也放行**，**只有别人家的仆从**才拒绝。**（b）潜行劫持左键** —— 第 57 轮自己加的"**潜行 + 左键 = 清空全部指令**"会在潜行时抢走左键（得到的是"清空"、看起来就是"左键切不动"）⇒ 该功能连同 `clearFocusCommands` / `disabledCount` / `priorityCount` **一并删除** ⇒ 规律：**不要给同一个输入加"隐藏的组合键"**。**③ 修「箭雨聚晶几乎没有持续」** —— **识别没问题**（`ArrowRainSpell extends EverChargeSpell`，本就在闭包内），**真因是通道预算把蓄力算进了总时长**：`ArrowRainSpell.castUp` 解算默认 **20 tick**，而第 57 轮的预算正是 `channelMaxTicks` 默认 **20** ⇒ **蓄力吃光预算、一发即收**（任何 `castUp` ≥ 20 的长按类聚晶都如此）。**修法 = 两段预算**：`蓄力 = clamp(round(castUp × 倍率), 0, casting.maxCastWindowTicks)` + `持续 = max(5, casting.channelMaxTicks)`；并**删掉"按 `shotsNumber` 提前收手"**（`DarkWand` 只用它记发数、**从不据此停火**）。**实测口径**：腐化光束 **20 tick**、箭雨 **40 tick**。⚠️ **平衡风险照旧**：腐化光束每 tick 造成伤害，`channelMaxTicks` 调到 100 以上**基本等于必杀**。⚠️ **本轮同样只做到编译 + 字节码 / 资源核对，未进游戏实测**（见 §3.20）。
 
@@ -1868,7 +1868,7 @@ dark_wand 的**完全等价替身**：凡是 dark_wand 定制过的 `IWand` 成�
 改 **6 个既有 Java 文件**（`entity/TunerServant`、`entity/TunerServantInteractions`、
 `ritual/ModRituals`、`ritual/WandUpgradeEvents`、`config/TunerCommonConfig`、`gradle.properties`）
 + **2 个 lang**（键数 **34 → 43**，即 **+9 / −0**）；
-**配置 71 → 73 项**（`[servant]` 段 **3 → 4**，新增 `wandBlessingEnabled`；段数仍 **11**）；
+**配置 71 → 76 项**（`[servant]` 段 **3 → 7**，新增 `wandBlessingEnabled`；段数仍 **11**）；
 jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.json`，**无删除**）；
 网络协议仍 **2.1**（未动）。
 
@@ -2161,6 +2161,57 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   （左键顺手清"优先"、右键顺手清"不释放"）——
   避免"批量一套规则、单点另一套"。
 
+**（5b）【追加·用户实测反馈】「强健」等级其实是对的 —— 是原版不显示**
+
+用户反馈："似乎并没有正确地给予强健等级，+1000% 巫法加成的法杖对应的仆从，也只显示「强健」。"
+
+- **结论：等级算对了，是原版把数字藏起来了。** 1.20.1 客户端
+  `EffectRenderingInventoryScreen#getEffectName` 的字节码是：
+  ```java
+  MutableComponent name = instance.getEffect().getDisplayName().copy();
+  if (instance.getAmplifier() >= 1 && instance.getAmplifier() <= 9) {      // ← 关键
+      name.append(SPACE).append(Component.translatable("enchantment.level." + (amplifier + 1)));
+  }
+  return name;
+  ```
+  即 **只有 amplifier 1~9（等级 II~X）才附罗马数字**：
+  - 等级 1（amplifier 0）⇒ 只有「强健」；
+  - **等级 ≥ 11（amplifier ≥ 10）⇒ 也只有「强健」**（连数字都不加）。
+  另核实原版语言文件里 `enchantment.level.*` **只有 1~10 十个键**。
+  ⇒ +1000% 巫法按公式 = `1 + floor((1000−10)/20)` = **50 级**（amplifier 49 落在"隐藏"区间）
+  ⇒ **用户看到"只有强健"恰好说明等级很高，而不是没生效。**
+- **修法（让等级可见）**：新增配置 **`[servant] buffMaxLevel`（Int，默认 10）**
+  ⇒ 实际挂的等级 = `min(公式值, buffMaxLevel)`，默认钉在 **10**，这样**任何情况下都能看到 `强健 X`**。
+  ⚠️ 这是**显示上限**而不是平衡上限：调大它（1~255）会按公式给更高真实等级，
+  但**超过 10 就又看不见数字了**（原版限制，改不了）。
+- **诊断日志（让等级可查证）**：
+  - 等级**变化**时打一条 INFO：
+    `[Tuner] Servant <uuid> blessing from wand '<名字>': bonus <X>% -> Buff <n> (raw <m>, capped by servant.buffMaxLevel=<cap>) / Regen <r> / Resistance <s>`
+    —— 只有"等级真的变了"才打（纯粹的时长续期不算变化，否则每 2 秒一条）。
+  - **仪式召唤时**额外打一条：
+    `[Tuner] Servant summon: captured wand '<名字>' (witchcraft=+X%, magic=+Y%) -> <uuid>`
+    —— 日后出现"等级不对"的反馈时，这一行能立刻区分
+    **"杖不对 / 快照是空的"** 与 **"等级公式不对"**（本轮用户报告的最大不确定点）。
+
+**（5c）【追加·用户要求】加强仆从的限伤机制**
+
+用户："加强仆从的限伤机制。"
+
+- **改动前的实际状况**（本轮才发现是个漏洞）：`TunerServant#actuallyHurt` 读的是
+  **`[boss]` 段的两个键** —— `maxHitDamagePercent`（默认 0.25）与
+  `maxDamagePerSecond`（**默认 0 = 关闭**）⇒ 仆从只有"单次 ≤ 25% 最大生命"（216 血 = 54 点）
+  这一道限，**没有任何每秒上限** ⇒ 高爆发几下就能打死。
+- **改动**：`[servant]` 段新增**仆从自己的**两个键（与本体**各自独立**），并给出更狠的默认值：
+
+  | 键 | 默认 | 含义（216 血时） | 本体对照 |
+  |---|---|---|---|
+  | `servant.maxHitDamagePercent` | **0.15** | 单次最多掉 **32** 点 | `[boss]` 是 0.25 = 54 点 |
+  | `servant.maxDamagePerSecond` | **0.50** | 每秒最多掉 **108** 点 ⇒ 至少 2 秒才能打死 | `[boss]` 默认 0 = 关闭 |
+
+  `TunerServant#actuallyHurt` 改为读这两个键；**0 = 关闭**对应项。
+  ⚠️ 窗口仍是**滑动 1 秒**；预算耗尽时那一次伤害被**整段吸收**（`DamageThrottle` 的既有语义，未改）。
+  ⚠️ `/kill` 之类的 `BYPASSES_INVULNERABILITY` 伤害**照旧绕过限伤**（有意保留：管理员应当能杀）。
+
 **（6）本轮做的"唯一实现"抽取**
 
 - `WandUpgradeEvents#magicBonusOf`（`private`）→ **`public static magicDamageBonus(ItemStack)`**：
@@ -2192,12 +2243,12 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   - `WandUpgradeEvents` 新增 `public static double magicDamageBonus(ItemStack)` 与
     `private static void dropServantSummonWand(LivingDropsEvent, TunerServant)`。
 - **配置 / 资源核对**：`define` 调用 **72** 处（71 → 72）、section **11** 个（未变，
-  `[servant]` 段 **3 → 4** 项）、两份 lang **各 43 键**且 JSON 合法、
+  `[servant]` 段 **3 → 7** 项）、两份 lang **各 43 键**且 JSON 合法、
   jar 内 `mods.toml` 版本 **0.0.20**、配方 JSON 合法且
   **8 个基座物品 = 紫水晶碎片 ×4 / 红石 / 钻石 / 金锭 / 青金石**、
   `soulCost=10`、`duration=10`、`craftType=magic`、`ritual_type=goetytuner:tuner_servant_summon`。
 - **部署核对**：构建产物与部署 jar **逐字节相同**
-  （1,796,128 B / md5 `29F27C0C0A4BE3963497F449FB15F039` / 122 条目）。
+  （1,798,454 B / md5 `1A90977DEFF0D3192342EB4C4BADD21C` / 122 条目）。
   同时**删除了旧的 `goetytuner-0.0.19.jar`** —— 同名版本换了版本号，
   两个 jar 并存会被 Forge 判为**重复 mod** 而启动失败。
 - ⚠️ **四条内容的运行时表现全部未实测** —— 见 §七.13。
@@ -2316,7 +2367,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
 | 0.0.19 | `goetytuner-0.0.19.jar` | 1,785,988 B | `77DAAFB0A5B77907C3D7A22461731FB8` | 已删除（被 0.0.20 取代；**不能与 0.0.20 并存**，同 mod id 会让 Forge 报重复 mod） |
-| 0.0.20 | `goetytuner-0.0.20.jar` | 1,796,128 B | `29F27C0C0A4BE3963497F449FB15F039` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+| 0.0.20 | `goetytuner-0.0.20.jar` | 1,798,454 B | `1A90977DEFF0D3192342EB4C4BADD21C` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
 
 > 本轮（0.0.19）jar 内共 **117 条目**（0.0.18 为 112）：新增 5 条 = 4 个新 class
 > （`DamageThrottle` / `TunerDamageRules` / `TunerWand` / `TunerServantSpawnEggItem`）
@@ -2550,7 +2601,15 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
       或调 `wand_upgrade.wandWitchcraftBonus`（改完需重启）；
     - ⚠️ **必须知道的坑（见已知边界 15）**：**强健（`goety:buff`）只加近战攻击伤害，而仆从没有近战手段**
       ⇒ 它在**战斗力上几乎不产生差异**（HUD / 属性面板会显示）。
-      若你要的是"真的更强"，告诉我，我把强健等级同时换算成**法术强度**（`ModAttributes.SPELL_POTENCY`）。
+       ⇒ 它本身**不直接产生战斗力差异**；真正让仆从变强的是下面这两条（0.0.20 都已落地）：
+    - ⚠️ **「强健」等级怎么读**（§3.21(5b)）：原版**只在等级 II~X 显示罗马数字** ——
+      **等级 1 与等级 ≥11 都只显示「强健」**；本模组已把等级上限默认钉在 10（`servant.buffMaxLevel`）
+      ⇒ 正常情况下应当看到 `强健 X` 这种形式；
+      **等级的真实值看日志**：`[Tuner] Servant ... blessing from wand '<名>': bonus <X>% -> Buff <n> ...`，
+      召唤时还应有一行 `[Tuner] Servant summon: captured wand '<名>' (witchcraft=+X%, magic=+Y%)`；
+    - ⚠️ **仆从限伤（§3.21(5c)）**：216 血时**单次最多掉 32 点、每秒最多掉 108 点**
+      ⇒ 用高爆发武器打它应当明显"打不动"（需要至少 2 秒才打死）；
+      ⚠️ `/kill` 仍然能直接杀死它（`BYPASSES_INVULNERABILITY` 有意绕过限伤）。
     - ⚠️ 生命恢复 / 抗性提升是**真生效**的，可以拿它挨打对比（尤其抗性提升 Ⅱ 的减伤很明显）；
    - ⚠️ **顺带验两处刚修好的百分比**（§3.21(4c)）：玩家手持带「调律:巫法加成」的杖打同一目标，
      伤害应当**确实高 10%**（`/attribute` 看 `spell_potency` 仍是 0 —— 那是对的，百分比走伤害事件）；
@@ -2659,7 +2718,20 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    - ⚠️ 反过来说：**仆从活着的时候那把杖不在你手上**（不是"杖还在 + 白得一只仆从"）。
      若将来想让"杖留在玩家手里"（仆从不消耗它），必须改 `TunerServantSummonRitual#finish`
      去阻止父类的 `shrink` —— 那会改变平衡，**需要用户明确要求**。
-17. **【0.0.20 查出并已修复·两处死代码：法术强度不能用百分比】**（⚠️ 起初**只报告**，
+18. **【0.0.20 查出·⚠️ 原版只在 amplifier 1~9 时显示效果等级】**
+   即 **等级 1 与等级 ≥11 都只显示效果名、看不到数字**（1.20.1
+   `EffectRenderingInventoryScreen#getEffectName` 字节码：
+   `if (amplifier >= 1 && amplifier <= 9) 才 append enchantment.level.<n>`；
+   原版语言文件里 `enchantment.level.*` 只有 1~10 十个键）。
+   **⇒ 教训：不要拿"效果等级数字"当作玩家可见的反馈通道** ——
+   设计上一旦可能超过 X 级，玩家就会以为"没生效"（本轮用户实测正是如此：
+   +1000% 巫法 = 50 级，客户端只显示「强健」）。
+   **本模组的处理**：`servant.buffMaxLevel` 默认钉在 10（可见范围内）+
+   等级变化时写 INFO 日志（真实等级、原始等级、杖名全在里面）。
+   若将来还需要更高的真实等级，正确做法是**另给一个可见的载体**
+   （动作栏提示 / 属性面板 / 自定义 HUD），而不是依赖原版的效果名。
+
+   17. **【0.0.20 查出并已修复·两处死代码：法术强度不能用百分比】**（⚠️ 起初**只报告**，
      用户随后要求"修一下这两个问题、保证实际生效和文字描述相同" ⇒ **同轮已修**，见 §3.21(4c)）
      ⚠️ **历史记录（修复前的状态）**：
    实证见 §3.21(4b)：`goety:spell_potency` **基础值 0.0**、读取是 `(int)` 截断、

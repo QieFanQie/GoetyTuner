@@ -282,12 +282,16 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
     @Override
     protected void actuallyHurt(DamageSource source, float amount) {
         if (!source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
+            // 【0.0.20】改用**仆从自己的**限伤配置（用户要求"加强仆从的限伤机制"）。
+            // 0.0.19 时这里读的是 [boss] 的两个键（限伤 25%、限DPS 关闭）⇒ 仆从照样会被
+            // 高爆发几下打死。现在 [servant] 有独立且更狠的一组默认值：
+            // 单次 ≤ 15% 最大生命、每秒 ≤ 50% 最大生命 ⇒ 无论 DPS 多高至少 2 秒才能打死。
             float allowed = damageThrottle.apply(
                     this.level().getGameTime(),
                     amount,
                     this.getMaxHealth(),
-                    TunerCommonConfig.MAX_HIT_DAMAGE_PERCENT.get(),
-                    TunerCommonConfig.MAX_DAMAGE_PER_SECOND.get());
+                    TunerCommonConfig.SERVANT_MAX_HIT_DAMAGE_PERCENT.get(),
+                    TunerCommonConfig.SERVANT_MAX_DAMAGE_PER_SECOND.get());
             if (allowed < 0.0F) {
                 return; // 每秒预算耗尽：本次伤害被完全吸收
             }
