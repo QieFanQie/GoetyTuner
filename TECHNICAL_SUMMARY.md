@@ -1,14 +1,16 @@
 # Goety Tuner（调律师）技术摘要
 
-> 当前工作版本：**0.0.15**。本体贴图精修，保持原有紫黑像素风与头部；详见 [精修记录](art/REFINEMENT.md)。下文旧版本说明保留为历史记录。
+> 当前工作版本：**0.0.16**。「逐渐学习」：给动态评分加一个随**该调律师个体**施法次数爬升的权重系数，开局由**初始评分**主导、随实战逐次交棒给**动态反馈**；详见下文 §3.16。下文旧版本说明保留为历史记录。
 
-> **0.0.15 发布（第 53 轮）**：**只有贴图精修 + 版本号 + 文档，零 Java 改动、无新增/删除资源、配置项数不变（仍 63 项 / 10 段）**。精修 `src/main/resources/assets/goetytuner/textures/entity/tuner.png`（64×64 RGBA，2520 → **2676 B**）：保留紫黑礼服 / 紫色袖口裤靴 / 浅色领巾 / 青色胸饰，精修**翻领边缘、衣袖明暗、袖口细边、裤缝、靴口层次**；原稿由 imagegen 生成，再**按最近邻采样重新装配回原有 UV**（生成图未严格保持矩形位置，故重新测量图块）。**已独立核验（以 0.0.14 为基准逐像素差分，不依赖其自带脚本）**：头部区 **y0..15 全宽 64 列 0 个像素差异**、全图 **alpha 蒙版完全一致**（未增删不透明像素）、身体区改动 **1247 像素**、6 个主要 UV 面无透明空洞。制作过程入库：`art/REFINEMENT.md`（报告 + 最终提示词）、`art/assemble-refinement.ps1`（可复现装配）、`art/body-refined-source.png`（原稿）、`art/tuner-before-refinement.png`（精修前备份）、更新后的 `art/preview.png`。⚠️ **未做游戏内画面验收**——观感仍待人类 / 能读图的模型确认；`art/preview.png` 是**平面正背面拼接图，不是游戏截图**。部署：`goetytuner-0.0.15.jar`（**1,755,456 B / md5 `1865ECF4EB22989319FD746806320776` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.14 已删）。
+> **0.0.16 发布（第 54 轮）**：「逐渐学习」——给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数爬升的权重系数，开局用低权重让**初始评分**（配置 / LLM 分类）主导，随实战逐次把话语权交棒给**动态反馈**。改 **3 个 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，无新增/删除类与资源）；**新增 3 个配置键** ⇒ 配置 **63 → 66 项**（`scoring` 段 **3 → 6**，其余段**未变**，section 数仍 **10**）。① **`FocusEntry.rouletteWeight(...)` 新增第 4 参数 `dynamicScale`**：权重由 `|静态评分 + 动态偏移| + 保底基数` 改为 `|静态评分 + 动态偏移 × dynamicScale| + 保底基数` —— **只缩动态部分，静态评分（初始分类）完全不受影响**；攻击类与召唤类两条公式都改（召唤类是生存分 / 输出分**两处**偏移各乘一次）。② **`FocusPoolManager` 新增每实例学习状态**：`castCount`（该个体施法次数；存在**实例字段而非 static** —— `createFightPools()` 每只 Boss 各建一份、`FocusEntry` 也是实例级复制 ⇒ 学习进度**天然是个体私有**的，与动态偏移生命周期一致）、`noteCast()`（由 `TunerBoss.onCastStart` 每次成功施法调用，按 `w = start + (max − start) × min(1, castCount / ramp)` **线性**重算，**每跨 10% 里程碑打一条 INFO** `[Tuner] Learning weight ...`）、`learningWeight()` / `castCount()` getter；`draw()` 把系数作为**第 4 实参**喂给 `rouletteWeight`（**已用 `javap` 验证调用链**：偏移 178 `learningWeight()` → 局部变量 14 → 偏移 234 `dload 14` → 偏移 236 `invokevirtual rouletteWeight:(D[DZD)D`）。**`drawUniform()`（防御 / 其他类）本来就不走评分，不受影响**。③ `entity/TunerBoss.onCastStart` 里调 `pools.noteCast()`（**只统计"用聚晶施法"的前摇起手**；瞬发 / 重音不经过该回调，故**不计入**）。④ **新增 3 个配置键**（`scoring` 段）：`learningWeightStart`（默认 **0.15**，0~1）、`learningWeightMax`（默认 **1.0**，0~2）、`learningWeightRampCasts`（默认 **60**，1~1000）。**默认曲线**：施法 0 次→**0.150**、10→0.292、20→0.433、30→0.575、40→0.717、50→0.858、60→**1.000**（之后封顶）⇒ 开局由**初始分类**主导、随实战逐次交棒给**动态反馈**。⚠️ **`FocusEntry.getEffectiveAttackScore()` / `getEffectiveSurvivalScore()` 现为"未缩权的"视角**（原先正是轮盘权重的输入），**保留作诊断用、不再被抽取路径调用**（**未删除**）。⚠️ **尚未进游戏实测手感**（本轮只做到编译通过 + `javap` 字节码核对 + jar 条目核对）。部署：`goetytuner-0.0.16.jar`（**1,756,720 B / md5 `816C6640E9486FFAFE3B88FA5B2C6D0E` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.15 已删）。详见 §3.16。
 >
-> **上一轮（0.0.14，第 52 轮）发布**：该轮两件事，改 **4 个 Java 文件**（`client/TunerConfigScreen`、`focus/FocusPoolManager`、`entity/TunerBoss`、`config/TunerCommonConfig`）+ **2 个 lang** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `phase2_buffs.phase2EffectImmunity`（Boolean，默认 **true**）⇒ 配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**，`boss` 段仍 **19**，section 数仍 10）。① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**、只能手改文件；现补一个单行 `EditBox`（预填当前值，提示「namespace:path，英文逗号分隔；留空=不屏蔽」），**点「完成」关屏时保存**（最自然的"改完了"信号），点「开始评分」时也**顺带保存**；保存动作 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效 ⇒ 下一次抽取就过滤）。**新增 `FocusPoolManager.refreshBlacklist()`**：`initIfNeeded()` 扫描时是**直接 `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`），所以"**新增**拉黑"能靠 `draw()/drawUniform()` 的实时过滤立刻生效，但"**取消**拉黑"必须重扫才会回来；而重扫若 `new` 出全新 `FocusEntry`，会让实体侧那些**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒ 出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题。故新方法按 `namespace:path` 建索引**复用已有 `FocusEntry` 对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），然后重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）：`config.goetytuner.blacklist.label` / `.blacklist` / `.blacklist.hint` / `.blacklist.saved`。限制：连他人的服务器时改的是**本地**那份 common toml，服务器侧不受影响（单机/局域网主机同进程，正常生效）。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有的 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定，在这里返回 false 就是真正的免疫，而不是"加完再清"）；免疫名单 = **抗性提升** `DAMAGE_RESISTANCE` / **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，**仅当 `music.isPhase2()`** 时生效。**刻意只列这 5 项而不是"所有 beneficial"**：Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后要加（例如某个附属的自定义减伤）加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（Boolean，**默认 true**），false = 回到旧行为；不影响玩家的同类效果，也不影响 Boss 自己的二阶段自施。详见 §3.15。
+> **上一轮（0.0.15，第 53 轮）发布**：**只有贴图精修 + 版本号 + 文档，零 Java 改动、无新增/删除资源、配置项数不变（仍 63 项 / 10 段）**。精修 `src/main/resources/assets/goetytuner/textures/entity/tuner.png`（64×64 RGBA，2520 → **2676 B**）：保留紫黑礼服 / 紫色袖口裤靴 / 浅色领巾 / 青色胸饰，精修**翻领边缘、衣袖明暗、袖口细边、裤缝、靴口层次**；原稿由 imagegen 生成，再**按最近邻采样重新装配回原有 UV**（生成图未严格保持矩形位置，故重新测量图块）。**已独立核验（以 0.0.14 为基准逐像素差分，不依赖其自带脚本）**：头部区 **y0..15 全宽 64 列 0 个像素差异**、全图 **alpha 蒙版完全一致**（未增删不透明像素）、身体区改动 **1247 像素**、6 个主要 UV 面无透明空洞。制作过程入库：`art/REFINEMENT.md`（报告 + 最终提示词）、`art/assemble-refinement.ps1`（可复现装配）、`art/body-refined-source.png`（原稿）、`art/tuner-before-refinement.png`（精修前备份）、更新后的 `art/preview.png`。⚠️ **未做游戏内画面验收**——观感仍待人类 / 能读图的模型确认；`art/preview.png` 是**平面正背面拼接图，不是游戏截图**。部署：`goetytuner-0.0.15.jar`（**1,755,456 B / md5 `1865ECF4EB22989319FD746806320776` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.14 已删）。
+>
+> **更早（0.0.14，第 52 轮）发布**：该轮两件事，改 **4 个 Java 文件**（`client/TunerConfigScreen`、`focus/FocusPoolManager`、`entity/TunerBoss`、`config/TunerCommonConfig`）+ **2 个 lang** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `phase2_buffs.phase2EffectImmunity`（Boolean，默认 **true**）⇒ 配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**，`boss` 段仍 **19**，section 数仍 10）。① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**、只能手改文件；现补一个单行 `EditBox`（预填当前值，提示「namespace:path，英文逗号分隔；留空=不屏蔽」），**点「完成」关屏时保存**（最自然的"改完了"信号），点「开始评分」时也**顺带保存**；保存动作 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效 ⇒ 下一次抽取就过滤）。**新增 `FocusPoolManager.refreshBlacklist()`**：`initIfNeeded()` 扫描时是**直接 `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`），所以"**新增**拉黑"能靠 `draw()/drawUniform()` 的实时过滤立刻生效，但"**取消**拉黑"必须重扫才会回来；而重扫若 `new` 出全新 `FocusEntry`，会让实体侧那些**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒ 出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题。故新方法按 `namespace:path` 建索引**复用已有 `FocusEntry` 对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），然后重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）：`config.goetytuner.blacklist.label` / `.blacklist` / `.blacklist.hint` / `.blacklist.saved`。限制：连他人的服务器时改的是**本地**那份 common toml，服务器侧不受影响（单机/局域网主机同进程，正常生效）。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有的 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定，在这里返回 false 就是真正的免疫，而不是"加完再清"）；免疫名单 = **抗性提升** `DAMAGE_RESISTANCE` / **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，**仅当 `music.isPhase2()`** 时生效。**刻意只列这 5 项而不是"所有 beneficial"**：Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后要加（例如某个附属的自定义减伤）加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（Boolean，**默认 true**），false = 回到旧行为；不影响玩家的同类效果，也不影响 Boss 自己的二阶段自施。详见 §3.15。
 >
 > **更早（0.0.13，第 51 轮）修复**：该轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 数仍 10）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 当作「在播」，**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**；且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（用户症状「整个 BGM 都没了」）。改为每 tick 用 **`SoundManager.isActive(music)`**（1.20.1 自带 API）核实实例是否真的在响，失效即清空字段、下一 tick 自动重建（**自愈**），并加 **10 tick 防抖**；`onPlaySound` 判据同步改为 `music != null && isActive(music)`。详见 §3.14(1)。② **重音标记滚动平滑 + 高潮标记改小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、而刻度是 1~2px 细条，取整后**逐像素跳动**；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮的「中」字（贯通竖线 + 空心方框）改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音抽稀**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9）在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度（经 `SMusicSyncPacket` 全量同步）/ 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳当发光**（`TunerOrbLayer`）：原 `min(1, color*(1+glow*0.8))` 因各分量已接近 1 而被截断、几乎看不出高亮；发光**不能用原版描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，无法只描一颗立方体），故改用 `entityTranslucentEmissive` 外壳。⑥ **药水可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（已用于 boss 自身 4 处），并完成药水现状审计（详见 §3.14(6)）。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶）** 加入 `focus.blacklist`——**这是配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 `goetytuner-common.toml`）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> 版本：0.0.15 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~53 轮
+> 版本：0.0.16 ｜ 整理日期：2026-09-20 ｜ 覆盖轮次：第 1~54 轮
 > 项目：诡厄巫法(Goety)附属 Boss 模组 —— 「调律师」，一位指挥灵魂能量交响乐团的指挥家。
 
 ---
@@ -82,7 +84,7 @@ com.tiaolvshi.goetytuner
 │   ├── SEntityRevivePacket.java     # 死亡动画复位同步（0.0.8 新增，通道 id 2，发给所有追踪者）
 │   └── SAccentWavePacket.java       # 声波涟漪触发同步（0.0.10 新增，通道 id 3，限 PLAY_TO_CLIENT）
 ├── config/
-│   └── TunerCommonConfig.java       # 全部可调参数（common toml，63 项 / 10 个 section）
+│   └── TunerCommonConfig.java       # 全部可调参数（common toml，66 项 / 10 个 section）
 ├── command/
 │   └── TunerCommands.java           # /goetytuner 命令（tune 等）
 └── ritual/
@@ -231,7 +233,7 @@ TunerBoss.aiStep ─┐
   SEntityRevivePacket（id 2，0.0.8）、SAccentWavePacket（id 3，0.0.10，声波涟漪触发，
   注册时显式限 `PLAY_TO_CLIENT`）。**0.0.10 起网络协议版本由 `"1.0"` 提升为 `"2.0"`，且从宽松匹配
   改为严格匹配**（注册处写 `"2.0"::equals`）——因为本轮新增了实体同步字段（施法分类位掩码，见 §3.12）
-  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10 及以上版本**（协议号 `2.0` 自 0.0.10 起未再变动，0.0.11 / 0.0.12 / 0.0.13 / 0.0.14 / 0.0.15 均为 `2.0`），否则协议不匹配、连接被拒。
+  与新包，旧客户端会错误解码；⇒ **联机双方必须同时更新到 0.0.10 及以上版本**（协议号 `2.0` 自 0.0.10 起未再变动，0.0.11 / 0.0.12 / 0.0.13 / 0.0.14 / 0.0.15 / 0.0.16 均为 `2.0`），否则协议不匹配、连接被拒。
   0.0.5 起 `SMusicSyncPacket` 改为**先检测 128 格内有无玩家，无人接收时不构造、不发送**
   （原先先构造包体——`getSegments()`/`getAccents()` 各自 `List.copyOf` + 分配数组——再判断；
   Boss 设了 `setPersistenceRequired`，附近无玩家时仍会空跑）。
@@ -247,14 +249,20 @@ TunerBoss.aiStep ─┐
   可诊断性：每批结束打 INFO `[Tuner] LLM batch i/n: sent X foci -> applied Y`，全部结束后若 `applied < 总数`
   打 **WARN** `LLM classify covered only X/Y foci`（提示模型只返回了部分条目，**已应用的结果不会丢失**，可再点一次「开始评分」补齐）。
   依据：本轮离线脚本 `scripts/llm_score_foci.py` 用同样的分批策略实测 **252/252 全部返回、0 非法 id、0 遗漏、0 幻觉**。
-- `TunerCommonConfig`：common toml，**63 项、10 个 section**——`boss`(**19**，不变) / `phase2_buffs`(**4**) /
-  `summon`(4) / `scoring`(3) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
+- `TunerCommonConfig`：common toml，**66 项、10 个 section**——`boss`(**19**，不变) / `phase2_buffs`(**4**) /
+  `summon`(4) / `scoring`(**6**) / `casting`(10) / `focus`(1) / `wand_whitelist`(1) /
   `music`(**13**) / `llm`(2) / `wand_upgrade`(6)，
   Configured 中文分类引导；`music_score.json`、`focus_classification.json` 运行时双写。
   0.0.13 新增键：`music.accentDensityDivisor`（`IntValue`，**默认 3**，范围 1~9，见 §3.14(4)）。
   0.0.14 新增键：`phase2_buffs.phase2EffectImmunity`（`Boolean`，**默认 true**，见 §3.15(2)）——
   注意它落在 **`[phase2_buffs]` 段**（`b.push("phase2_buffs")` 块内），**不是 `[boss]` 段**，故 `boss` 段项数
   **仍为 19、未变**，`phase2_buffs` 段 **3 → 4**；总项数 **62 → 63**。
+  0.0.16 新增键（3 个，全在 **`[scoring]` 段**，见 §3.16）：`scoring.learningWeightStart`（`Double`，**默认 0.15**，范围 0~1）、
+  `scoring.learningWeightMax`（`Double`，**默认 1.0**，范围 0~2）、`scoring.learningWeightRampCasts`（`Int`，**默认 60**，范围 1~1000）——
+  故 `scoring` 段 **3 → 6**、`boss` / `phase2_buffs` / `summon` / `casting` / `focus` / `wand_whitelist` / `music` / `llm` / `wand_upgrade`
+  九段**均未变**，section 数仍 **10**；总项数 **63 → 66**。
+  ⚠️ **口径核对**（0.0.16 收尾实测）：`TunerCommonConfig.java` 内 `.define` 调用共 **66** 处、`push(...)` 段共 **10** 处，
+  `[scoring]` 段内 `.define` 共 **6** 处 —— 与上表一致。
 - ✅ **可访问性结论（0.0.14 起部分解决）**：`TunerConfigScreen` **顶替**了 Forge 默认的 toml 编辑器，
   界面里目前有 **LLM API Key / 提示词 / 聚晶黑名单** 三个输入框 ⇒ **`focus.blacklist` 已有游戏内入口**
   （0.0.14 新增，点「完成」关屏或点「开始评分」即保存并立即热刷新，见 §3.15(1)）；
@@ -269,6 +277,11 @@ TunerBoss.aiStep ─┐
   0.0.13 新增的 `music.accentDensityDivisor`（默认 `3`）属**新增键** ⇒ Forge 会**自动补进**老 toml、**无需手改**
   （实例的 toml 在下次启动生成该行之前查不到这一键，属正常，不代表没生效——默认值在代码里）。
   0.0.14 新增的 `phase2_buffs.phase2EffectImmunity`（默认 `true`）同理：**新增键、自动补齐、无需手改**。
+  0.0.16 新增的 `scoring.learningWeightStart` / `learningWeightMax` / `learningWeightRampCasts` 同样属**新增键**
+  ⇒ Forge 会**自动补进**老 toml、**无需手改**（老 toml 在下次启动写入这三行之前查不到它们属正常——默认值在代码里）。
+  ⚠️ 但**这三个键在配置界面没有入口**（`TunerConfigScreen` 只有 LLM API Key / 提示词 / 聚晶黑名单三个输入框）
+  ⇒ 想调"逐渐学习"的曲线只能**手改 `goetytuner-common.toml` 后重启游戏**（common 配置在 mod 加载时读入内存，
+  手改文件不会热生效）；重启同时会把 `FocusPoolManager` 的 `castCount` **一起归零**（该计数不落盘，见 §3.16）。
   但 0.0.14 的**黑名单改动是"改值"而非"加键"** —— 若你自己在 toml 里手改过 `focus.blacklist`，
   则要用配置界面/手改把值改回来才会生效（0.0.14 的代码默认值**仍只有** `goetytwilight:destruction_focus`）。
 
@@ -938,6 +951,109 @@ lang：`assets/goetytuner/lang/zh_cn.json` / `en_us.json`（各 +4 键）。
 - **实测状态**：本轮只做到**编译通过 + jar 条目核对**，免疫效果本身**尚未进游戏实测**
   （验收方式：二阶段给 Boss 丢抗性提升 / 生命恢复药水应完全不上身；把配置改成 `false` 后应恢复可施加）。
 
+### 3.16 0.0.16：「逐渐学习」——动态评分权重系数随该个体施法次数爬升
+
+本轮改动 **3 个 Java 文件 + 版本号**，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，
+无新增/删除类与资源）；**新增 3 个配置项**（全在 **`[scoring]` 段**）⇒ 配置 **63 → 66 项**
+（`scoring` 段 **3 → 6**，其余九段均**未变**，section 数仍 **10**）。
+改动文件与实测行数：`entity/TunerBoss.java`（**2053 行**，0.0.15 为 2050）、
+`focus/FocusPoolManager.java`（**458 行**，0.0.14 为 396）、`focus/FocusEntry.java`（**154 行**）、
+`config/TunerCommonConfig.java`（**456 行**，0.0.14 为 438）。
+
+**（1）动机（用户反馈）**
+
+- **动态评分**（`combat/DamageScoreTracker`、`combat/SummonScoreTracker` 在实战中累加出来的偏移）原本**与静态评分同权**
+  地进入轮盘权重 ⇒ 它会把**初始评分**（`focus_classification.json`，即配置 / LLM 分类的结果）的影响**大幅冲淡**：
+  开局没打几下，初始分类**就基本失效**了——"这是个会学习的指挥家"的表现力很弱，看起来更像"随便乱放"。
+- **用户要求**：用一个**较低的权重乘数**大幅降低动态评分的影响，并随**该调律师个体**的施法次数**缓慢增加**该乘数。
+
+**（2）权重公式改动 —— 只缩动态部分，静态评分完全不动**
+
+- `focus/FocusEntry.java`：`rouletteWeight(...)` **新增第 4 参数 `dynamicScale`**，权重公式由
+  `|静态评分 + 动态偏移| + 保底基数` 改为 **`|静态评分 + 动态偏移 × dynamicScale| + 保底基数`**。
+- **攻击类**（`return Math.abs(attackScore + dynamicAttackOffset * dynamicScale) + baseWeight;`）
+  与**召唤类**两条公式**都改**；召唤类（生存分 / 输出分加权）是 **`dynamicSurvivalOffset` 与 `dynamicAttackOffset`
+  两处偏移各乘一次** `dynamicScale`：
+  `useScore = (survivalScore + dynamicSurvivalOffset * dynamicScale) * w1 + fillRatio * (attackScore + dynamicAttackOffset * dynamicScale) * w2`。
+- **关键性质**：缩权的对象**只有动态偏移**（`attackScore` / `survivalScore` 这两个静态分**原样参与**）——
+  这正是"初始分类不被冲淡"的来源；`dynamicScale = 1.0` 即**完全等价于旧行为**。
+
+**（3）每实例学习状态 —— 以及"为什么不能是 static"**
+
+- `focus/FocusPoolManager.java` 新增三个**实例字段**（与 `pools` / `cooldownPools` 同级）：
+  - `private int castCount = 0;` —— 该个体已完成的**施法次数**；
+  - `private double learningWeight = -1.0;` —— 当前系数（`-1` = 尚未初始化，首次访问时按当前配置算）；
+  - `private int lastLoggedMilestone = -1;` —— 已打过日志的里程碑（见下）。
+- **为什么必须是实例字段（而非 `static`）**：`TunerBoss` 的字段初始化式是
+  `private final FocusPoolManager pools = FocusPoolManager.createFightPools();` —— **每个实体实例各建一份池**，
+  且 `createFightPools()` 内部对每个 `FocusEntry` 做的是**实例级复制**（避免多只 Boss 共享动态偏移，见该方法的注释）。
+  ⇒ "学习进度"**天然是该个体私有**的，与**动态偏移的生命周期完全一致**（两者一起随实体重建而重置）。
+  **副作用（需要知道）**：`castCount` **不落盘** ⇒ 退出重进游戏 / 该实体被卸载后重新加载 / 换实体 / 重召唤，
+  **学习进度都会归零**（与动态偏移一起）。
+- `noteCast()`（由 `TunerBoss.onCastStart` 每次成功施法调用）：`castCount++` 后调 `refreshLearningWeight()`。
+- `refreshLearningWeight()`（私有）按当前配置与 `castCount` 重算，公式：
+  **`w = start + (max − start) × min(1, castCount / ramp)`**（**线性**），并在 `milestone = (int)(t*100)/10*10`
+  变化时打一条 INFO：
+  `[Tuner] Learning weight <start>/<max> = <w> (casts <castCount>/<ramp>)`
+  （t 从 0 到 1 共 11 个里程碑 0/10/…/100 ⇒ 默认 60 次爬升约每 **6 次**施法一条日志，便于观察"逐渐学习"）。
+- `learningWeight()`（getter）首次访问时按配置初始化；`castCount()`（getter）供调试 / 展示。
+- `draw()` 把系数作为**第 4 实参**喂给 `rouletteWeight`：
+  `double dynamicScale = learningWeight(); ... usable.get(i).rouletteWeight(base, ctx, summonBlocked, dynamicScale);`
+
+**（4）`javap` 调用链验证（reobf jar 里方法显示 SRG 名，字符串检查会漏报 ⇒ 必须核字节码）**
+
+偏移（offset）级链路已核对一致：
+
+```
+偏移 178  invokevirtual  FocusPoolManager.learningWeight:()D      ← draw() 取系数
+偏移 178+ → 存入局部变量 14（double 占两个槽）                    ← 局部变量 14/15
+偏移 234  dload 14                                                ← 载入该 double
+偏移 236  invokevirtual  FocusEntry.rouletteWeight:(D[DZD)D       ← 第 4 实参 = dynamicScale
+```
+
+说明：`rouletteWeight` 的新描述符为 **`(D[DZD)D`** —— `double baseWeight`、`double[] summonContext`、
+`boolean summonBlocked`、**`double dynamicScale`**，返回值 `double`。
+
+**（5）三个新配置键与默认曲线**
+
+| 键（`[scoring]` 段） | 类型 | 默认 | 范围 | 含义 |
+|---|---|---|---|---|
+| `learningWeightStart` | `Double` | **0.15** | 0 ~ 1 | 开局动态评分**只按 15% 计入权重**（0 = 完全无视动态评分、纯用初始分类） |
+| `learningWeightMax` | `Double` | **1.0** | 0 ~ 2 | 施法足够多之后的**上限**（1 = 与旧行为持平；>1 = 后期比旧行为更强势） |
+| `learningWeightRampCasts` | `Int` | **60** | 1 ~ 1000 | 从起始权重**线性**升到上限所需的**施法次数** |
+
+**默认曲线**（`start=0.15` / `max=1.0` / `ramp=60`，四舍五入到三位小数）：
+
+| 施法次数 | 0 | 10 | 20 | 30 | 40 | 50 | 60 | ≥60 |
+|---|---|---|---|---|---|---|---|---|
+| 系数 `w` | **0.150** | 0.292 | 0.433 | 0.575 | 0.717 | 0.858 | **1.000** | 1.000（封顶） |
+
+⇒ 观感上：**开局以「初始分类」主导**（配置 / LLM 评分的结论说了算），随实战逐次把话语权**交棒给动态反馈**——
+"会学习"这件事从"立刻接管"变成"逐渐学会"。
+
+**（6）`drawUniform()` 不受影响 / 统计口径**
+
+- `FocusPoolManager.drawUniform(category)`（防御 / 其他类的均匀抽取）**本来就不走评分**（不走 `rouletteWeight`），
+  故**完全不受**本轮改动影响 —— 这两类的抽取行为与 0.0.15 一模一样。
+- `noteCast()` 挂在 `TunerBoss.onCastStart` 里，**只统计"用聚晶施法"的前摇起手**；
+  **瞬发（instantCast）/ 重音不经过该回调，故不计入**施法次数。
+
+**（7）`FocusEntry` 那两个 getter 的现状（不要误读为"已删除"）**
+
+- `getEffectiveAttackScore()` / `getEffectiveSurvivalScore()` 现在的语义是"**未缩权的**视角"——
+  它们**原先是轮盘权重的输入**，本轮改完之后**不再被抽取路径调用**（`draw()` 改走 `rouletteWeight(..., dynamicScale)`）。
+- **它们并没有被删除**，而是**保留作诊断 / 展示用途**（例如日志、调参时看"若不做缩权，动态偏移会把权重推到多少"）。
+  ⚠️ 引用这两个值时**务必注明它们不含学习系数缩权**，别当成"当前实际参与抽取的权重"。
+
+**（8）实测状态**
+
+- 本轮只做到**编译通过**（主副本就地 `gradlew clean build` 成功，**1m32s**，仍只有原有 3 条 Forge 弃用警告）
+  + `javap` 字节码核对 + **jar 条目核对（102 条）**；
+- ⚠️ **"逐渐学习"的手感尚未进游戏实测**（见 §七）。
+  验收建议路径：① 开局前 ~10 次施法应**大体沿用初始分类**（高分类聚晶明显更常出现）；② 到 ~60 次施法左右
+  动态反馈应接管（表现与旧行为接近）；③ 按 10% 里程碑核对日志 `Learning weight ...` 是否**单调递增**；
+  ④ 把 `learningWeightStart` 设成 `0`（完全无视动态评分）与 `1`（旧行为）各打一场做**对照手感**。
+
 ---
 
 ## 四、关键工程决策与红线（踩坑沉淀）
@@ -977,13 +1093,13 @@ lang：`assets/goetytuner/lang/zh_cn.json` / `en_us.json`（各 +4 键）。
 - 沙箱覆盖层：Remove-Item 报成功但真实文件仍在；bash rm 被 safe-delete genie-trash
   拦（中文路径）→ 删文件用 PowerShell Remove-Item，确认用 git bash ls。
 - 打包产物重名坑：新版本必须 bump mod_version（实际序列示例：
-  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10→0.0.11→0.0.12→0.0.13→0.0.14→0.0.15`），否则游戏 mods 里
+  `0.1.0→0.2.0→…→0.7.1→0.7.2→0.0.0→0.0.1→0.0.2→0.0.3→0.0.4→0.0.5→0.0.6→0.0.7→0.0.8→0.0.9→0.0.10→0.0.11→0.0.12→0.0.13→0.0.14→0.0.15→0.0.16`），否则游戏 mods 里
   替换失败用户以为"没变化"；且**旧配置文件锁旧值**，大改默认值需删 toml 重新生成。
   ⚠ 版本号被重置为 0.0.x 后，对外发布排序会小于 0.7.2，后续建议跳到 `1.0.0`。
 
 ---
 
-## 五、版本演进时间线（第 1~53 轮浓缩）
+## 五、版本演进时间线（第 1~54 轮浓缩）
 
 | 版本 | 轮次 | 里程碑 |
 |---|---|---|
@@ -1024,6 +1140,7 @@ lang：`assets/goetytuner/lang/zh_cn.json` / `en_us.json`（各 +4 键）。
 
 | v0.0.14 | 52 | ① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**、只能手改文件；现补一个单行 `EditBox`（预填当前值，提示「namespace:path，英文逗号分隔；留空=不屏蔽」），**点「完成」关屏时保存**（最自然的"改完了"信号）、点「开始评分」时也顺带保存；保存 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效 ⇒ 下一次抽取就过滤）。**新增 `FocusPoolManager.refreshBlacklist()`**：`initIfNeeded()` 扫描时**直接 `continue` 跳过**黑名单聚晶（它们不进 `ALL_ENTRIES`），故"**新增**拉黑"能靠实时过滤立刻生效、但"**取消**拉黑"必须重扫；而重扫若 `new` 出全新 `FocusEntry`，会让实体侧**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒ 出现「立方体高亮卡住 / 施法收尾回调对不上」这类隐蔽问题；故新方法按 `namespace:path` 建索引**复用已有 `FocusEntry` 对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），再重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有的 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 返回 false 就是**真正的免疫**，而不是"加完再清"），免疫名单 = **抗性提升** `DAMAGE_RESISTANCE` / **伤害吸收** `ABSORPTION` / **生命恢复** `REGENERATION` / **瞬间治疗** `HEAL` / **生命提升** `HEALTH_BOOST`，**仅当 `music.isPhase2()`** 时生效；**刻意只列这 5 项而不是"所有 beneficial"**——Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉，名单集中在私有 `isPhase2Immune(...)`、以后加一行即可；新增配置 `phase2_buffs.phase2EffectImmunity`（Boolean，默认 **true**），false = 回到旧行为 ⇒ 配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**，`boss` 段仍 **19**）。**只改代码，不动任何贴图/资源**；`.java` 仍 45 个、jar 仍 **102** 条目 |
 | v0.0.15 | 53 | 本体贴图精修（头部逐像素不变，身体改 1247 像素；零代码改动） |
+| v0.0.16 | 54 | 「逐渐学习」：动态评分权重系数随该个体施法次数从 0.15 线性爬升到 1.0（默认 60 次） |
 
 ---
 
@@ -1049,10 +1166,11 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
-| 0.0.15 | `goetytuner-0.0.15.jar` | 1,755,456 B | `1865ECF4EB22989319FD746806320776` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar；旧 0.0.14 已删） |
+| 0.0.16 | `goetytuner-0.0.16.jar` | 1,756,720 B | `816C6640E9486FFAFE3B88FA5B2C6D0E` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar；旧 0.0.15 已删） |
 
-> 本轮（0.0.15）jar 内共 **102 条目**（与 0.0.14 一致 —— 本轮**零 Java 改动、无新增/删除资源**，只是 1 张贴图被精修）；
-> 构建在主副本就地 `gradlew clean build` 成功（**1m44s**，仍只有原有 3 条 Forge 弃用警告）。
+> 本轮（0.0.16）jar 内共 **102 条目**（与 0.0.15 一致 —— 本轮**只改 3 个既有 Java 文件、无新增/删除类与资源**，
+> 新增的 3 个配置键不改变条目数）；
+> 构建在主副本就地 `gradlew clean build` 成功（**1m32s**，仍只有原有 3 条 Forge 弃用警告）。
 
 > 部署前务必确认**没有 java 进程在运行**（jar 被占用会导致替换静默失败）；
 > 部署后需**重启游戏**才会加载新 jar。
@@ -1118,16 +1236,28 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
    ✅ **0.0.15 新增同期待验收项**：本体贴图精修（`tuner.png` 的翻领边缘 / 衣袖明暗 / 袖口细边 / 裤缝 / 靴口层次）
    **同样未做游戏画面验收** —— 本轮只以逐像素差分证明**头部区 0 差异 / alpha 蒙版完全一致 / 身体区改 1247 像素 /
    6 个主要 UV 面无空洞**，属**结构性核验**、不能替代观感确认（`art/preview.png` 是平面正背面拼接图，**不是游戏截图**）。
+   ✅ **0.0.16 新增同期待验收项**：**「逐渐学习」的手感**（`scoring.learningWeightStart` / `learningWeightMax` /
+   `learningWeightRampCasts`）—— 开局前 ~10 次施法是否**确实以初始分类主导**、~60 次施法后动态反馈是否**平顺接管**、
+   以及"会不会显得太死板 / 太迟才学会"。本轮只做到**编译通过 + `javap` 字节码核对 + jar 条目核对**，
+   **尚未进游戏实测**；建议用 `learningWeightStart=0`（纯初始分类）与 `=1`（旧行为）两场做**对照**。详见 §3.16(8)。
 7. **药水效果的可观测性与现状（0.0.13 结论 + 0.0.14 补充）**：boss 自身 4 处自施已改走 `applySelfEffect`（被拒打 WARN），
    但 **`tickPhase2Buffs` 自身零日志** ⇒ 二阶段自施药水的**实际数值收益仍只能进游戏实测**；
    一阶段低谷的 `SAPPED` / `DARKNESS` 与仆从四效果虽**机制上生效**，但都构造为 `visible=false`（**无粒子**），
    **玩家看不出效果** —— 是否补粒子 / 加提示属**表现层待决策项**（不是 bug）。详见 §3.14(6)。
    ✅ **0.0.14 补充**：新增的**二阶段「回复/减伤」免疫**（`phase2_buffs.phase2EffectImmunity`，默认 true）
    正好堵住"外部来源给二阶段 Boss 叠抗性/吸收/再生"这一类**反向**干扰，见 §3.15(2)。
+8. ✅ **「动态评分冲淡初始评分」（0.0.16 已处理，待游戏实测验证手感）**：动态评分（实战学到的偏移）原先与静态评分
+   同权进入轮盘权重 ⇒ 开局没打几下**初始分类**（配置 / LLM 评分）就基本失效，"会学习的指挥家"表现力很弱。
+   0.0.16 给**动态偏移**加了随**该个体施法次数**线性爬升的权重系数（默认 `0.15 → 1.0` / 60 次施法），
+   **静态评分完全不受影响**；实现与配置见 **§3.16**，配置项见 §六 / `DEVELOPMENT_PLAN.md` §六。
+   ⚠️ **仍待游戏实测验证手感**（开局是否确实由初始分类主导、接管是否平顺、曲线是否合适）
+   —— 起手调参见 `DEVELOPMENT_PLAN.md` §十一「动态评分太强势 / 想强化『逐渐学习』」一行。
+   顺带说明：`FocusEntry.getEffectiveAttackScore()` / `getEffectiveSurvivalScore()` **未删除**，
+   现状是"**未缩权的诊断视角**"、不再被抽取路径调用（§3.16(7)）。
 
-### 已知缺陷与待办（0.0.15 时点）
+### 已知缺陷与待办（0.0.16 时点）
 
-以下为 0.0.4 复核代码后新确认、到 **0.0.15** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
+以下为 0.0.4 复核代码后新确认、到 **0.0.16** 时点仍未修复的问题（个别条目已在此期间解决，见条目标注）：
 
 > 性能类问题的处理见 §3.7——「仆从全量扫描」「`BossPhase.values()` 数组克隆」「同步包无谓构造」
 > 「HUD 每帧全实体扫描」等均已在 0.0.5 优化完毕，不再列入下表。
