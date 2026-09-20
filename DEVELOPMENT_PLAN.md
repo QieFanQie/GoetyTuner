@@ -1,6 +1,21 @@
 # 调律师 (The Tuner) — 诡厄巫法附属Boss · 开发计划书 V2
 
-> 当前工作版本：**0.0.17**。索命聚晶后门（`goety:death` 可无视锁血直接处决调律师）＋ 修客户端死亡动画残留（血量回正后自愈复位）；详见 `TECHNICAL_SUMMARY.md` §3.17。下文旧版本说明保留为历史记录。
+> **0.0.20（第 59 轮 · 当前工作版本）**：用户提了**一条回归反馈 + 三条新功能**，本轮全部处理。**规模**：新增 **2 个 Java 类**（`.java` **55 → 57**：`combat/ServantWandBlessing`、`ritual/TunerServantSummonRitual`）+ **1 个仪式配方 json**；改 **6 个既有 Java 文件**（`entity/TunerServant`、`entity/TunerServantInteractions`、`ritual/ModRituals`、`ritual/WandUpgradeEvents`、`config/TunerCommonConfig`、`gradle.properties`）+ **2 个 lang**（键数 **34 → 43**，**+9 / −0**）；**配置 71 → 72 项**（`[servant]` 段 **3 → 4**，新增 `wandBlessingEnabled`；段数仍 **11**）；jar 条目 **117 → 120**（新增 3、**无删除**）；协议仍 **2.1**。① **【回归】左右键的指令提示被误删，已回补** —— 第 58 轮用户要"不要冗余提示"，我把 `TunerServantInteractions` 里**所有**动作栏提示都删了（连"操作结果反馈"一起删）；用户指出"这个提示是需要的" ⇒ 现在**分开对待**：**要有**"一次主动操作产生了什么状态变化"（`不释放：X` / `已取消不释放：X` / `优先释放：X` / `已取消优先释放：X` / 批量版 / `这不是你的调律师仆从`），**不要**物品介绍与刷怪蛋放置提示（那部分**没有**回退）。② **【新功能】仆从的仪式召唤** —— **每秒 10 能量、10 秒、魔法仪式**（反编译实证 `soulCost`/`duration` **都是"每秒"口径**：灵魂扣除与 `currentTime++` 同在 `gameTime % 20 == 0` 分支里 ⇒ `soulCost: 10, duration: 10` = 100 灵魂 / 10 秒），材料 **紫水晶碎片 ×4 + 红石 + 钻石 + 金锭 + 青金石** 共 8 个基座，**中心放一把带"调律加成"的法杖**才能激活（`activation_item` 只能写物品/标签、表达不了 NBT ⇒ 完全重写 `identify`；**两种调律加成任一 > 0** 即认；不满足就复用 Goety 自己的"无效的仪式"提示），召唤出的仆从 **tame=true 认主**，法杖被祭坛消耗、快照留给仆从。③ **【新功能】杖的加成决定仆从强度** —— ⚠️ **0.0.20 按用户反馈把判定来源从「调律·魔法伤害加成」改为「调律·巫法加成」**（前者单次默认 +40% ⇒ 打一次就几乎满配、**太容易触发**；后者 +10% ⇒ 要反复击杀才爬得上去），**阈值一个都没改**。`combat/ServantWandBlessing` 按 `pct = 加成 × 100` 持续给：**强健**（`goety:buff`）`1 + floor((pct−10)/20)` 级、**生命恢复**（>20% Ⅰ / >60% Ⅱ）、**抗性提升**（>80% Ⅰ / >100% Ⅱ，封顶）；做法是**低频自愈式刷新**（1 秒一次、每次挂 3 秒，数值未变则跳过）。⚠️ **一个必须告诉用户的坑**：`goety:buff`（强健）实际**只加 `ATTACK_DAMAGE`**（Goety 原文"每级增加 1 点的近战攻击伤害"），而本模组的仆从**刻意没有近战手段** ⇒ **强健对它的战斗力几乎无影响**（忠实照搬了规格，但"越强"的直觉不成立；可选修法 = 把等级同时换算成法术强度，**等用户决定**）。④ **【新功能】仆从死亡掉落召唤用杖** —— **原样返回**（保留原有加成、**不再额外升级**，与 Boss 死亡掉落"快照 + 叠加升级"刻意对照）。⑤ **【新功能】聚晶包 / 多晶大袋批量指令** —— 手持袋子左键 = 袋内**全部**设为不释放、右键 = 全部设为优先；**全部已是该状态 ⇒ 整体清除**（与单晶"再按一次取消"语义一致）；用通用 `ForgeCapabilities.ITEM_HANDLER` 读内容物（**聚晶包 11 格 / 多晶大袋 21 格**，字节码实证），非聚晶物品跳过、同 id 去重。⚠️ **本轮同样只做到编译 + 字节码 / 资源核对，未进游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.21 与「仍待办 17」）。下文旧版本说明保留为历史记录。
+
+> **0.0.19 修补（第 58 轮）**：用户对第 57 轮交付**又提三条反馈，本轮全部处理**（**没有升版本号**，仍是 `0.0.19`，只改代码与 lang）。① **提示文案精简到一行**（用户原话："不需要更多的物品介绍和放置/交互后的提示"）：删掉刷怪蛋**放置时的动作栏提示**与多余的 tooltip ⇒ 两份 lang **各 43 → 34 键（−9）**，**只留** `tooltip.goetytuner.servant.spawn_egg` = "调律师仆从刷怪蛋，潜行使用会生成你自己的仆从."；顺带删掉 `TunerServantInteractions` 里那两条"只给提示、不吞掉"的 `wild_hint` / `not_owner_hint`（**行为不变，仍不吞掉**，只是不再弹字）；**诊断信息一律改走日志**（`FocusPoolManager.setFocusDisabled` / `setFocusPriority` 每次状态变化打一条 INFO `[Tuner] Servant focus <id> -> DISABLED / not disabled`）。② **"不释放的调整功能似乎完全不起效了"** —— 两条可能的病根**都堵掉**：**（a）野生仆从被拒** 第 57 轮加的 `isOwner` 只认主人，而刷怪蛋**默认直接放 = 野生** ⇒ **每条聚晶指令都在 `canCommand` 被拒绝**（这正是"完全不起效"最可能的真凶）；现在 `owner == null`（野生）**也放行**，**只有别人家的仆从**才拒绝，且拒绝理由改打 **INFO 日志**；**（b）潜行劫持左键** 第 57 轮自己加的"潜行 + 左键 = 清空全部指令"（`clearFocusCommands`）会在**潜行时抢走左键**，按左键变成"清空"而不是"切换不释放" ⇒ 该功能与 `clearFocusCommands` / `disabledCount` / `priorityCount` **一并删除**，左键语义**只剩**"切换不释放"。③ **箭雨聚晶"几乎没有持续"** —— 用户怀疑"是否能完美识别持续类"，**核对结论：识别没问题**（`ArrowRainSpell extends EverChargeSpell`，本就在 `IChargingSpell` 闭包内），真因是**通道预算把蓄力时间算进了总时长**：`ArrowRainSpell.castUp` 的解算默认 **20 tick**（`ArrowRainChargeUp` 的默认值），正好吃光 `channelMaxTicks` 的 20 ⇒ **只放一发就收手**。改成**两段预算** —— `蓄力 = min(castUp × 倍率, casting.maxCastWindowTicks)`、`持续 = max(5, casting.channelMaxTicks)`，`channelEndTick = 蓄力 + 持续`；顺带**删掉"用 `shotsNumber` 提前收手"**（玩家路径 `DarkWand` 只用 `shotsNumber` 记发数与计算释放冷却，**从不据此停火**，据此收手是不忠实的模拟）。结果：**腐化光束共 20 tick**（`castUp` 极小、几乎全给了持续）、**箭雨共 40 tick**（20 蓄力 + 20 持续）。⚠️ **本轮同样只做到编译 + 字节码核对，未进游戏实测**。
+
+> **0.0.19 第一轮（第 57 轮）**：用户对 0.0.18 交付的**五条反馈全部处理**：① **聚晶指令语义重做**（「不释放」与「优先」改为**互斥**，任何一键都能把聚晶切回中立 ⇒ 修掉"左键不释放似乎不能取消"的设计漏洞；另加**潜行 + 左键 = 清空全部指令**（⚠️ **第 58 轮已删除**，见上方）；② **仆从血量 / 护甲 / 减伤限伤与本体一致**（读 `boss.maxHealth`=216 / `boss.equivalentArmor`=16，抽出 `combat/TunerDamageRules` + `combat/DamageThrottle` **共用实现**；`servant.health` 已删除）；③ **仆从刷怪蛋改用 Goety 仆从蛋范式**（**直接放 = 野生 / 潜行放 = 认主** + 文字提示；"第一次下指令认主"**已彻底删除**）；④ **修「长按持续释放类聚晶只放一瞬间就停」**（两层根因：只结算一次 + `AbstractBeam` 靠 `isUsingItem` 判定存活；`CastChannel` 新增 `tickChannel` + 自备 `focus/TunerWand`；用时上限 = 新增 `casting.channelMaxTicks` 默认 20）；⑤ **聚晶图标改灰黑 + 白**。⚠️ 本轮**未进游戏实测**。下文旧版本说明保留为历史记录。
+
+> **0.0.19 发布（第 57 轮）**：**用户对 0.0.18 交付提了五条反馈，本轮全部处理**。**规模**：新增 **4 个 Java 类**（`.java` **51 → 55**，源码 **511,948 B**），改 **6 个既有 Java 文件**（`entity/ai/CastChannel`、`init/ModItems`、`entity/TunerBoss`、`entity/TunerServant`、`entity/TunerServantInteractions`、`config/TunerCommonConfig`）+ **2 个 lang**（各 **37 → 43 键**；⚠️ 是 **+7 新增 / −1 删除** —— `info.goetytuner.servant.adopted` 随"第一次下指令认主"一并删除）+ **1 个模型 json** + 版本号；**配置项数不变仍 71 项 / 11 段**（新增 `casting.channelMaxTicks` 1 项、**删除**死配置 `servant.health` 1 项）；jar 条目 **112 → 117**（新增 5 = 4 个新 class + `tuner_wand.json`，**无删除**）。新增 4 个类：`combat/DamageThrottle`、`combat/TunerDamageRules`、`focus/TunerWand`、`init/TunerServantSpawnEggItem`。
+> **① 聚晶指令「左键『不释放』似乎不能取消」—— 语义重做**：0.0.18 用**两张互不相干**的表存「不释放」与「优先」，同一个聚晶可**同时命中两者**（"不释放"胜出）⇒「先设优先 → 再设不释放 → 又按右键想取消」会**按了没反应**，这就是"不能取消"的来源。现在两状态**互斥**：**左键切换"不释放"并顺手清掉"优先"；右键切换"优先"并顺手清掉"不释放"**，任何一键都能把聚晶**切回中立**、语义单一可逆（`TunerServant#toggleFocusDisabled` / `#toggleFocusPriority`）；另加**潜行 + 左键 = 清空该仆从全部聚晶指令**（`clearFocusCommands`）作为逃生通道；提示文案改为**列出两张表条目数**（新增 `disabledCount()` / `priorityCount()`）⇒ 设置是否生效一眼可验。⚠️ **如实说明**：本轮**未进游戏实测**，"原来为什么不能取消"只剩**语义解释、没有复现证据**。
+> **② 仆从血量 / 护甲 / 减伤限伤与本体一致**：血量与护甲直接读 **Boss 的配置键** `boss.maxHealth`(216) / `boss.equivalentArmor`(16)，`KNOCKBACK_RESISTANCE` 对齐 1.0，`createAttributes()` 占位常量同步；**`servant.health` 已删除**（死配置；属**删键** ⇒ 老 toml 成孤儿条目、Forge 自行处理、**无需迁移**）。减伤限伤抽出**共用实现**：**`combat/TunerDamageRules`**（`isIdentityImmune` 摔落/火焰全系/窒息/溺水、`isDirectMelee`、`applyMeleeVulnerability` 近战易伤 ×(1+`boss.meleeVulnerability`)）+ **`combat/DamageThrottle`**（限伤 = 单次 ≤ 最大生命 × `boss.maxHitDamagePercent`；限DPS = 滑动 1 秒预算、返回 −1 表示整段吸收）—— `TunerBoss` 改为调用它们（**行为不变，只是搬家**），`TunerServant` 新增 `hurt` / `actuallyHurt` 覆写走同一套。⚠️ **刻意不含锁血阶梯**（`lockMark` / 宽限期免疫 / 致死截断 / `/kill` 与索命后门）：那是 Boss 的招牌机制，仆从若也锁血就成了打不死的怪；仆从也**没有后门豁免**（`/kill` 本来就该正常生效）。
+> **③ 刷怪蛋范式**：新增 `init/TunerServantSpawnEggItem`，**直接继承 Goety 的 `ServantSpawnEggItem`**（本体所有仆从蛋都用它）⇒ **直接放 = 野生、潜行放 = 认主**（`if (owned && !hostile && player.isCrouching()) owned.setTrueOwner(player);`；不潜行则由 `Summoned.finalizeSpawn` `setWandering(true)`）；本类只外加 ① 放置时的**动作栏提示**（认主 / 野生两文案）② tooltip 一行本模组专属说明。**归属不再因交互而改变**：0.0.18 的 `adoptOwnerIfUnowned`（第一次下聚晶指令时认主）**已彻底删除**，归属**只在刷怪蛋放置时**确定；`TunerServantInteractions#isOwner` 只认主人，**野生仆从**与**别人家的仆从**被手持聚晶左/右键时**只给提示、不吞掉**这次攻击/交互（`wild_hint` / `not_owner_hint`）。
+> **④ 修「长按持续释放类聚晶只放一瞬间就停」（本轮最有价值的一处修复）**：现象 —— 腐化 / 震撼 / 炼狱这类聚晶在调律师（及仆从）身上只放一瞬间就停。**两层根因（均已反编译实证）**：**（a）只结算一次** —— 玩家路径 `DarkWand.onUseTick` 对 `IChargingSpell` 是"蓄力到 `castUp` 后每 `Cooldown` tick 调一次 `MagicResults`（→ `SpellResult`）直到松手"，而 `CastChannel` 原先只在前摇结束时调**一次**（轰炸/雷电/暴雪这类"每发生成一个实体"的法术只出一发）；**（b）实体下一 tick 就自毁** —— `AbstractBeam.tick()`（腐化光束基类）有 `if (itemBase && !MobUtil.isSpellCasting(owner)) discard();`，而 `MobUtil.isSpellCasting` = `isUsingItem() && getUseItem().getItem() instanceof IWand && !WandUtil.findFocus(e).isEmpty()`，**Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃。**修法**：`CastChannel` 新增通道型路径 **`tickChannel`** —— ① `startUsingItem(MAIN_HAND)` 让施法者**真的在"使用法杖"**（每 tick 自愈式重设；`finishCast` / `interrupt` / `startSpell` 异常 / 外层兜底四处一律 `stopUsingItem`）；② 按法术自己的 `Cooldown` / `shotsNumber` **反复释放**；③ 判定依据是 Goety 自己的 `IChargingSpell`（腐化/震撼/暴雪/轰炸/旋风/箭雨/电击/水流/蒸汽/念力/吸取/掘地/进食/飞行/防护/流星雨…全是它的子类），**不写死任何聚晶 id** ⇒ 附属同类法术自动受益。**⚠️ 为什么必须自备 `focus/TunerWand`**：让 Mob"使用" `goety:dark_wand` 会让 `DarkWand.onUseTick` 每 tick 走 `MagicResults`，而它对**非玩家施法者**走 `failParticles + FIRE_EXTINGUISH` 分支 —— **不放法术、只冒白烟响灭火音**。`TunerWand implements IWand`：`onUseTick` **空实现**、`getUseDuration` = 72000、显式委托 `IWand.super.initCapabilities`（`SoulUsingItemHandler` 依赖它）、`getSpellType()` = NONE；模型 `models/item/tuner_wand.json` 内容只有 `{"parent": "goety:item/dark_wand"}` ⇒ **外观完全一致**。Boss 与仆从主手都换成 `goetytuner:tuner_wand`，并在 `readAdditionalSaveData` 做**旧档迁移**。**顺带落地了遗留待办「C Boss专属魔杖」**。
+> **用时上限（用户点名要求）**：新增 **`casting.channelMaxTicks`**（Int，**默认 20 = 1 秒**，范围 5~200）；三条**独立**收口、谁先到算谁：① 总时长到上限；② 法术自己的 `shotsNumber`（>0 时）放完；③ 防御性硬上限 `MAX_CHANNEL_SHOTS = 400`。到点必 `finishCast()`（内含 `stopUsingItem`）。**⚠️ 顺带澄清用户疑问**（"我记得已经给过一种时间限额，是不是应用于这一部分"）：**旧键 `casting.maxCastWindowTicks`（默认 50）一直在生效，但它管的是"把前摇截断到 2.5 秒"、并不管持续释放**；长按类法术的 `defaultCastDuration()` 是 **72000**、被它截成 50 ⇒ **旧行为就是"站桩 2.5 秒 → 放一发 → 结束"，这正是本 bug 的一部分**。现在两键分工：`maxCastWindowTicks` = **普通法术**蓄力截断；`channelMaxTicks` = **长按类**持续上限。普通法术（非 `IChargingSpell`）**行为完全不变**。**⚠️ 平衡风险**：腐化光束**每 tick 造成伤害**（Goety 默认 10.0/次，且清零目标 `invulnerableTime` 绕过无敌帧），上限 20 已能打出很高总伤害、**调到 100 以上基本等于必杀**；觉得太强就调小或拉黑该聚晶。
+> **⑤ 聚晶图标改灰黑 + 白**：改了 `art/gen_ripple_focus_icon.py` 的配色 —— 盘面近黑轮廓 `(8,8,8)` + 深灰→近黑渐变 `(58→22)`，亮环 `(240,240,240)`、圆心纯白 `(255,255,255)`，青色圆心渐变去掉（灰黑配色下不再引入第三色）。重新生成 **694 → 627 B**，仍 16×16 RGBA、脚本**字节可复现**。
+> ⚠️ **验证做到什么程度（本轮没有进游戏实测）**：`gradlew build` **成功**（**约 1 分钟**，只有既有基准噪声：3 条 FML deprecated 警告 + 1 条 `TunerBoss` 过时 API 注记，**无新增警告**）；jar 条目 **112 → 117**（新增 5、无删除）；**原始字节串搜索**核对 `CastChannel`（`tickChannel`/`channeled`/`channelEndTick`/`IChargingSpell`）、`TunerWand`（`initCapabilities`）、`TunerServant`（`toggleFocusDisabled`/`toggleFocusPriority`/`clearFocusCommands`/`disabledCount`/`priorityCount`/`TUNER_WAND`/`DamageThrottle`/`TunerDamageRules`）、`TunerServantSpawnEggItem`（`ServantSpawnEggItem`/`spawn.tamed`/`spawn.wild`）、`TunerServantInteractions`（`isOwner`/`wild_hint`/`not_owner_hint`）、`ModItems`（`tuner_wand`）；**`javap`** 核对被 reobf 成 SRG 名的覆写/调用 —— `TunerWand` 方法表 `m_5929_`(=onUseTick) / `m_8105_`(=getUseDuration) / `m_7203_`(=use) / `initCapabilities`，`TunerServant` 的 `m_6469_`(=hurt) / `m_6475_`(=actuallyHurt) / `m_7301_`(=canBeAffected)，`CastChannel.tickChannel` 字节码里确有 `m_6117_()`(=isUsingItem) 与 `m_6672_(InteractionHand)`(=startUsingItem)、`stopChannelUse` 里确有 `m_5810_()`(=stopUsingItem)，并正确 `invokeinterface IChargingSpell.castUp/Cooldown/shotsNumber`；配置 / 资源核对 `define` 调用 **71** 处、section **11** 个、`channelMaxTicks` 存在、`servant.health` 已移除、两份 lang 各 **43 键**且 JSON 合法、jar 内 `mods.toml` 版本 **0.0.19**、png 魔数正确；部署核对**构建产物与部署 jar 逐字节相同**（1,787,227 B / 同一个 md5）。⚠️ **五条修复的运行时表现全部未实测**（详见「仍待办 15」）。部署：`goetytuner-0.0.19.jar`（**1,787,227 B / md5 `9363476AD6F24B6296DF59303BE0DBB7` / jar 内 117 条目**）→ `versions\测试\mods\`（**旧 0.0.17 / 0.0.18 都已删**，该目录只剩这一个）。⚠️ **git 工作区有未提交改动**（0.0.18 + 0.0.19 两轮**都尚未 commit、也未 push**）。详见 `TECHNICAL_SUMMARY.md` **§3.19**。
+
+> **0.0.18 发布（第 56 轮）**：本轮两件新东西 —— **调律波纹聚晶**（玩家可用）＋ **调律师仆从**（含「聚晶指令」）。**规模**：新增 **6 个 Java 类**（`.java` **45 → 51**，源码 **475,860 B**）、新增资源 **3 个**（两个物品模型 json + `textures/item/tuner_ripple_focus.png`，16×16 RGBA / **694 B**，程序化生成）、两份 lang **27 → 37 键（+10）**（⚠️ 口径：「29」是**旧文件行数**、不是键数；行数 29 → 39）、jar 条目 **102 → 112**（新增 10、**无删除**）；**配置 67 → 71 项 / section 10 → 11**（新增 **`[servant]`** 段 4 项：`health`=40、`followRange`=32、`castIntervalTicks`=40、`rotation`="23"），并**改了已有键** `focus.blacklist` 的**默认值**（`goetytwilight:destruction_focus` → `goetytwilight:destruction_focus, goetytuner:tuner_ripple_focus` —— **是改值、不是加键**）；网络协议 **`2.0` → `2.1`**（严格匹配不变）。**用户需求两条**：① **调律波纹聚晶** —— 与调律师「重音涟漪」**同款效果**的聚晶，灵魂能量消耗 **5**、蓄力 **0.2 秒**、冷却 **0.5 秒**，释放时放一次涟漪并产生击退，效果相当于**铺垫期**的涟漪；用户特别提醒模组存在「初始化最后读取 MC 内所有聚晶」的机制，要考虑该聚晶的**声明次序**以保证能被读取而不出 bug，并要求**把该聚晶写入黑名单**。② **调律师仆从** —— 参考诡厄巫法的「生物 ↔ 仆从」对应关系，做调律师对应的仆从版本，要有**一般仆从的性质**；特别地，**玩家手持聚晶左键 / 右键它**时，将之设置为**不释放 / 优先释放**该聚晶。向用户确认的两个范围问题：仆从**只用刷怪蛋 / 指令召唤**（**不做 summon 聚晶**）、仆从**复用调律师的聚晶池 + 轮盘赌抽签**。**关键设计**：**`combat/AccentRipple` 是「重音涟漪」的唯一实现**（击退 / 粒子 / 声波 / 提示音四件事，Boss 的 `accentKnockbackPulse` 改成**四行转发** ⇒ **Boss 与聚晶共用同一份代码**、而不是抄一份；差别只有「力量与音调」与「聚晶额外豁免自己人」两处，由调用方给）；**`SAccentWavePacket` 载荷由「实体 id」改为「三个 double 的世界坐标」**（通道 id 仍 **3**；**玩家放的涟漪锚点是一个裸坐标、没有实体可查** ⇒ `AccentWaveRenderer.trigger(int)` 改成 `trigger(double x, double y, double z)`），广播方式改「锚点 64 格内按玩家」；**聚晶注册次序**三条约束写在 `ModItems` 类 javadoc（同一 `ITEMS` DeferredRegister / `getSpell()` 立刻返回非 null 单例 / **必须同时拉黑**）；**仆从 `TunerServant extends Goety ...ally.Summoned`** ⇒ 一般仆从性质全继承，复用同一 `FocusPoolManager`（**每仆从一份实例**）与 `CastChannel`，**没有**音乐阶段、锁血、瞬移、嘲讽、二阶段；**聚晶指令**（`TunerServantInteractions`）左键 = 不释放 / 右键 = 优先释放，**客户端一律放行、只在服务端取消**（`javap` 实证 `Player.attack` **偏移 0** 就是 `ForgeHooks.onPlayerAttackTarget`，客户端取消会让攻击包**根本不发**）；优先聚晶走 `CastChannel.beginCast(level, entry, mult)` **插队**；**无主仆从第一次被下达指令时认主**。⚠️ **配置迁移必须做**（红线 8）：`focus.blacklist` 是**改已有键的值**、Forge **不会**回填老 toml ⇒ 已用 `scripts/add_ripple_focus_blacklist.py` 对游玩实例 toml 迁移完毕（备份 `...bak-before-blacklist-ripple`）；`[servant]` 段是**新增键** ⇒ 自动补齐、无需手改。⚠️ **本轮未进游戏实测**：只做到 `gradlew build` 成功（**1m19s**，只有项目既有基准噪声、**无新增警告**）+ jar 条目核对（102 → 112）+ **原始字节串**核对 + `javap` 核对**被 reobf 成 SRG 的覆写**与两个交互钩子的位置 + 配置 / 资源核对。部署 `goetytuner-0.0.18.jar`（**1,778,838 B / md5 `5946D71FA425B8F84E2F7E1CF4B5A8E3` / jar 内 112 条目**）→ `versions\测试\mods\`（旧 0.0.17 已删）；git **有未提交改动、未 commit、未 push**。详见下文「第 56 轮（0.0.18）」，技术现状见 `TECHNICAL_SUMMARY.md` §3.18。
 
 > **0.0.17 发布（第 55 轮）**：改 **2 个 Java 文件**（`entity/TunerBoss`、`config/TunerCommonConfig`）+ 版本号，**只改代码、不动任何贴图/资源**（`.java` 仍 **45** 个、jar 条目仍 **102**，无新增类/贴图）；**新增 1 个配置键** ⇒ 配置 **66 → 67 项**（`boss` 段 **19 → 20**，其余段未变，section 数仍 **10**）。**用户反馈**：玩家用**索命聚晶**打中调律师时，Boss 会进入"动画已经死了、血量却回弹"的破状态（索命造成的是"等同于目标当前生命值"的致死伤害，被锁血体系拦住后复活，客户端动画却留在原地）。用户说「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」——**两个都做了**。① **索命聚晶后门**（`entity/TunerBoss` + `config/TunerCommonConfig`）：**先做实证再动手** —— 反编译 Goety 的 `KillingSpell.SpellResult` 得调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(source, amount)`（**走 `hurt()`，我们的覆写能看到**）；`ModDamageSource.DEATH` 的键名在静态初始化里是 `create("death")`，jar 内亦有 `data/goety/damage_type/death.json`（`message_id` = `goety.death`）⇒ 伤害类型是 **`goety:death`**；**全 jar 扫描 `deathCurse` 的引用只有 `KillingSpell` 一处**（外加其在 `ModDamageSource` 的定义）⇒ 用该伤害类型匹配**恰好等价于"索命聚晶"**，不会误伤别的法术。**实现**：新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`（`ResourceKey.create(Registries.DAMAGE_TYPE, new ResourceLocation("goety","death"))` —— **不需要编译期依赖 Goety 的类**，未装 Goety 时该键永不匹配）；`hurt()` 识别后置标记 + 打 INFO + `return super.hurt(...)`（跳过身份免疫 / 宽限期免疫 / 致死截断）；`maintainDeathState()` 见标记直接 `return`（不回弹）；`canStillRevive()` 返回 false（不拦 `remove(KILLED)`）⇒ **索命能真正处决，无视剩余锁血档位**。**关键坑**：`actuallyHurt()` 的限伤 / 限DPS 也必须为它开口子 —— `goety:death` **不在任何 `BYPASSES_*` tag 里**，不显式列出的话"等同于目标当前生命值"的致死伤害会被限伤削掉、后门等于失效。状态正常时清除标记；新增开关 **`boss.deathCurseExecution`**（默认 **true**，false = 关闭后门回到旧行为）。**代价**：索命会对施法者反噬"目标当前生命值 125%"，所以这是**有代价的处决手段**。② **修「动画死了血量回弹」的根因（客户端残留）**：`deathTime` **不是同步数据**（0.0.8 已实证）—— 客户端的 `deathTime` 由客户端自己的 `LivingEntity.tickDeath()` 递增，而它只看**客户端本地血量**；服务端复活时只发**一次** `SEntityRevivePacket`，若那一刻客户端的血量同步还没落地，客户端会在复位后**又自己把 deathTime 加上去**，此后血量虽变正、动画再没人清 ⇒ **永久躺着**；服务端侧的"情形 A"治不了这一侧。修法：在 `tick()` 的**客户端分支**加一条**对称自愈** —— 客户端同样知道血量（`DATA_HEALTH_ID` 是同步数据），`deathTime > 0 && getHealth() > 0` 即视为脏状态、直接 `resetDeathAnimation(...)`（该方法只在服务端发包，客户端调用不产生网络流量）⇒ **至多残留 1~2 tick**。⚠️ **尚未进游戏实测**（本轮只做到编译通过 + jar 条目核对）。部署：`goetytuner-0.0.17.jar`（**1,757,576 B / md5 `B68C4D4FF9FC650796EDB003D2C53009` / jar 内 102 条目**）→ `versions\测试\mods\`（旧 0.0.16 已删）。详见 `TECHNICAL_SUMMARY.md` §3.17。
 >
@@ -12,13 +27,13 @@
 >
 > **更早（0.0.13，第 51 轮）修复**：该轮改了 **7 个 Java 文件** + 版本号，**只改代码、不动任何贴图/资源**（`.java` 文件数仍 45、jar 条目仍 102）；**新增 1 个配置项** `music.accentDensityDivisor` ⇒ 配置 **61 → 62 项**（`music` 段 12 → 13，section 仍 10 个）。① **修「玩家被击杀复活后（未走出索敌范围）背景音乐丢失」**（`BossMusicManager`）：原先只以静态字段 `music != null` 当作「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 被停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 在未 loaded 时静默返回），字段却仍非 null ⇒ 只要服务端 `playing` 一直为 true（没脱战）`startMusic` **永不重入** = **永久静音**，且 `onPlaySound` 同样只看字段 ⇒ **连原版背景音乐也一起被永久取消**（症状「整个 BGM 都没了」）；改为每 tick 用 **`SoundManager.isActive(music)`** 核实 + **10 tick 防抖**，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑 + 高潮改细小长条**（`MusicBarHud`）：`fill()` 只能落在整数像素、刻度只有 1~2px ⇒ 取整后逐像素跳动；改为**亚像素覆盖**（小数部分按比例摊到相邻两列，亮度重心连续移动）；高潮「中」字改为**小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map` 改 `List` + `MAX_WAVES = 32`）：二阶段进场重音每 5 tick 一发，原先后一发**顶掉**前一发、只看到一条波反复重播。④ **重音数量与频率降为 1/3**：新增 `music.accentDensityDivisor`（默认 **3**、范围 1~9），在**服务端加载乐谱时**「每 N 个保留 1 个」⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动（默认乐谱 37 → **13** 个重音）。⑤ **立方体高亮更明显 + 发光**（`TunerOrbLayer`）：高亮改为额外叠加 `glow*0.4` 逐通道**向白靠拢**（原先 `min(1, color*(1+glow*0.8))` 被 `min` 截断、几乎看不出变化），发光用**两层 `entityTranslucentEmissive` 自发光外壳**——**不能用原版发光描边**（MC 的发光是**整实体级** framebuffer 后处理 `OutlineBufferSource`，只能整只 Boss 一起描边，无法只描一颗立方体）。⑥ **药水效果可观测性**：8 处 `addEffect` 的 boolean 返回值原先全被丢弃 ⇒ 被 `canBeAffected` / `MobEffectEvent.Applicable` 拒绝时静默失效；新增 `applySelfEffect` 打 WARN（用于 boss 自身 4 处），并完成药水现状审计。⑦ 配置侧把 **`goety:killing_focus`（索命聚晶，对施法者反噬 125%）** 加入 `focus.blacklist`——**配置侧改动、不在 jar 内**；且 `focus.blacklist`（乃至整个 toml）**无法在游戏内配置界面修改**。0.0.10 美术项与 0.0.12 新外观仍待游戏画面验收，见 [ART_ASSETS_REPORT.md](ART_ASSETS_REPORT.md)。
 
-> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.17
+> MC 1.20.1 Forge 47.3.22 · 附属模组（依赖 Goety 2.5.56.5）· 当前版本 0.0.19
 > 更新日期：2026-09-20
 > 作者：toniat0 & vibe-coding · 团队：Goety Tuner Project · <https://github.com/QieFanQie/>
 > 许可证：MIT License
 >
 > 本文档是**阶段性计划书**（含历史实测记录，进度类内容随轮次回填）；
-> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档更新到第 55 轮），
+> 项目技术现状以 `TECHNICAL_SUMMARY.md` 为准（该文档已更新到第 59 轮 / **0.0.20**，见其 **§3.19** / **§3.20** / **§3.21**），
 > 单任务设计稿见 `DESIGN_RITUAL_WAND_UPGRADE.md`。
 
 ---
@@ -27,7 +42,7 @@
 
 **调律师**：人形无头指挥家Boss，头部位置只有一枚飘动的黑色立方。它以"演奏"的方式轮番使用诡厄巫法及其附属注册的**所有聚晶（Focus）**，战斗由三段式音乐（铺垫/高潮/低谷）驱动。
 
-当前状态（0.0.17 / 第 55 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；**第 55 轮（0.0.17）成果：索命聚晶后门 + 客户端死亡动画残留自愈** —— 用户反馈「用索命聚晶打中调律师时，Boss 会进入"动画已经死了、血量却回弹"的破状态」，并说「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」——**两个都做了**：① **索命后门**：反编译 Goety 的 `KillingSpell.SpellResult` 实证调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(source, amount)`（**走 `hurt()`**），并确认伤害类型是 **`goety:death`**（`create("death")` + `data/goety/damage_type/death.json`）、且**全 jar 只有 `KillingSpell` 一处引用 `deathCurse`** ⇒ 按该伤害类型匹配**恰好等价于"索命聚晶"**；新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`（纯资源位置字符串构造，**不需编译期依赖 Goety 类**），四处联动（`hurt()` 置标记跳过身份/宽限期免疫与致死截断、`maintainDeathState()` 不回弹、`canStillRevive()` 不拦 `remove(KILLED)`、**`actuallyHurt()` 的限伤/限DPS 必须显式开口子** —— `goety:death` 不在任何 `BYPASSES_*` tag 里，漏了后门就形同虚设）⇒ **索命能真正处决、无视剩余锁血档位**；新配置 `boss.deathCurseExecution`（默认 **true**，false = 回到旧行为）；**代价**：索命会对施法者反噬"目标当前生命值 125%"。② **客户端动画自愈**：`deathTime` **不是同步数据**，服务端只发**一次**复位包，若那一刻客户端血量同步还没落地，客户端会**自己再把 `deathTime` 加上去** ⇒ 永久躺着（服务端侧"情形 A"治不了这一侧）；在 `tick()` 的**客户端分支**加**对称自愈**（`deathTime > 0 && getHealth() > 0` 即直接 `resetDeathAnimation`，客户端调用**不发包**）⇒ **至多残留 1~2 tick**。改 **2 个既有 Java 文件**（`entity/TunerBoss`、`config/TunerCommonConfig`）+ 版本号，**无新增类/贴图**，配置 **66 → 67 项**（`boss` 段 **19 → 20**）；⚠️ **仍待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.17）；**第 54 轮（0.0.16）成果：「逐渐学习」** —— 给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数**线性爬升**的权重系数（默认 `0.15 → 1.0` / 60 次施法），使**初始评分**（配置 / LLM 分类）在**开局主导**、随实战**逐步交棒**给动态反馈（此前动态偏移与静态评分同权，开局没打几下初始分类就基本失效）；改 **3 个既有 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**无新增类/贴图**，配置 **63 → 66 项**（`scoring` 段 **3 → 6**）；⚠️ **手感待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.16）；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。第 53 轮（0.0.15）成果：**只有本体贴图精修** —— `tuner.png` **2520 → 2676 B**（翻领边缘 / 衣袖明暗 / 袖口细边 / 裤缝 / 靴口层次），**零 Java 改动、无新增/删除资源**（`.java` 仍 45、配置仍 63 项 / 10 段、jar 仍 102 条目）；**独立核验**：头部区逐像素 0 差异、alpha 蒙版完全一致、身体区改 1247 像素、6 个主要 UV 面无透明空洞；⚠️ **观感仍待游戏内画面验收**。
+当前状态（**0.0.20** / 第 59 轮）：**程序框架完整可运行**，核心战斗逻辑（聚晶池/评分/音乐同步/锁血/阶段切换/效果清除）、音乐资源接入（第 20~21 轮）、仪式召唤与法杖升级（第 36 轮）、游戏内配置与 LLM 评分界面（第 41 轮）均已落地并通过实测；**第 57 轮（0.0.19）成果：用户对 0.0.18 交付的五条反馈全部处理** —— ① **聚晶指令语义重做**（修"左键『不释放』似乎不能取消"这个**设计漏洞**）：0.0.18 的「不释放」与「优先」是**两张互不相干的表**、同一个聚晶可同时命中两者（"不释放"胜出）⇒「先设优先 → 再设不释放 → 又按右键想取消」会**按了没反应**。现在两状态**互斥**：**左键切换"不释放"并顺手清掉"优先"、右键切换"优先"并顺手清掉"不释放"**，任何一键都能把聚晶**切回中立**、语义单一可逆；另加**潜行 + 左键 = 清空该仆从全部聚晶指令**（`clearFocusCommands`）作逃生通道；提示文案改为**列出两张表条目数**（`disabledCount()` / `priorityCount()`）⇒ 一眼可验。⚠️ 本轮**未进游戏实测**，"原来为什么不能取消"只剩**语义解释、没有复现证据**。② **仆从血量 / 护甲 / 减伤限伤与本体一致**：血量护甲直接读 **Boss 的配置键** `boss.maxHealth`(216) / `boss.equivalentArmor`(16)、`KNOCKBACK_RESISTANCE` 对齐 1.0；**`servant.health` 已删除**（死配置）。减伤限伤抽出**共用实现**（本项目红线：同一职责只允许一处实现）—— 新增 **`combat/TunerDamageRules`**（身份免疫 摔落/火焰全系/窒息/溺水、`isDirectMelee`、近战易伤 ×(1+`boss.meleeVulnerability`)）与 **`combat/DamageThrottle`**（限伤 = 单次 ≤ 最大生命 × `boss.maxHitDamagePercent`；限DPS = 滑动 1 秒预算、返回 −1 表示整段吸收）；`TunerBoss` 改为调用这两者（**行为不变，只是搬家**），`TunerServant` 新增 `hurt` / `actuallyHurt` 覆写走同一套规则。⚠️ **刻意不含 Boss 的锁血阶梯**（`lockMark` / 宽限期免疫 / 致死截断 / `/kill` 与索命后门）—— 那是 Boss 的招牌机制，仆从若也锁血就成了打不死的怪；仆从也**没有后门豁免**。③ **仆从刷怪蛋改用 Goety 仆从蛋范式**：新增 `init/TunerServantSpawnEggItem`（**直接继承 Goety 的 `ServantSpawnEggItem`**）⇒ **直接放 = 野生、潜行放 = 认主**，并附动作栏提示与本模组专属 tooltip；**归属不再因交互而改变** —— 0.0.18 的"野生仆从第一次被下达聚晶指令时认主"（`adoptOwnerIfUnowned`）**已彻底删除**，归属**只在刷怪蛋放置时**确定，野生仆从 / 别人家的仆从被手持聚晶左键或右键时**只给提示、不吞掉**这次攻击 / 交互。④ **修「长按持续释放类聚晶只放一瞬间就停」（本轮最有价值的一处修复）**：**两层根因（均已反编译实证）**—— **（a）只结算一次**：玩家路径 `DarkWand.onUseTick` 对 `IChargingSpell` 是"蓄力到 `castUp` 后每 `Cooldown` tick 调一次 `MagicResults`（→ `SpellResult`）直到松手"，而 `CastChannel` 原先只在前摇结束时调**一次**（轰炸/雷电/暴雪这类"每发生成一个实体"的法术只出一发）；**（b）实体下一 tick 就自毁**：`AbstractBeam.tick()`（腐化光束基类）有 `if (itemBase && !MobUtil.isSpellCasting(owner)) discard();`，而 `MobUtil.isSpellCasting` = `isUsingItem() && 用物是 IWand && 杖里有聚晶`，**Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃。**修法**：`CastChannel` 新增通道型路径 **`tickChannel`** —— ① `startUsingItem(MAIN_HAND)` 让施法者**真的在"使用法杖"**（每 tick 自愈式重设；`finishCast` / `interrupt` / `startSpell` 异常 / 外层兜底四处一律 `stopUsingItem`）；② 按法术自己的 `Cooldown` / `shotsNumber` **反复释放**；③ 判定依据是 Goety 自己的 `IChargingSpell`（腐化/震撼/暴雪/轰炸/旋风/箭雨…全是它的子类），**不写死任何聚晶 id** ⇒ 附属同类法术自动受益。**⚠️ 为此必须自备 `focus/TunerWand`**：让 Mob"使用" `goety:dark_wand` 会让 `DarkWand.onUseTick` 对**非玩家施法者**走 `MagicResults` 的 `failParticles + FIRE_EXTINGUISH` 分支 —— **不放法术、只冒白烟响灭火音**。`TunerWand implements IWand`：`onUseTick` **空实现**、`getUseDuration` = 72000、显式委托 `IWand.super.initCapabilities`（`SoulUsingItemHandler` 依赖它）；模型 `models/item/tuner_wand.json` 内容只有 `{"parent": "goety:item/dark_wand"}` ⇒ **外观完全一致**；Boss 与仆从主手都换成 `goetytuner:tuner_wand` 并在 `readAdditionalSaveData` 做**旧档迁移**（**顺带落地了遗留待办「C Boss专属魔杖」**）。**用时上限**（用户点名要求"给一个用时上限，防止它停不下来"）= 新增 **`casting.channelMaxTicks`**（默认 **20 = 1 秒**，5~200），三条独立收口谁先到算谁：总时长 / 法术自己的 `shotsNumber` / `MAX_CHANNEL_SHOTS = 400`。**⚠️ 顺带澄清用户疑问**（"我记得已经给过一种时间限额"）：**旧键 `casting.maxCastWindowTicks`（默认 50）一直在生效，但它只管"把前摇截断到 2.5 秒"、不管持续释放**；长按类法术的 `defaultCastDuration()` 是 **72000**、被它截成 50 ⇒ **旧行为就是"站桩 2.5 秒 → 放一发 → 结束"，这正是本 bug 的一部分**。现在两键分工：`maxCastWindowTicks` = 普通法术蓄力截断；`channelMaxTicks` = 长按类持续上限。**⚠️ 平衡风险**：腐化光束**每 tick 造成伤害**（Goety 默认 10 点/次，且清零目标 `invulnerableTime` 绕过无敌帧），上限 20 已能打出很高总伤害、**调到 100 以上基本等于必杀**。⑤ **聚晶图标改灰黑 + 白**（用户："原本紫色的部分变为黑色"）：配色改为近黑轮廓 `(8,8,8)` + 深灰→近黑渐变 `(58→22)` + 白环 `(240)` + 纯白圆心 `(255)`，青色渐变去掉；**694 → 627 B**，仍 16×16 RGBA、脚本**字节可复现**。**⚠️ 以上五条全部待游戏实测**（详见 §七「仍待办 15」）；**第 56 轮（0.0.18）成果：调律波纹聚晶 + 调律师仆从** —— ① **调律波纹聚晶**（新增 `focus/RippleSpell`，注册在 `init/ModItems`）：与调律师「重音涟漪」**同款效果**的**玩家可用**聚晶，灵魂 **5** / 蓄力 **0.2 s（4 tick）** / 冷却 **0.5 s（10 tick）**、`SpellType.NONE`、**不接受附魔**（⚠️ 这三个是**基础值**，Goety 仍会叠**施法者修正** —— 耗蓝乘 `SoulDiscount` / 环境加成、蓄力乘 `ModAttributes.getCastingSpeed` 与"减半施法时间"饰品、冷却乘 `ModAttributes.getCooldownDiscount`，这是所有聚晶的统一规则、**没有覆写绕过**）；效果 = **铺垫期**的涟漪 + 击退，并**尊重** `music.accentParticles` / `accentWave` / `accentSound` 三个开关（玩家关掉的观感不应在聚晶上复活）。**注册次序（用户点名要处理的点）**：三条约束写进 `ModItems` 的**类 javadoc** —— Ⅰ 必须注册在**同一个 `ITEMS` DeferredRegister**（它在 `RegisterEvent` 统一落地、**远早于** `ServerStartingEvent`，所以聚晶扫描**一定**看得到；另起一个 DeferredRegister 忘 `.register(modBus)` 就**永远看不到** —— 本项目在**刷怪蛋**上踩过这个"注册时序坑"）；Ⅱ `getSpell()` 必须**立刻**返回非 null 单例（复用 Goety `MagicFocus`，构造函数里就存字段、天然满足）；Ⅲ **必须同时拉黑**（否则 Boss 会抽到它：等于**白得一个 0.5 秒冷却的重音**，而且那发涟漪会把 **Boss 自己一起推开**）—— 黑名单默认值已写入 `goetytuner:tuner_ripple_focus`。② **重音涟漪收敛为唯一实现**（新增 `combat/AccentRipple`，147 行）：击退 / 粒子 / 声波 / 提示音**四件事**都收在一处，`TunerBoss.accentKnockbackPulse` 改成**四行转发** ⇒ Boss 与聚晶**共用同一份代码**（而不是抄一份）；差别只有两处、由调用方给：**力量与音调**（Boss 按阶段 0.4/0.8/1.2 与 0.9/1.4/0.6；聚晶固定取**铺垫期** 0.4 / 0.9）与「聚晶**额外豁免"施法者自己人"**（自己 / 自己的宠物 / 自己的 `IOwned` 仆从；Boss 无此需求故传 `null`）。③ **`SAccentWavePacket` 载荷由「实体 id」改为「三个 double 的世界坐标」**（通道 id 仍 **3**）：**玩家放的涟漪锚点是一个裸坐标、没有实体可查**（原先客户端收到包后用 `level.getEntity(id) instanceof TunerBoss` **反查位置**）⇒ `AccentWaveRenderer.trigger(int)` 改成 `trigger(double x, double y, double z)`；广播方式由 `TRACKING_ENTITY` 改为「**锚点 64 格内按玩家广播**」；协议因此 **`2.0` → `2.1`**（**同 id 不同结构会解码错位**）。④ **调律师仆从**（新增 `entity/TunerServant`，522 行）：`extends com.Polarice3.Goety.common.entities.ally.Summoned`（Goety 里**所有仆从的标准基类**）⇒ 主人归属 / 跟随 / 目标牵引 / 仆从加血与传送 / 日照规则**全部继承**，这就是「**一般仆从的性质**」；实体名 `goetytuner:tuner_servant`，`MobCategory.MONSTER` + `sized(0.6F, 1.95F)` + `clientTrackingRange(8)`（照抄 Goety 仆从写法）；**复用**同一个 `FocusPoolManager`（全模组聚晶池 + 静态评分 + 轮盘赌 + 冷却池，**每只仆从各一份实例**）、同一个 `CastChannel`（前摇 / 锁池 / 朝向钉死 / 异常自愈）、同一套模型贴图与渲染层，**没有**音乐阶段、锁血、瞬移、嘲讽、二阶段；**只用刷怪蛋 / 指令召唤**（**不做 summon 聚晶**）、**复用调律师的聚晶池 + 轮盘赌抽签**（两条均为用户确认的范围）。为复用，三处渲染 / 模型类做了**泛型化**：`TunerModel<T extends LivingEntity>`（原写死 `HumanoidModel<TunerBoss>`）、`TunerCapeLayer<T>`、`TunerOrbLayer<T extends LivingEntity & OrbHighlightSource>`（**新增 `entity/OrbHighlightSource` 接口**，Boss 与仆从都实现它 ⇒ 渲染层**不再依赖具体实体类**）；`client/render/TunerServantRenderer` 是**唯一**仆从专属渲染文件。⑤ **聚晶指令（本轮唯一的新玩法，新增 `entity/TunerServantInteractions`，FORGE 总线）**：订阅 `AttackEntityEvent`（左键）与 `PlayerInteractEvent.EntityInteract`（右键）—— 手持 `IFocus` 物品时**左键 = 切换「不释放」**、**右键 = 切换「优先释放」**（再按一次取消）；左键 `setCanceled(true)`（**指挥自家仆从不该顺手揍它**）、右键取消并置结果 `SUCCESS`。**客户端一律放行、只在服务端判定与取消** —— `javap` 实证 `Player.attack` 的**第一条指令**（偏移 0）就是 `ForgeHooks.onPlayerAttackTarget`（false 即 `return`），若在客户端也取消，`LocalPlayer` 会**提前返回、连攻击包都不发**、机制直接失效。指令存 `FocusPoolManager` 的**实例字段**（**非 static**，与 0.0.16 的 `castCount` 同理）并落盘 NBT（`DisabledFoci` / `PriorityFoci`）；**优先聚晶在下次施法时走 `CastChannel.beginCast(level, entry, mult)` 插队**（新重载：**跳过抽签**，其余流程与普通起手完全共用 `startCast`），并按它**自己类别**路由到对应通道。**认主**：刷怪蛋 / 指令生成的仆从**没有主人**，而若严格要求"主人才能指挥"这条机制将**完全不可达**（用户已确认只用刷怪蛋获取）⇒ **无主的调律师仆从会在第一次被下达聚晶指令时认那位玩家为主人**并提示；**别人家的仆从完全不干预**。⚠️ 仆从**刻意不调用** `FocusPoolManager.noteCast()` ⇒ **不参与** 0.0.16 的「逐渐学习」、**永远以初始分类为准**（保持起始权重 0.15 不变）；`TunerServant` 里已写注释、**别误判成 bug**。规模：新增 **6 个类 + 改 16 个既有类** + 版本号 + **3 个新资源**；`.java` **45 → 51**，配置 **67 → 71 项 / section 10 → 11**（新增 `[servant]` 段 4 项），**`focus.blacklist` 默认值变更 ⇒ 老 toml 需手工迁移**（迁移脚本与游玩实例 toml 均已处理）；⚠️ **全部运行时表现仍待游戏实测**（本轮只做到编译通过 + 字节码 / 资源核对），详见下文「第 56 轮（0.0.18）」；**第 55 轮（0.0.17）成果：索命聚晶后门 + 客户端死亡动画残留自愈** —— 用户反馈「用索命聚晶打中调律师时，Boss 会进入"动画已经死了、血量却回弹"的破状态」，并说「如果可以的话给索命的成功伤害直接开个后门；如果麻烦的话修一下动画问题」——**两个都做了**：① **索命后门**：反编译 Goety 的 `KillingSpell.SpellResult` 实证调用链 `ModDamageSource.deathCurse(target)` → `MobUtil.hurtCalculation(...)` → `target.hurt(source, amount)`（**走 `hurt()`**），并确认伤害类型是 **`goety:death`**（`create("death")` + `data/goety/damage_type/death.json`）、且**全 jar 只有 `KillingSpell` 一处引用 `deathCurse`** ⇒ 按该伤害类型匹配**恰好等价于"索命聚晶"**；新增字段 `deathCursePending` + 常量 `GOETY_DEATH_CURSE`（纯资源位置字符串构造，**不需编译期依赖 Goety 类**），四处联动（`hurt()` 置标记跳过身份/宽限期免疫与致死截断、`maintainDeathState()` 不回弹、`canStillRevive()` 不拦 `remove(KILLED)`、**`actuallyHurt()` 的限伤/限DPS 必须显式开口子** —— `goety:death` 不在任何 `BYPASSES_*` tag 里，漏了后门就形同虚设）⇒ **索命能真正处决、无视剩余锁血档位**；新配置 `boss.deathCurseExecution`（默认 **true**，false = 回到旧行为）；**代价**：索命会对施法者反噬"目标当前生命值 125%"。② **客户端动画自愈**：`deathTime` **不是同步数据**，服务端只发**一次**复位包，若那一刻客户端血量同步还没落地，客户端会**自己再把 `deathTime` 加上去** ⇒ 永久躺着（服务端侧"情形 A"治不了这一侧）；在 `tick()` 的**客户端分支**加**对称自愈**（`deathTime > 0 && getHealth() > 0` 即直接 `resetDeathAnimation`，客户端调用**不发包**）⇒ **至多残留 1~2 tick**。改 **2 个既有 Java 文件**（`entity/TunerBoss`、`config/TunerCommonConfig`）+ 版本号，**无新增类/贴图**，配置 **66 → 67 项**（`boss` 段 **19 → 20**）；⚠️ **仍待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.17）；**第 54 轮（0.0.16）成果：「逐渐学习」** —— 给**动态评分**（实战学到的偏移）加一个随**该调律师个体**施法次数**线性爬升**的权重系数（默认 `0.15 → 1.0` / 60 次施法），使**初始评分**（配置 / LLM 分类）在**开局主导**、随实战**逐步交棒**给动态反馈（此前动态偏移与静态评分同权，开局没打几下初始分类就基本失效）；改 **3 个既有 Java 文件**（`focus/FocusEntry`、`focus/FocusPoolManager`、`entity/TunerBoss`）+ 版本号，**无新增类/贴图**，配置 **63 → 66 项**（`scoring` 段 **3 → 6**）；⚠️ **手感待游戏实测**（详见 `TECHNICAL_SUMMARY.md` §3.16）；第 48 轮（0.0.10）美术交付已实现、**待游戏画面验收**；剩余 Boss 专属魔杖、兼容性打磨与少量逻辑边界项。第 43 轮（0.0.5）成果：LLM 评分错误诊断与提示词编辑体验改进、一轮保持功能不变的系统性性能优化（详见 TECHNICAL_SUMMARY.md）；第 44 轮（0.0.6）成果：限伤（单次伤害上限，默认开启 25% 最大生命）+ 限DPS（滑动 1 秒预算，默认关闭）；第 45 轮（0.0.7）成果：LLM 批量评分改分批请求（修「200 个聚晶只应用 25 条」）+ 修线程泄漏 + 提示词格式化加固 + 资源改名；并实证「锁血机制本身已隐含限伤，限伤/限DPS 在当前设计下作用有限，真正旋钮是 lockGraceTicks 与档位数」；第 46 轮（0.0.8）成果：附属模组增删的健壮性加固（逐项扫描兜底 + 施法全流程 try 兜底 + returnEntry 幂等）；死亡状态完善（新增 SEntityRevivePacket 复位客户端死亡动画、脏状态只清动画不消耗锁血档位、锁血未耗尽时拦截 remove(KILLED)）；第 47 轮（0.0.9）成果：为 /kill 打开后门（识别 DamageTypes.GENERIC_KILL 后跳过锁血体系的全部保护，使管理员指令能真正击杀）；第 48 轮（0.0.10）成果：**美术交付**——身体贴图按用户参考图重画（头部区逐像素不变）、8 阶色带披风、红/蓝/灰三颗悬浮立方体（位掩码高亮 + IdentityHashMap 幂等计数）、非对称径向声波涟漪（新增 SAccentWavePacket 通道 id 3，旧粒子默认关闭）、刷怪蛋改走原版 template_spawn_egg（紫/亮蓝染色）；配置 61 项（`music` 段 11→12），网络协议 1.0→**2.0 严格匹配**（联机双方须同时更新）；**上一轮（0.0.11）成果：修掉用户玩出来的真 bug** —— `applyLockHealth()`（由 `aiStep()` 调用）里与 `maintainDeathState()` 重复的「死亡自愈」分支其实**可达**（反编译实证：`LivingEntity.tick()` 里 `aiStep()` 只有 1 处无条件调用，真正被死亡把关的是 `baseTick()` 的 `isDeadOrDying()` → `tickDeath()`；原注释把它与 `serverAiStep()` 混为一谈），后果是 `/kill` 后门被击败（日志实证：`/kill` 后 48 ms Boss 带 18 血复活，只得再杀一次）、白吃一档锁血、且只写 `deathTime=0` 不复位客户端动画（旧「血量不为 0 但已是死亡动画」复发）。修复：删除该分支，改为死亡时在方法开头直接早退；死亡回弹**唯一**权威实现是 `tick()` 里的 `maintainDeathState()`（尊重 `/kill` 后门并同步复位客户端动画）。本轮只改 2 个文件（版本号 + `TunerBoss`），无新增类/贴图/配置。**上一轮（0.0.12）成果：表现层重做 + 一个回调成对性修复** —— ① **径向声波涟漪锚定触发瞬间的坐标**（原先每帧读 Boss 当前位置、会跟着 Boss 跑，而每次锁血都会强制瞬移；现记脚下世界坐标，整条波在固定点上播完，且**清理只按 34 tick 计时**，不再因实体死亡/移除/离开视野提前掐掉）；② **音乐条 HUD 外观重做**（用户反馈「太突兀」）：`260×6`→**`204×8`**、底距 64→62、硬边纯色块→**逐行混色**+2px 过渡缝、单一硬矩形底→**三层柔和投影**（四角留空模拟圆角）、阶段**文字**→**像素符号** `● ● ●`/`●`/`- - - - - -`（实测本客户端字体无 U+26AA 字形，直接写 `⚪` 会显示成空白方块）、重音刻度 `0xB8FFFFFF` 与闪烁峰值 `0x88` 调淡、一阶段分段按条宽做 scissor 裁剪防溢出；③ **`CastChannel` 回调成对性修复**（此前记为「仍未修」的已知边界）：`logCast` 原先排在 `onCastStart` 之后且会抛异常，异常逃逸到 `beginCast` 兜底 `catch` 而那里不补发结束回调 ⇒ 孤儿回调使施法状态计数与立方体类别掩码**永久 > 0**（立方体一直高亮、蹲姿卡住，且身份集合幂等让该聚晶再也无法计入）；现把 `logCast` 调到 `onCastStart` **之前**（结构上不可能再被打断）+ 新增 `startEmitted` 标志兜底补发 `onCastFailed`。另顺手修正 `applyLockHealth()` 的方法 javadoc（仍在描述 0.0.11 已删除的行为，纯注释、无行为变化）。本轮无新增类/贴图/配置项（jar 条目 101→102 只是多了 `AccentWaveRenderer$Wave` 内部类）。第 53 轮（0.0.15）成果：**只有本体贴图精修** —— `tuner.png` **2520 → 2676 B**（翻领边缘 / 衣袖明暗 / 袖口细边 / 裤缝 / 靴口层次），**零 Java 改动、无新增/删除资源**（`.java` 仍 45、配置仍 63 项 / 10 段、jar 仍 102 条目）；**独立核验**：头部区逐像素 0 差异、alpha 蒙版完全一致、身体区改 1247 像素、6 个主要 UV 面无透明空洞；⚠️ **观感仍待游戏内画面验收**。
 > **更早（0.0.13，第 51 轮）成果：音乐自愈 + 重音减密 + 表现层微调 + 药水可观测性** —— ① **修「玩家被击杀复活后（未走出索敌范围）Boss 背景音乐丢失」**：`BossMusicManager` 原先只以静态字段 `music != null` 判定「在播」、**从不与声音引擎核对**，而死亡/复活会让引擎把循环实例悄悄摘除（RECORDS 音量为 0 / channel 停止 / `SoundEngine.reload()→destroy()→stopAll()` / `play()` 未 loaded 时静默返回），字段却仍非 null ⇒ 服务端 `playing` 为 true 时 `startMusic` **永不重入** = **永久静音**；`onPlaySound` 同样只看字段 ⇒ **连原版 BGM 也一起被永久取消**（症状「整个 BGM 都没了」）。现每 tick 用 `SoundManager.isActive(music)` 核实 + 10 tick 防抖，失效即清空字段、下一 tick 自愈重建。② **重音标记滚动平滑**（`MusicBarHud` 亚像素覆盖：小数部分按比例摊到相邻两列，亮度重心连续移动）+ **高潮「中」字改小长条**（高潮 2×6 / 低谷 1×6 / 铺垫 1×4，竖向居中）。③ **涟漪多波共存**（`AccentWaveRenderer` 的 `Map`→`List`，二阶段进场连发不再互相顶掉；`MAX_WAVES=32` 兜底）。④ **新增配置 `music.accentDensityDivisor`（默认 3、范围 1~9）**：服务端加载乐谱时「每 N 个保留 1 个」，HUD 刻度/击退/涟漪/提示音一起变稀疏、客户端零改动（默认乐谱 37 → 13 个重音）；配置 **61 → 62 项**（`music` 段 12 → 13）。⑤ **立方体高亮改「向白插值」+ 两层自发光外壳**（`entityTranslucentEmissive`；原版发光描边是整实体级 `OutlineBufferSource`，无法只描一颗立方体）。⑥ **药水可观测性**：8 处 `addEffect` 返回值原先全被丢弃（被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时静默失效），新增 `applySelfEffect` 打 WARN（boss 自身 4 处）+ 药水现状审计（低谷效果仅一阶段且 `visible=false` 无粒子、二阶段自施可达且不受亡灵免疫、`SUMMON_DOWN` 免疫确认真实生效）。⑦ 配置侧把 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）加入 `focus.blacklist`（**不在 jar 内**；该 toml **无法在游戏内修改**）。
 
 > **更早（0.0.14，第 52 轮）成果：配置界面补上「聚晶黑名单」入口 + 二阶段免疫回复/减伤类效果** —— ① **配置界面新增「聚晶黑名单」输入框**（`client/TunerConfigScreen` + `focus/FocusPoolManager`）：`focus.blacklist` 是 common 配置，而本模组的 `TunerConfigScreen` **顶替了 Forge 默认的 toml 编辑器**，该键此前在游戏内**完全没有入口**（0.0.13 的「拉黑索命聚晶」因此只能靠改文件落地）；现补一个单行 `EditBox`（预填当前值，hint「namespace:path，英文逗号分隔；留空 = 不屏蔽」），**点「完成」关屏时保存**、点「开始评分」时也顺带保存，保存 = `FOCUS_BLACKLIST.set(v)` + `.save()` + `FocusPoolManager.refreshBlacklist()` ⇒ **改完立即生效**（`getBlacklist()` 以 raw 字符串为缓存键，值一变缓存自动失效）。**新增 `FocusPoolManager.refreshBlacklist()`** 的理由：`initIfNeeded()` 扫描时**直接 `continue` 跳过**黑名单聚晶（不进 `ALL_ENTRIES`）⇒"**新增**拉黑"靠实时过滤即可生效，但"**取消**拉黑"必须重扫；而重扫若 `new` 出新 `FocusEntry`，会让实体侧**按对象身份**记录的状态失效（`TunerBoss.activeVisualCasts` 身份集合、`CastChannel.current`）⇒「立方体高亮卡住 / 施法收尾回调对不上」。故新方法按 `namespace:path` 建索引**复用已有对象**，只为"这次才被解禁"的聚晶新建（它们此前不可能在施法中，故安全），再重建 `STATIC_POOLS` 并重新 `applyTo` 分类。新增 4 个 lang 键（zh_cn / en_us 各 4 个）。⚠️ 连他人的服务器时改的是**本地** toml、服务器侧不受影响。② **二阶段免疫「回复 / 减伤」类药水效果**（`entity/TunerBoss` + `config/TunerCommonConfig`）：扩展现有 `canBeAffected` 覆写（它同时是 `addEffect` 与 `forceAddEffect` 的**第一道**判定 ⇒ 返回 false 是**真正的免疫**，不是"加完再清"），名单 = 抗性提升/伤害吸收/生命恢复/瞬间治疗/生命提升，**仅当 `music.isPhase2()`** 生效；**刻意只列这 5 项而非"所有 beneficial"**——Boss 自己的二阶段增益（力量 `DAMAGE_BOOST` 与重振 `RALLYING`）也是 beneficial，一刀切会把它们一起禁掉；名单集中在私有 `isPhase2Immune(...)`，以后加一行即可。新增配置 `phase2_buffs.phase2EffectImmunity`（默认 **true**，false = 回旧行为）；**不影响玩家**、也**不影响 Boss 自己的二阶段自施**。配置 **62 → 63 项**（`phase2_buffs` 段 **3 → 4**）。
@@ -55,16 +70,20 @@
 | 效果清除 | ✅ | 低谷清正面/高潮清负面（本次新增）；**0.0.13 新增 `applySelfEffect`**：boss 自身 4 处自施药水被 `canBeAffected`/`MobEffectEvent.Applicable` 拒绝时打 WARN（此前全类 8 处 `addEffect` 的 boolean 返回值全被丢弃、效果被拒即静默失效） |
 | 重音系统 | ✅ | 分阶段斥力+无前摇瞬发施法 |
 | 仆从管理 | ✅ | 数量上限+迟滞恢复+伤害归因 |
+| **调律波纹聚晶（玩家可用）** | ⚠️ **待游戏实测** | **0.0.18 新增** `goetytuner:tuner_ripple_focus`（`focus/RippleSpell`，复用 Goety `MagicFocus`）：基础值 灵魂 **5** / 蓄力 **4 tick（0.2 s）** / 冷却 **10 tick（0.5 s）**、`SpellType.NONE`、不接受附魔（Goety 再叠施法者修正，未覆写绕过）；效果 = **铺垫期**重音涟漪 + 击退，走 `combat/AccentRipple`、尊重 `music.accentParticles/accentWave/accentSound` 三开关；**默认已写入 `focus.blacklist`**（防 Boss 白得一个 0.5 s 冷却的重音、以及涟漪把 Boss 自己推开） |
+| **调律师仆从** | ⚠️ **待游戏实测** | **0.0.18 新增** `goetytuner:tuner_servant`（`entity/TunerServant`）：`Goety ...ally.Summoned` 子类 ⇒ 一般仆从性质全继承；复用同一 `FocusPoolManager`（每仆从一份实例）/ `CastChannel` / 模型贴图，**没有**音乐阶段、锁血、瞬移、嘲讽、二阶段；只用刷怪蛋 / 指令召唤（不做 summon 聚晶）、复用 Boss 聚晶池 + 轮盘赌。**0.0.19 三项改动**：① **血量 / 护甲 / 减伤限伤与本体一致**（读 `boss.maxHealth`=216 / `boss.equivalentArmor`=16、`KNOCKBACK_RESISTANCE` 1.0；新增 `hurt`/`actuallyHurt` 覆写走 `combat/TunerDamageRules` + `combat/DamageThrottle` **共用实现**；**刻意不含锁血阶梯与 `/kill` 后门**）；② **刷怪蛋改用 Goety 仆从蛋范式**（`init/TunerServantSpawnEggItem`：**直接放 = 野生 / 潜行放 = 认主** + 文字提示；**归属不再因交互而改变**，"第一次下指令认主"已删除）；③ **聚晶指令语义改互斥**（左键顺手清「优先」/ 右键顺手清「不释放」；**潜行+左键 = 清空全部指令**；提示文案带两张表条目数） |
+| **重音涟漪复用（AccentRipple）** | ✅（结构）/ ⚠️ 待实测 | **0.0.18 新增** `combat/AccentRipple` 为「重音涟漪」**唯一实现**：击退 / 粒子 / 声波 / 提示音四合一，`TunerBoss.accentKnockbackPulse` 改成**四行转发** ⇒ Boss 与聚晶**共用同一份代码**；差异只有「力量与音调」与「聚晶额外豁免自己人」两处，由调用方给 |
+| **长按类聚晶持续释放（IChargingSpell）** | ⚠️ **待游戏实测** | **0.0.19 修复**（用户第 4 条反馈，本轮最有价值的一处）：腐化 / 震撼 / 炼狱这类"长按持续释放"聚晶在调律师（及仆从）身上**只放一瞬间就停**。**两层根因（均已反编译实证）**：① `CastChannel` 原先只在前摇结束时调**一次** `SpellResult`（玩家路径按键是法术自己的 `Cooldown` 反复调 `MagicResults`）；② `AbstractBeam.tick()` 靠 `MobUtil.isSpellCasting(owner)` 判定存活（= `isUsingItem() && 用物是 IWand && 杖里有聚晶`），而 **Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃。**修法**：`CastChannel` 新增 **`tickChannel`**（`startUsingItem` + 每 tick 自愈重设 + 结束/打断/异常一律 `stopUsingItem`，并按 `Cooldown`/`shotsNumber` 反复释放；判定依据 Goety 自己的 `IChargingSpell`、**不写死聚晶 id** ⇒ 附属同类法术自动受益）+ **自备 `focus/TunerWand`**（`onUseTick` **空实现** —— 直接用 `dark_wand` 会让 `DarkWand.onUseTick` 对**非玩家**走 `failParticles + FIRE_EXTINGUISH`：不放法术、只冒白烟响灭火音）；**用时上限** = 新增 `casting.channelMaxTicks`（默认 **20 = 1 秒**） |
 | 客户端HUD | ✅ | **204×8** 音乐条（0.0.12 重做：逐行混色分段 + 2px 过渡缝、三层柔和投影（四角留空模拟圆角）、阶段**像素符号** `● ● ●`/`●`/`- - - - - -`）、三色分段（铺垫 0xFF5B9BE0 / 高潮 0xFFF26A4B / 低谷 0xFFB068E8）、分阶段重音刻度（0.0.13 起**亚像素覆盖**平滑滚动，不再逐像素跳动；高潮 2×6 / 低谷 1×6 / 铺垫 1×4 小长条，半透明白 0xB8FFFFFF）、二阶段锚定坠落条带 + scissor 裁剪 + wrap 补位、越线亮黄闪烁（峰值 0x88） |
-| 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段；共 4 个通道（含 0.0.10 新增 `SAccentWavePacket` id 3，限 `PLAY_TO_CLIENT`），协议 2.0 严格匹配 |
+| 网络同步 | ✅ | SMusicSyncPacket 20tick推送进度/阶段/二阶段；共 4 个通道（含 0.0.10 新增 `SAccentWavePacket` id 3，限 `PLAY_TO_CLIENT`），协议 **2.1** 严格匹配（**0.0.18 起** `SAccentWavePacket` 载荷由「实体 id」改为「三个 double 的世界坐标」，通道 id 仍 3、广播改「锚点 64 格内按玩家」；**0.0.19 未改动协议、仍为 `2.1`**） |
 | 正式纹理 | ✅ | `tuner.png` 64x64 身体按参考图服装重画、头部仍是黑立方+蓝渐变（0.0.10）；另有 8 阶披风、立方体与声波贴图，自定义蛋贴图已删（改走原版模板） |
-| 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10；0.0.13 高亮改「向白插值」+ 两层 `entityTranslucentEmissive` 自发光外壳） |
-| 配置系统 | ✅ | **66 项** / 10 个 section（toml）；`phase2_buffs` 段 0.0.14 增至 4 项，`scoring` 段 0.0.16 增至 6 项 |
+| 渲染方案 | ✅ | 原版 HumanoidMobRenderer + `TunerModel` + `TunerCapeLayer` + 悬浮立方体 `TunerOrbLayer`/`TunerOrbModel`（0.0.10；0.0.13 高亮改「向白插值」+ 两层 `entityTranslucentEmissive` 自发光外壳）；**0.0.18 起 `TunerModel`（`<T extends LivingEntity>`）/`TunerCapeLayer<T>`/`TunerOrbLayer<T extends LivingEntity & OrbHighlightSource>` 全部泛型化**（新增 `entity/OrbHighlightSource` 接口 ⇒ 渲染层不再依赖具体实体类）**以便仆从复用，并新增唯一的仆从专属渲染文件 `TunerServantRenderer`** |
+| 配置系统 | ✅ | **71 项** / **11** 个 section（toml）；`phase2_buffs` 段 0.0.14 增至 4 项，`scoring` 段 0.0.16 增至 6 项，`boss` 段 0.0.17 增至 20 项，**0.0.18 新增 `servant` 段 4 项**，**0.0.19 起 `casting` 段 10 → 11 项（新增 `channelMaxTicks`）、`servant` 段 4 → 3 项（删除死配置 `health`，血量护甲改由 `[boss]` 段的 `maxHealth` / `equivalentArmor` 统一提供）⇒ 总项数不变仍 71** |
 | 实测验证 | ✅ | quickPlay自动进档验证通过（第 9/11 轮） |
 | 客户端音乐播放器 | ✅ | `BossMusicManager` 客户端循环实例（`SimpleSoundInstance` looping + `Attenuation.NONE` + relative），解决阶段切换重叠/原版音乐重叠/Boss 死后不停（第 21 轮）；**0.0.13 修「玩家被击杀复活后（未走出索敌范围）音乐丢失」：每 tick 用 `SoundManager.isActive` 核实实例真的在响 + 10 tick 防抖，失效即清空字段并自愈重建**（第 51 轮） |
-| 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；**0.0.13 起活跃表由 Map 改 List ⇒ 同实体多波共存**，旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮）；**重音密度由 `music.accentDensityDivisor`（默认 3）服务端统一抽稀**（第 51 轮） |
+| 重音特效 | ✅ | 非对称径向声波涟漪（0.0.10；**0.0.13 起活跃表由 Map 改 List ⇒ 同实体多波共存**，旧粒子默认关闭） + 阶段差异化紫水晶音（0.9/1.4/0.6）；二阶段进场连发 6 次（第 19/31 轮）；**重音密度由 `music.accentDensityDivisor`（默认 3）服务端统一抽稀**（第 51 轮）；**0.0.18 起击退 / 粒子 / 声波 / 提示音四件事统一由 `combat/AccentRipple` 提供 —— Boss 与波纹聚晶共用同一份代码** |
 | 披风渲染层 | ✅ | `TunerCapeModel` + `TunerCapeLayer`（第 19 轮） |
-| 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮）；**0.0.14 起配置界面有「聚晶黑名单」输入框**（关屏/开始评分时保存 + `refreshBlacklist()` 热刷新，取代"只能手改 toml"） |
+| 聚晶黑名单 + 施法自愈 | ✅ | 配置 `focus.blacklist`（String 容错解析）+ 运行期 `RUNTIME_BLACKLIST` + 实体级拦截 `goetytwilight:destruction`（第 26/29 轮）；**0.0.14 起配置界面有「聚晶黑名单」输入框**（关屏/开始评分时保存 + `refreshBlacklist()` 热刷新，取代"只能手改 toml"）；**0.0.18 起默认值改为 `goetytwilight:destruction_focus, goetytuner:tuner_ripple_focus`**（**改已有键的值** ⇒ Forge 不会回填老 toml、需手工迁移，见 §六 的 0.0.18 迁移提示） |
 | 分类三层防线 | ✅ | 手动配置 → `instanceof ISummonSpell` 权威判定 → `describe()` 兼容 `.info`/`.desc` 双后缀 → 关键词兜底（第 29 轮） |
 | 仪式召唤 + 法杖升级 | ✅ | 任务 #118：`goety:ritual_factory` 注册、快照制掉落、10% 巫法（`SPELL_POTENCY` MULTIPLY_TOTAL）+ 40% 魔法伤害、经验×4（第 36 轮） |
 | 调律命令 | ✅ | `/goetytuner tune <witchcraft\|magic\|add\|clear\|info>`（OP2）（第 37b 轮） |
@@ -327,7 +346,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 六、配置系统总览
 
-### `run/config/goetytuner-common.toml`（67项 / 10个 section，第55轮实况）
+### `run/config/goetytuner-common.toml`（71项 / 11 个 section，第56轮实况）
 
 | 分类 | 配置项 | 默认值 | 说明 |
 |---|---|---|---|
@@ -365,8 +384,9 @@ AI自动初评分**已完整实现**。两条路径：
 | | **learningWeightStart** | **0.15** | **0.0.16 新增**：**「逐渐学习」起始权重**（0~1）—— 开局的**动态评分只按该比例**计入轮盘权重，让**初始评分**（配置 / LLM 分类）主导；`0` = 完全无视动态评分（纯用初始分类），`1` = 旧行为（一开始就全权重）。三键合起来 = 「动态偏移 × 系数」里的系数，**静态评分不受影响** |
 | | **learningWeightMax** | **1.0** | **0.0.16 新增**：**「逐渐学习」权重上限**（0~2）—— 施法次数足够多之后动态评分的权重；`1` = 与旧行为持平。⚠️ 设为 0 则"永远学不会"（动态评分永久被忽略） |
 | | **learningWeightRampCasts** | **60** | **0.0.16 新增**：**从起始权重线性升到上限所需的施法次数**（1~1000）—— 默认 60 次（曲线：0 次→0.150、10→0.292、20→0.433、30→0.575、40→0.717、50→0.858、60→**1.000**，之后封顶）。只统计"用聚晶施法"的前摇起手（`onCastStart`；瞬发/重音不计入）；每跨 10% 里程碑打一条 INFO `[Tuner] Learning weight ...`。⚠️ 计数是**每只 Boss 私有**且**不落盘** ⇒ 退出重进 / 重召唤**归零**；三键都**只能在 toml 里改**、**改完需重启** |
-| **casting**（10项） | extraCastCooldown | 20 | 额外施法冷却 |
-| | maxCastWindowTicks | 50 | 单次施法窗口上限（tick） |
+| **casting**（**11项**，0.0.19 由 10 项增至 11 项） | extraCastCooldown | 20 | 额外施法冷却 |
+| | maxCastWindowTicks | 50 | **普通法术**的单次施法窗口上限（tick）——把前摇截断到 2.5 秒（玩家提前松手是合法释放路径） |
+| | **channelMaxTicks** | **20** | **0.0.19 新增**：**「长按持续释放」类聚晶（Goety `IChargingSpell`：腐化光束 / 震撼 / 暴雪 / 轰炸 / 旋风 / 箭雨 / 电击 / 水流 / 蒸汽 / 念力 / 吸取 / 掘地 / 进食 / 飞行 / 防护 / 流星雨 …）的单次施法总时长上限**（tick，**20 = 1 秒**，范围 5~200）。**⚠️ 与 `maxCastWindowTicks` 的分工**：本键管**长按类**的持续时长；`maxCastWindowTicks` 管**普通法术**的蓄力截断（2.5 秒），两者互不影响、只对各自那类法术生效。**为什么需要它**：玩家手里这类法术是"按住多久就放多久"，而 **Mob 没有松手动作** ⇒ 不给上限就会一直放下去。**三条独立收口、谁先到算谁**：① 总时长到本键；② 法术自己的 `IChargingSpell#shotsNumber(...)`（>0 时）放完；③ 防御性硬上限 `MAX_CHANNEL_SHOTS = 400`。**⚠️ 调大有风险**：腐化光束这类法术是**每 tick 造成伤害**的（Goety 默认 `CorruptedBeamDamage = 10.0`/次，且它会清零目标的 `invulnerableTime` 以绕过无敌帧），上限 20 已经能打出很高的总伤害，**调到 100 以上基本等于必杀**。⚠️ 属**新增键**（Forge 自动补进老 toml），但**配置界面没有入口 ⇒ 只能手改 `goetytuner-common.toml`，改完需重启游戏** |
 | | climaxWarmupMultiplier | 0.5 | 高潮前摇倍率 |
 | | phase1BuildupRotation | "123" | 一阶段铺垫期通道轮换 |
 | | phase2BuildupRotation | "222" | 二阶段铺垫期通道轮换 |
@@ -375,7 +395,7 @@ AI自动初评分**已完整实现**。两条路径：
 | | phase2TeleportIntervalFactor | 1.0 | 二阶段瞬移间隔系数（范围 0.1~1.0，只能缩短二阶段瞬移间隔） |
 | | phase2BuildupArcRadius | 6.0 | 二阶段铺垫期弧形瞬移半径 |
 | | phase2BuildupArcEveryN | 3 | 每 N 次铺垫攻击触发一次弧形瞬移 |
-| **focus**（1项） | blacklist | "goetytwilight:destruction_focus" | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，逐段 trim、**大小写敏感**，实时解析带缓存）。**代码默认值只有 `destruction_focus`**；0.0.13 起**游玩实例的 toml** 额外加入 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）。✅ **0.0.14 起可在游戏内配置界面修改**（新增单行输入框，点「完成」关屏或点「开始评分」时保存 + 热刷新 ⇒ **改完立即生效**）；⚠️ 仍是**唯一**补了入口的 common 键，**其余配置项依旧只能手改 toml**；连他人服务器时改的是**本地** toml。`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
+| **focus**（1项） | blacklist | **"goetytwilight:destruction_focus, goetytuner:tuner_ripple_focus"**（**0.0.18 改值**） | 聚晶黑名单（容错解析：单 id / 英文逗号分隔 / 数组写法，逐段 trim、**大小写敏感**，实时解析带缓存）。**0.0.18 起代码默认值 = `destruction_focus` + 本模组新增的 `tuner_ripple_focus`**（否则 Boss 会抽到它：等于白得一个 0.5 秒冷却的重音，且那发涟漪会把 Boss 自己一起推开）；0.0.13 起**游玩实例的 toml** 还额外含 `goety:killing_focus`（索命聚晶，对施法者反噬 125%）。⚠️ **这是"改已有键的值"** ⇒ Forge **不会**回填老 toml，**必须手工迁移**（见下方 0.0.18 迁移提示）。✅ **0.0.14 起可在游戏内配置界面修改**（新增单行输入框，点「完成」关屏或点「开始评分」时保存 + 热刷新 ⇒ **改完立即生效**）；⚠️ 仍是**唯一**补了入口的 common 键，**其余配置项依旧只能手改 toml**；连他人服务器时改的是**本地** toml。`RUNTIME_BLACKLIST` 与它是**并集**、配置无法解禁 |
 | **wand_whitelist**（1项） | whitelist | "" | 法杖白名单（格式同上，供未加入 `goety:wands` 标签的附属法杖激活仪式） |
 | **music**（13项） | syncInterval | 20 | 音乐同步间隔 |
 | | accentKnockbackBase | 0.4 | 普通重音斥力 |
@@ -390,6 +410,10 @@ AI自动初评分**已完整实现**。两条路径：
 | | **accentDensityDivisor** | **3** | **0.0.13 新增**：重音抽稀「**每 N 个保留 1 个**」（1~9；1=不抽稀，默认 3 ⇒ 数量与频率约为原来的 1/3）。在**服务端加载乐谱时**统一生效 ⇒ HUD 刻度（经 `SMusicSyncPacket` 全量同步）/ 击退 / 涟漪 / 提示音**一起**变稀疏、客户端零改动；加载时打 INFO `Accent thinning x3: 37 -> 13 accents` |
 | | volume | 4.0 | Boss 音乐音量 |
 | | pitchPhase1 | 1.0 | 音乐播放速度（一/二阶段共用同一速度） |
+| **servant**（**3项**，**0.0.18 新增段**；**0.0.19 由 4 项减至 3 项**） | ~~health~~（**0.0.19 已删除**） | ~~40~~ | **0.0.18 引入、0.0.19 删除的死配置**。用户要求「仆从的血量 / 护甲 / 减伤限伤机制和本体保持一致」⇒ 仆从现在**直接读 `[boss]` 段的 `maxHealth`（默认 216）与 `equivalentArmor`（默认 16）**，`KNOCKBACK_RESISTANCE` 也对齐 1.0 ⇒ 本键失去意义、**已移除**。⚠️ **这是「删键」**：老 toml 里那一行会变成**孤儿条目**，Forge 会自行处理，**无需手工迁移**（与 0.0.18 那种「改已有键的值」是两种性质）。想让仆从改肉薄/改厚 ⇒ 改 `[boss]` 的 `maxHealth`（**注意：那会同时改 Boss 本体**） |
+| | followRange | 32 | 仆从索敌半径 / FOLLOW_RANGE 属性（8~128）；仆从是**远程施法者**，默认比近战仆从大一些 |
+| | castIntervalTicks | 40 | 两次施法之间的间隔（0~600 tick）；默认 40 = **2 秒**，指「上一发结算完」到「开始下一发前摇」的等待，**与聚晶自身冷却（冷却池）是两回事、二者取更长者** |
+| | rotation | "23" | 仆从的施法轮换序列（数字串，每位一个通道角色：1=防御 / 2=攻击 / 3=召唤 / 4=其他，按序循环）；默认 `23` = 攻击、召唤各半。防御/其他类不参与评分、均匀随机；攻击/召唤类走与 Boss **同一套评分与轮盘赌** |
 | **llm**（2项） | apiUrl | "https://api.openai.com/v1/chat/completions" | LLM 端点 |
 | | model | "gpt-4o-mini" | LLM 模型 |
 | **wand_upgrade**（6项） | wandUpgradeEnabled | true | 法杖升级掉落开关 |
@@ -432,6 +456,28 @@ AI自动初评分**已完整实现**。两条路径：
 > （老 toml 在下次启动写入该行之前查不到它属正常 —— 默认值在代码里）。
 > ⚠️ 它**也没有配置界面入口** ⇒ 想关掉索命后门**只能手改 `goetytuner-common.toml` 后重启游戏**
 > （common 配置在 mod 加载时读入内存，手改文件不会热生效）。详见 `TECHNICAL_SUMMARY.md` §3.17。
+>
+> ⚠️ **0.0.18 迁移提示（必须手工做一次 —— 本项目红线 8）**：`focus.blacklist` 是**改已有键的默认值**，
+> 而 Forge **按 key 合并配置、不会用新默认值覆盖你已有的 toml** ⇒ 老存档里**不会**自动出现
+> `goetytuner:tuner_ripple_focus`（后果：Boss 会抽到这张聚晶 —— 等于白得一个 0.5 秒冷却的重音，
+> 而且那发涟漪还会把 Boss 自己一起推开）。已提供 `scripts/add_ripple_focus_blacklist.py`
+> （自动探测编码 / 备份 / 只改那一行 / `difflib` 复核差异仅限该行 / 校验 CRLF 与无 BOM），
+> 并且**已经对游玩实例 `versions\测试\config\goetytuner-common.toml` 跑过**
+> （值 = `goetytwilight:destruction_focus, goety:killing_focus, goetytuner:tuner_ripple_focus`，
+> 备份 `goetytuner-common.toml.bak-before-blacklist-ripple`）；**也可以直接在游戏内 Mods → Config →
+> 「聚晶黑名单」输入框**里补（0.0.14 起有入口、改完立即生效、无需重启）。
+> ⚠️ **0.0.18 新增的 `[servant]` 段 4 项属「新增键」** ⇒ Forge 会**自动补进**老 toml、**无需手改**
+> （老 toml 在下次启动写入这四行之前查不到它们属正常 —— 默认值在代码里）；但它们**配置界面没有入口**
+> ⇒ 想改只能手改 toml 后**重启游戏**。
+> **⇒「新增键会自动补齐」与「改默认值不会回填」仍是两件事，不要混为一谈。**
+>
+> ⚠️ **0.0.19 配置变更（一加一删，两种性质都出现了）**：
+> ① **新增键** `casting.channelMaxTicks`（默认 **20** = 1 秒）⇒ Forge **自动补进**老 toml、**无需手改**；
+> ② **删除键** `servant.health`（0.0.18 引入的死配置）⇒ 老 toml 里那一行变成**孤儿条目**，Forge 会自行处理，
+> **同样无需手工迁移**（**删键 ≠ 改键默认值** —— 后者才是必须手工迁移的那种，见上面的 0.0.18 提示）。
+> **⇒ 本轮总项数与段数都不变（仍 71 项 / 11 段）**：`casting` 10 → 11、`servant` 4 → 3，净变化 0。
+> ⚠️ `channelMaxTicks` 与其余 common 键一样**配置界面没有入口**（界面只有 LLM API Key / 提示词 / 聚晶黑名单三个输入框）
+> ⇒ **改完需重启游戏**；**0.0.18 的 `focus.blacklist` 手工迁移仍然有效、不要撤**。
 
 ### `run/config/goetytuner/music_score.json`（真实值）
 ```json
@@ -454,7 +500,7 @@ AI自动初评分**已完整实现**。两条路径：
 
 ## 七、优先级排序与建议开发顺序
 
-### 已完成（第 0.0.17 / 55 轮现状，保留划掉条目以便追溯）
+### 已完成（第 0.0.19 / 57 轮现状，保留划掉条目以便追溯）
 - [x] ~~**E1 音乐播放控制**~~：停止/循环/切换/脱战对齐已全部实现（第 20~21 轮）
 - [x] ~~**E2 重音刻度HUD同步**~~：segments + accents 全量同步 + 分阶段样式（第 13/19 轮）
 - [x] ~~**E6 正式生成方式**~~：仪式召唤落地（第 36 轮）
@@ -542,10 +588,83 @@ AI自动初评分**已完整实现**。两条路径：
   （该方法只在服务端发包，**客户端调用不产生网络流量**）⇒ **至多残留 1~2 tick**。
   配置 **66 → 67 项**（`boss` 段 **19 → 20**）。⚠️ **仍待游戏实测**
   （第 55 轮 / 0.0.17，详见 `TECHNICAL_SUMMARY.md` §3.17）
+- [x] ~~**想要一张「调律师同款涟漪」的玩家聚晶 / 该聚晶可能读不到或与 Boss 撞车**~~：
+  0.0.18 新增 **调律波纹聚晶** `goetytuner:tuner_ripple_focus`（新增类 `focus/RippleSpell`，复用 Goety `MagicFocus`）——
+  基础值 **灵魂 5 / 蓄力 4 tick（0.2 s）/ 冷却 10 tick（0.5 s）**、`SpellType.NONE`、不接受附魔
+  （Goety 仍会再叠施法者修正：`SoulDiscount` / `getCastingSpeed` / `getCooldownDiscount`，统一规则、**未覆写绕过**）；
+  效果 = **铺垫期**的重音涟漪 + 击退。**注册次序三条约束写进 `ModItems` 类 javadoc**：
+  ① 必须注册在**同一个 `ITEMS` DeferredRegister**（它在 `RegisterEvent` 落地、**远早于** `ServerStartingEvent`
+  ⇒ 聚晶扫描**一定**看得到；另起一个 DeferredRegister 忘 `.register(modBus)` 就**永远看不到** ——
+  本项目在**刷怪蛋**上踩过这个"注册时序坑"）；② `getSpell()` 必须**立刻**返回非 null 单例（`MagicFocus` 天然满足）；
+  ③ **必须同时拉黑**（否则 Boss 白得一个 0.5 秒冷却的重音，且涟漪会把 Boss 自己推开）。
+  **重音涟漪同时收敛为唯一实现**（新增类 `combat/AccentRipple`，147 行）：击退 / 粒子 / 声波 / 提示音四合一，
+  `TunerBoss.accentKnockbackPulse` 改成**四行转发** ⇒ Boss 与聚晶**共用同一份代码**；差异只有
+  「力量与音调」（Boss 按阶段 0.4/0.8/1.2 与 0.9/1.4/0.6；聚晶固定 0.4 / 0.9）与「聚晶额外豁免自己人
+  （自己 / 宠物 / `IOwned` 仆从；Boss 传 `null`）」。⚠️ **全部待游戏实测**
+  （第 56 轮 / 0.0.18）
+- [x] ~~**想要调律师对应的「仆从版本」（含玩家指挥它的手段）**~~：0.0.18 新增 **调律师仆从**
+  `goetytuner:tuner_servant`（新增类 `entity/TunerServant`，522 行）：`extends Goety ...ally.Summoned`
+  ⇒ 一般仆从性质（主人归属 / 跟随 / 目标牵引 / 加血传送 / 日照规则）**全部继承**；复用同一
+  `FocusPoolManager`（每仆从一份实例）/ `CastChannel` / 模型贴图，**没有**音乐阶段、锁血、瞬移、嘲讽、二阶段；
+  **只用刷怪蛋 / 指令召唤**（不做 summon 聚晶）、**复用 Boss 的聚晶池 + 轮盘赌**（两条均为用户确认的范围）。
+  为复用做了三处**泛型化**：`TunerModel<T extends LivingEntity>`、`TunerCapeLayer<T>`、
+  `TunerOrbLayer<T extends LivingEntity & OrbHighlightSource>`（新增 `entity/OrbHighlightSource` 接口
+  ⇒ 渲染层不再依赖具体实体类），新增唯一的 `client/render/TunerServantRenderer`。
+  **聚晶指令**（新增类 `entity/TunerServantInteractions`，FORGE 总线）：手持 `IFocus` **左键 = 切换「不释放」**、
+  **右键 = 切换「优先释放」**；左键 `setCanceled(true)`、右键置 `SUCCESS`；**客户端一律放行、只在服务端判定**
+  （`javap` 实证 `Player.attack` **偏移 0** 即 `ForgeHooks.onPlayerAttackTarget`，客户端取消会让 `LocalPlayer`
+  **连攻击包都不发**）。指令存 `FocusPoolManager` **实例字段**（非 static）+ NBT
+  （`DisabledFoci` / `PriorityFoci`）；优先聚晶走新重载 `CastChannel.beginCast(level, entry, mult)`
+  **插队**（跳过抽签、其余流程共用 `startCast`）；**无主仆从第一次被下达指令时认主**（否则只用刷怪蛋获取会让
+  机制完全不可达）。⚠️ 仆从**刻意不调 `noteCast()`** ⇒ 不参与 0.0.16「逐渐学习」、永远以初始分类为准
+  （别误判成 bug）。⚠️ **全部待游戏实测**（第 56 轮 / 0.0.18）
+- [x] ~~**联机协议与涟漪载荷的结构性缺陷**~~：`SAccentWavePacket` 载荷由「实体 id」改为
+  **「三个 double 的世界坐标」**（通道 id 仍 3）—— **玩家放的涟漪锚点是裸坐标、没有实体可查**，而客户端原先靠
+  `level.getEntity(id) instanceof TunerBoss` 反查位置；`AccentWaveRenderer.trigger(int)` 相应改成
+  `trigger(double x, double y, double z)`，广播由 `TRACKING_ENTITY` 改为「**锚点 64 格内按玩家广播**」；
+  协议 **`2.0` → `2.1`**（**同 id 不同结构会解码错位**）⇒ 联机双方必须同为 0.0.18+。
+  ⚠️ **联机与观感均待游戏实测**（第 56 轮 / 0.0.18）
+- [x] ~~**长按持续释放类聚晶只放一瞬间就停**~~（用户第 4 条反馈，**本轮最有价值的一处修复**）：
+  **两层根因**——① `CastChannel` 原先只在前摇结束时调**一次** `SpellResult`（玩家路径是按法术自己的
+  `Cooldown` 反复调 `MagicResults`）；② `AbstractBeam.tick()` 靠 `MobUtil.isSpellCasting(owner)` 判定存活
+  （= `isUsingItem() && 用物是 IWand && 杖里有聚晶`），而 **Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃。
+  修法：`CastChannel` 新增 **`tickChannel`**（`startUsingItem` + 每 tick 自愈重设 + `finishCast`/`interrupt`/
+  `startSpell` 异常/**外层兜底 catch** 四处一律 `stopChannelUse`，并按 `Cooldown`/`shotsNumber` 反复释放；
+  判定依据 Goety 自己的 `IChargingSpell`、**不写死聚晶 id** ⇒ 附属同类法术自动受益）
+  + **自备 `focus/TunerWand`**（`onUseTick` **空实现** —— 用 `dark_wand` 会让 `DarkWand.onUseTick` 对非玩家
+  走 `failParticles + FIRE_EXTINGUISH`：**不放法术、只冒白烟响灭火音**）+ 用时上限
+  `casting.channelMaxTicks`（默认 20）。**顺带落地了遗留待办「C Boss专属魔杖」**。
+  ⚠️ **表现待游戏实测**（第 57 轮 / 0.0.19，详见 `TECHNICAL_SUMMARY.md` §3.19(1)）
+- [x] ~~**聚晶指令「左键『不释放』似乎不能取消」**~~（用户第 1 条反馈，**修的是设计漏洞**）：
+  0.0.18 的「不释放」与「优先」是**两张互不相干的表**、同一聚晶可同时命中两者（"不释放"胜出）
+  ⇒「先设优先 → 再设不释放 → 又按右键想取消」会**按了没反应**。现在两状态**互斥**（左键顺手清优先 /
+  右键顺手清不释放），任何一键都能把聚晶**切回中立**；另加**潜行 + 左键 = 清空全部指令**；提示文案带
+  两张表条目数。⚠️ 本轮**未进游戏实测**，"原来为什么不能取消"只剩**语义解释、没有复现证据**
+  （第 57 轮 / 0.0.19，详见 `TECHNICAL_SUMMARY.md` §3.19）
+- [x] ~~**仆从与本体机制不一致（血量 / 护甲 / 减伤限伤）**~~（用户第 2 条反馈）：
+  血量护甲改读 `boss.maxHealth`(216) / `boss.equivalentArmor`(16)、`KNOCKBACK_RESISTANCE` 1.0，
+  并把 Boss 内联的三段判定抽成**共用实现** **`combat/TunerDamageRules`**（身份免疫 / 近战易伤）+
+  **`combat/DamageThrottle`**（限伤 / 滑动 1 秒限DPS）⇒ Boss 与仆从**共用一份代码**（Boss 侧行为不变、
+  只是搬家）；`servant.health` 删除。⚠️ **刻意不含锁血阶梯**（仆从若也锁血就成了打不死的怪）。
+  ⚠️ **仆从是否真的变肉待实测**（第 57 轮 / 0.0.19）
+- [x] ~~**仆从归属语义（"第一次下指令就认主"不合理）**~~（用户第 3 条反馈）：
+  新增 `init/TunerServantSpawnEggItem`（**继承 Goety 的 `ServantSpawnEggItem`**）⇒ **直接放 = 野生 /
+  潜行放 = 认主**（+ 动作栏提示 + tooltip）；**归属只在放置时确定**，0.0.18 的 `adoptOwnerIfUnowned`
+  **已彻底删除**；野生 / 他人仆从被手持聚晶左键或右键时**只给提示、不吞掉**攻击与交互。
+  ⚠️ **待游戏实测**（第 57 轮 / 0.0.19）
+- [x] ~~**聚律波纹聚晶贴图配色（要灰黑 + 白）**~~（用户第 5 条反馈）：
+  `art/gen_ripple_focus_icon.py` 配色改为近黑轮廓 `(8,8,8)` + 深灰→近黑渐变 `(58→22)` + 白环 `(240)` +
+  纯白圆心 `(255)`（去掉青色渐变）；**694 → 627 B**、仍 16×16 RGBA、脚本**字节可复现**。
+  ⚠️ **观感待人类过目**（作者 agent 无图像输入能力）（第 57 轮 / 0.0.19）
 
 ### 仍待办
 1. **A3 剩余粒子**：传送 / 净化环 / 二阶段碎裂+天空盒 / 施法前摇聚能
-2. **C Boss专属魔杖**：`TunerWand` 代码可先做，贴图后补
+2. ~~**C Boss专属魔杖**：`TunerWand` 代码可先做，贴图后补~~
+   ✅ **已完成（0.0.19 / 第 57 轮）**：`focus/TunerWand` + `models/item/tuner_wand.json`（模型 `parent`
+   指向 `goety:item/dark_wand` ⇒ **外观与占位期完全一致**）。它最初是为修「长按类法术只放一瞬间」而做的
+   （需要一把 `onUseTick` **空实现**的 IWand 让 Mob 能"真的在使用法杖"），顺带把这条待办一起落地：
+   Boss 与调律师仆从的主手都从 `goety:dark_wand` 换成 `goetytuner:tuner_wand`，并在
+   `readAdditionalSaveData` 做**旧档迁移**。⚠️ 注意它是**配发给 AI 的**，玩家手持右键只返回 `PASS`
 3. **D 附属兼容与性能测试**：安装其他 Goety 附属联合测试
 4. **E3 竞态实测**：三通道共享主手杖换装竞态
 5. **E4 / E5**：DoT 伤害归因、召唤物 owner 识别
@@ -578,6 +697,102 @@ AI自动初评分**已完整实现**。两条路径：
     残留应**至多 1~2 tick** 内自动复位（走 DEBUG 日志）。本轮只做到**编译通过 + jar 条目核对**，**均未进游戏实测**。
     另需实测确认**代价侧**：索命对施法者反噬「目标当前生命值 125%」是否让玩家自己也被打死（设计内代价，非 bug）。
     详见 `TECHNICAL_SUMMARY.md` §3.17
+14. **0.0.18 待验收（本轮全部运行时表现均未实测）**：① **调律波纹聚晶**（`goetytuner:tuner_ripple_focus`）——
+    灵魂 5 / 蓄力 0.2 s / 冷却 0.5 s 的**实际手感**（⚠️ Goety 还会叠施法者修正，故实测值会高于基础值）、
+    击退范围与强度是否与 Boss 的**铺垫期**涟漪一致、是否**豁免自己人**（自己 / 宠物 / `IOwned` 仆从）、
+    是否**尊重** `music.accentParticles` / `accentWave` / `accentSound` 三个开关；② **重音涟漪共用实现**
+    是否让 Boss 的原有表现**完全不变**（`accentKnockbackPulse` 只是四行转发 —— 本项是**回归重点**）；
+    ③ **仆从** —— 刷怪蛋 / 指令召唤是否正常、AI（跟随 / 索敌 / 施法轮换 `servant.rotation` = "23"）是否合理、
+    **被清空 / 主人死亡 / 换维度**等边界、免疫 `GoetyEffects.SUMMON_DOWN` 与主手杖不掉落是否生效；
+    ④ **聚晶指令** —— 左键（不释放）/ 右键（优先释放）的切换与提示文案、**左键不再顺手揍仆从**、
+    指令是否随 NBT 持久化、**优先聚晶是否真的插队**、**无主仆从的认主**是否只发生在第一次指令、
+    **别人家的仆从是否完全不受影响**；⑤ **联机协议 2.1** —— 双方版本不一致应被拒绝连接、
+    双方均为 0.0.18 时涟漪与仆从同步是否正常；⑥ **贴图观感** —— `tuner_ripple_focus.png`
+    （16×16 RGBA / 694 B / **程序化生成**）与仆从实体（复用 Boss 的模型 / 贴图 / 渲染层）的实际观感。
+    ⚠️ 本轮只做到**编译通过 + jar 条目核对 + 原始字节串核对 + `javap`（SRG 覆写与两个交互钩子位置）
+    + 配置 / 资源核对**；⚠️ 作者 agent **不具备图像输入能力、从未看过该图标**
+    （`art/preview_ascii.py` 是唯一可用的检视手段，输出只是 ASCII 灰度近似）。
+    **⇒ 以上 ①~⑥ 全部仍待游戏实测。**
+    ⚠️ **0.0.19 更新（本条有两项已被推翻，按 0.0.19 的行为验收即可）**：
+    ④ 里的「**无主仆从的认主**是否只发生在第一次指令」**已作废** —— 0.0.19 起**归属只在刷怪蛋放置时确定**
+    （直接放 = 野生 / 潜行放 = 认主），"第一次下指令认主"已彻底删除；④ 的指令语义也改为**互斥 + 可清空**。
+    ⑥ 里的图标已**重新生成为灰黑 + 白**（**694 → 627 B**），不再是紫色系。
+15. **0.0.19 待验收（本轮五条修复的运行时表现**全部**未实测）**：① **长按类聚晶是否真的持续释放**（本轮最有价值的一处）
+    —— 让 Boss（或仆从）抽到/装备 **腐化 / 震撼 / 炼狱 / 暴雪 / 轰炸 / 旋风 / 箭雨** 一类聚晶，观察是否
+    **持续放出**（腐化光束应是一条**跟着走、持续存在**的光束，而不是"闪一下"）；同时确认 **1 秒上限生效**
+    （`casting.channelMaxTicks` 默认 20 ⇒ 到点必然收手，**不会停不下来**），以及**收手后光束消失**
+    （异常路径也已补 `stopChannelUse`，不会永久"使用中"）；**普通法术（非充能类）表现应与 0.0.18 完全一致**（回归重点）。
+    ⚠️ **平衡感受**：腐化光束**每 tick 造成伤害**，上限 20 已能打出很高总伤害、**调到 100 以上基本等于必杀**。
+    ② **`TunerWand` 外观与旧档迁移** —— Boss / 仆从手里的杖**外观应与之前的 `goety:dark_wand` 完全一样**；
+    读一个 0.0.18 的老存档，主手应被**自动换成 `goetytuner:tuner_wand`**；玩家手持它右键**不应有任何施法反应**。
+    ③ **聚晶指令语义**（用户第 1 条）—— 左键 / 右键**各自都能把聚晶切回中立**（先设优先再设不释放，然后
+    **按右键应能取消**）、**潜行 + 左键清空全部指令**、提示文案里的**条目数**与实际相符；
+    ⚠️ 本轮**无复现证据**，请重点确认"原来那种按了没反应"是否真的不再出现。
+    ④ **仆从是否真的变肉**（用户第 2 条）—— 仆从应有 **216 血 + 等效护甲 16 + 近战易伤 +25% + 限伤 25%**；
+    与 Boss 并排挨同一下攻击对比掉血量；⚠️ 确认**仆从不会被 `/kill` 之外的东西"锁血"**（刻意不含锁血阶梯），
+    也确认 **`/kill` 能正常击杀仆从**（无后门豁免）。
+    ⑤ **仆从刷怪蛋归属**（用户第 3 条）—— **直接放 = 野生**（不跟随任何人、有提示）、**潜行放 = 认主**
+    （跟随并接受聚晶指令、有提示）；**野生仆从与别人家的仆从**被手持聚晶左键 / 右键时**只给提示、
+    且这次攻击 / 交互照常生效**（不吞掉）；tooltip 多一行本模组说明。
+    ⑥ **图标观感**（用户第 5 条）—— `tuner_ripple_focus.png`（16×16 RGBA / **627 B** / 程序化生成）
+    是否确实是"灰黑 + 白"、是否好看。**⚠️ 纯人眼判断**：作者 agent **不具备图像输入能力、从未看过它**
+    （`art/preview_ascii.py` 只是 ASCII 灰度近似）；不满意可直接改 `art/gen_ripple_focus_icon.py` 的参数重跑。
+    ⑦ **回归** —— 确认 0.0.18 的波纹聚晶、重音涟漪四件事、仆从的跟随 / 索敌 / 轮换、联机协议 **2.1** 全部照旧
+    （0.0.19 **未改动协议**；但与 0.0.18 同协议号，**建议双方同为 0.0.19**）。
+16. **0.0.19 修补（第 58 轮）待验收 —— 三条修复的运行时表现全部未实测**：
+    ① **「不释放」是否终于起效**（用户第 2 条，**最重要的一条**）—— ⚠️ **先确认游戏已重启**（第 58 轮的修复
+    只在**新 jar** 里；部署时游戏正在运行，运行中的实例仍是旧字节码）；然后：**直接放**一只仆从（= 野生）
+    → **手持任意聚晶左键点它** → 该聚晶应变成"不释放"（★本轮把"野生仆从被拒"这条堵掉了，这正是原来
+    "完全不起效"最可能的真凶）；**再左键一次**应切回中立；**右键** = 优先释放、再右键切回中立；
+    **潜行 + 左键现在不再有任何特殊行为**（原来的"清空全部指令"已删）；
+    **只有别人家的仆从**才会被拒绝 —— 此时应在**日志**里看到 `Servant focus command refused`，
+    **动作栏不应再出现任何文字**（本轮把提示全删了）。
+    ② **箭雨 / 长按类聚晶的持续时间**（用户第 3 条）—— 让 Boss（或仆从）抽到 / 装备 **箭雨**：
+    应能看到**先蓄力约 1 秒、然后持续放约 1 秒**（共 ~40 tick，**不再是放一发就停**）；
+    **腐化光束**应是**一条跟着走、持续存在约 1 秒**的光束；**震撼 / 炼狱**同理。
+    ⚠️ 若仍觉得"持续太短" ⇒ 调大 `casting.channelMaxTicks`（**只影响持续段、不含蓄力**）；
+    ⚠️ **平衡**：腐化光束每 tick 造成伤害，**调到 100 以上基本等于必杀**。
+    ③ **提示精简**（用户第 1 条）—— 刷怪蛋的物品说明**只剩一行**"调律师仆从刷怪蛋，潜行使用会生成你自己的仆从."；
+    **放置时不再有动作栏提示**、**左键 / 右键仆从时不再有动作栏提示**（这些是本轮**故意删掉**的，
+    不是 bug）；`/give` 拿到蛋时也不应再看到 Goety 原本那句通用说明（`appendHoverText` 不再调 `super`）。
+    ⚠️ **本条 ③ 已被第 59 轮部分推翻**：用户随后指出"左键和右键功能都没有提示了……这个提示是需要的"
+    ⇒ **左右键的指令结果提示已恢复**（物品介绍与放置提示仍然不要），**以第 17 条为准**。
+    ④ **回归** —— 「潜行 + 左键清空全部指令」**已删除**（这是有意的）；被拒绝的交互**仍然照常生效**（不吞掉攻击）；
+    野生 / 认主的归属仍**只在放置时**确定；协议仍 **2.1**；普通（非长按类）法术表现应与 0.0.18 完全一致。
+    ⚠️ 本轮只做到**编译通过（约 1 分钟、无新增警告）+ jar 条目核对（112 → 117）+ 原始字节串核对
+    + `javap`（SRG 覆写：`m_5929_`/`m_8105_`/`m_7203_`/`m_6469_`/`m_6475_`/`m_7301_`，以及
+    `CastChannel.tickChannel` 里的 `m_6117_()`/`m_6672_()`/`m_5810_()`）+ 配置 / 资源核对
+    + 部署产物逐字节比对**。**⇒ 以上 ①~⑦ 全部仍待游戏实测。**
+17. **0.0.20（第 59 轮）待验收 —— 四条内容的运行时表现全部未实测**：
+    ⚠️ **先完全重启游戏**（新 jar 换了文件名 `0.0.19 → 0.0.20`；部署时游戏正在运行）。
+    ① **左右键提示是否回来了（最优先；这正是本轮修的那条回归）** —— 手持**单个聚晶**左键仆从 ⇒
+    屏幕上方出现 `不释放：<聚晶名>`；**再左键** ⇒ `已取消不释放：<聚晶名>`；右键 ⇒ `优先释放：<聚晶名>`、
+    再右键 ⇒ `已取消优先释放：<聚晶名>`；对**别人家的仆从** ⇒ 红色 `这不是你的调律师仆从`
+    （且这次攻击 / 交互**照常生效**）。⚠️ 名字应当是**中文聚晶名**、不是 `goety:xxx_focus` 这种 id。
+    ⚠️ 同时确认**没回退过头**：刷怪蛋**放置时仍然不弹提示**、物品说明仍然**只有一行**。
+    ② **聚晶包 / 多晶大袋批量指令** —— 往袋里塞几颗不同聚晶（再混点别的物品，应当被跳过）⇒
+    **左键** ⇒ `不释放：N 个聚晶（聚晶包）` + 日志里 N 条 `Servant focus <id> -> DISABLED`；
+    **再左键** ⇒ 整体清除；右键 ⇒ 优先释放、再右键 ⇒ 整体清除。
+    ⚠️ **空袋子**左键 / 右键 ⇒ **不应有任何反应**，且这次攻击 / 交互**照常生效**（不吞掉）。
+    ③ **仪式召唤仆从** —— 基座摆 **紫水晶碎片 ×4 + 红石 + 钻石 + 金锭 + 青金石**，
+    **中心放一把带「调律加成」的法杖**（打一次调律师拿到的那把；**两种调律加成任一 > 0** 即认），用任意法杖右键祭坛启动；
+    应消耗 **100 灵魂**（每秒 10、共 10 秒；不足会走 Goety 自己的"没有足够的灵魂能量"），
+    完成后**仆从认主**且**中心那把杖被消耗**。
+    ⚠️ **反向验证**：中心放**没有调律加成**的普通法杖 ⇒ **仪式不成立**（Goety 会给"无效的仪式"），这是有意的。
+    ⚠️ 若仪式不启动，先看是不是已经带了很多 Goety 仆从 —— `RitualRequirements.canSummon` 有**全局仆从上限**。
+    ④ **杖的加成 → 仆从强度** —— ⚠️ **判定用「调律·巫法加成」**（0.0.20 按你的反馈改的，不是魔法伤害加成）：默认 **+10%/次** ⇒ 打 **1** 次 ⇒ 只有**强健 Ⅰ**；**3** 次 ⇒ **强健 Ⅱ + 生命恢复 Ⅰ**；**7** 次 ⇒ **强健 Ⅳ + 生命恢复 Ⅱ**；**9** 次 ⇒ **强健 Ⅴ + 生命恢复 Ⅱ + 抗性提升 Ⅰ**；**11** 次 ⇒ **抗性提升 Ⅱ（封顶）**。
+    若有 **+90%** 的杖 ⇒ 应为**强健 Ⅴ + 生命恢复 Ⅱ + 抗性提升 Ⅰ**。
+    ⚠️ **必须知道的坑**：**强健（`goety:buff`）只加近战攻击伤害，而仆从没有近战手段**
+    ⇒ 它在**战斗力上几乎不产生差异**（HUD / 属性面板会显示）。要"真的更强"就得让我把强健等级
+    同时换算成**法术强度**（`ModAttributes.SPELL_POTENCY`）—— **等你的决定**，我没自作主张加。
+    ⚠️ **生命恢复 / 抗性提升是真生效的**，可以挨打对比（抗性 Ⅱ 的减伤很明显）。
+    ⚠️ **刷怪蛋 / `/summon` 出来的仆从不应有任何增益**（没有召唤用杖），这是有意的。
+    ⑤ **仆从死亡掉落召唤用杖** —— 把仪式召唤的仆从打死 ⇒ 地上出现**召唤时那把法杖**，
+    **附魔 / 聚晶 / 原有的两行「调律:…」全在**（= 原样返回、**不再额外升级**，与 Boss 掉落刻意不同）；
+    日志应有 `Tuner servant died, returned its summoning wand: <uuid> (<name>)`。
+    ⚠️ **刷怪蛋召唤的仆从死亡不应掉杖**；⚠️ 主手那把 `goetytuner:tuner_wand` **任何情况下都不应掉落**。
+    ⑥ **回归** —— 单体指令语义（互斥 + 可撤销）与 0.0.19 一致；刷怪蛋"直接放 = 野生 / 潜行放 = 认主"不变、
+    **野生仆从仍可被任何玩家配置**；仆从仍是 216 血 / 护甲 16；联机协议仍 **2.1**（双方都要 0.0.20）。
 
 ---
 
@@ -1185,6 +1400,389 @@ AI自动初评分**已完整实现**。两条路径：
   → `versions\测试\mods\`（旧 0.0.16 已删）。⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`），
   判断"部署的 jar 对应哪份源码"要**逐条目比对**，别看整体 md5（详见 `TECHNICAL_SUMMARY.md` §六）。
 
+### 第 56 轮（0.0.18）
+- **本轮范围**：**调律波纹聚晶**（玩家可用）＋ **调律师仆从**（含「聚晶指令」）。新增 **6 个 Java 类**：
+  `combat/AccentRipple`（147 行）、`focus/RippleSpell`（121 行）、`entity/OrbHighlightSource`（24 行）、
+  `entity/TunerServant`（522 行）、`entity/TunerServantInteractions`（130 行）、
+  `client/render/TunerServantRenderer`（33 行）；**改 16 个既有类**（`init/ModItems`、`init/ModEntities`、
+  `init/ModBusEvents`、`entity/TunerBoss`、`entity/ai/CastChannel`、`focus/FocusPoolManager`、
+  `focus/FocusCategory`、`config/TunerCommonConfig`、`network/TunerNetwork`、`network/SAccentWavePacket`、
+  `client/AccentWaveRenderer`、`client/ClientSetup`、`client/render/TunerModel`、`client/render/TunerCapeLayer`、
+  `client/render/TunerOrbLayer`、`client/render/TunerRenderer`）+ 版本号。`.java` **45 → 51**、
+  源码 **475,860 B**；新增资源 **3 个**（两个物品模型 json + `textures/item/tuner_ripple_focus.png`）；jar 条目 **102 → 112**。
+- **用户需求两条**：① **调律波纹聚晶** —— 与调律师「重音涟漪」**同款效果**的聚晶，灵魂能量消耗 **5**、
+  蓄力 **0.2 秒**、冷却 **0.5 秒**，释放时放一次涟漪并产生击退，效果相当于**铺垫期**的涟漪；
+  用户特别提醒模组存在「**初始化最后读取 MC 内所有聚晶**」的机制，要考虑该聚晶的**声明次序**以保证能被读取
+  而不出 bug，并要求**把该聚晶写入黑名单**。② **调律师仆从** —— 参考诡厄巫法的「生物 ↔ 仆从」对应关系做
+  调律师对应的仆从版本，要有**一般仆从的性质**；特别地，**玩家手持聚晶左键 / 右键它**时，将之设置为
+  **不释放 / 优先释放**该聚晶。**用户确认的两个范围问题**：仆从**只用刷怪蛋 / 指令召唤**（**不做 summon 聚晶**）、
+  仆从**复用调律师的聚晶池 + 轮盘赌抽签**。
+- **① 重音涟漪收敛为唯一实现（新增 `combat/AccentRipple`）**：击退 / 粒子 / 声波 / 提示音**四件事**都收在它里面，
+  `TunerBoss.accentKnockbackPulse` 被改成**四行转发** —— Boss 与聚晶**共用同一份代码**，而不是抄一份。
+  **差别只有两处、由调用方给**：**力量与音调**（Boss 按阶段 0.4/0.8/1.2 与 0.9/1.4/0.6；聚晶固定取**铺垫期**的
+  0.4 / 0.9），以及聚晶**额外豁免"施法者自己人"**（自己 / 自己的宠物 / 自己的 `IOwned` 仆从）—— Boss 无此需求，
+  故传 `null`。
+- **② 调律波纹聚晶（新增 `focus/RippleSpell`，注册在 `init/ModItems`）**：复用 Goety 的 `MagicFocus`（构造函数里
+  就存好单例 spell）。`defaultSoulCost()` = **5**、`defaultCastDuration()` = **4 tick（0.2 s）**、
+  `defaultSpellCooldown()` = **10 tick（0.5 s）**；`getSpellType()` = `SpellType.NONE`；**不接受附魔**。
+  ⚠️ 这三个是**基础值**，Goety 会再叠**施法者修正**（耗蓝乘 `SoulDiscount` / 环境加成、蓄力乘
+  `ModAttributes.getCastingSpeed` 与"减半施法时间"饰品、冷却乘 `ModAttributes.getCooldownDiscount`）——
+  这是 Goety **所有聚晶的统一规则**，**没有去覆写绕过**。效果走 `AccentRipple`，并**尊重**
+  `music.accentParticles` / `music.accentWave` / `music.accentSound` 三个开关（与 Boss 同款：**玩家关掉的观感
+  不应在聚晶上复活**）。**注册次序（用户点名的那个点）** —— `focus.blacklist` 默认值里写入了
+  `goetytuner:tuner_ripple_focus`，另外三条约束写在 `ModItems` 的**类 javadoc** 里：
+  - Ⅰ 必须注册在**同一个 `ITEMS` DeferredRegister**：该 register 在 mod 构造函数**第一时间**调用，而
+    `DeferredRegister` 在**远早于 `ServerStartingEvent`** 的 `RegisterEvent` 统一落地 ⇒ 聚晶扫描**一定**看得到它；
+    **另起一个 DeferredRegister 却忘了 `.register(modBus)` 就会永远看不到** —— 本项目在**刷怪蛋**上踩过这个
+    "注册时序坑"（见「注册时序坑（第七轮实证）」）。
+  - Ⅱ `getSpell()` 必须**立刻**返回非 null 单例（`MagicFocus` 在构造函数里就存字段，天然满足）。
+  - Ⅲ **必须同时拉黑**：否则 Boss 会抽到它 —— 等于**白得一个 0.5 秒冷却的重音**，而且那发涟漪会把
+    **Boss 自己一起推开**。
+- **③ `SAccentWavePacket` 载荷由「实体 id」改为「三个 double 的世界坐标」（通道 id 仍为 3）**：**原因** ——
+  客户端原先收到包后要用 `level.getEntity(id) instanceof TunerBoss` **反查位置**，而**玩家放的涟漪锚点是一个
+  裸坐标、没有实体可查**；`AccentWaveRenderer.trigger(int)` 相应改成 `trigger(double x, double y, double z)`。
+  协议号因此提升到 **2.1**（`TunerNetwork.PROTOCOL_VERSION`，**同 id 不同结构会解码错位**；严格匹配不变）；
+  **广播方式**由 `TRACKING_ENTITY` 改为「**锚点 64 格内按玩家广播**」。
+- **④ 调律师仆从（新增 `entity/TunerServant`，522 行）**：`extends com.Polarice3.Goety.common.entities.ally.Summoned`
+  （Goety 里**所有仆从的标准基类**）⇒ 主人归属 / 跟随 / 目标牵引 / 仆从加血与传送 / 日照规则**全部继承**，
+  这就是用户要的「一般仆从的性质」。实体名 `goetytuner:tuner_servant`，`MobCategory.MONSTER` +
+  `sized(0.6F, 1.95F)` + `clientTrackingRange(8)`（照抄 Goety 仆从写法）。**与 Boss 同源复用**的部分：
+  同一个 `FocusPoolManager`（全模组聚晶池 + 静态评分 + 轮盘赌 + 冷却池，**每只仆从各一份实例**）、
+  同一个 `CastChannel`（前摇 / 锁池 / 朝向钉死 / 异常自愈）、**同一套模型贴图与渲染层**；
+  **没有**音乐阶段、锁血、瞬移、嘲讽、二阶段。
+- **⑤ 聚晶指令（本轮唯一的新玩法，新增 `entity/TunerServantInteractions`，FORGE 总线）**：订阅
+  `AttackEntityEvent`（左键）与 `PlayerInteractEvent.EntityInteract`（右键）—— 手持 `IFocus` 物品时：
+  **左键 = 切换「不释放」**、**右键 = 切换「优先释放」**（再按一次取消）。左键会 `setCanceled(true)`
+  （**指挥自家仆从不该顺手揍它**），右键取消并置结果 `SUCCESS`。**客户端一律放行、只在服务端判定与取消** ——
+  理由是经 `javap` 实证 `Player.attack` 的**第一条指令**（偏移 0）就是 `ForgeHooks.onPlayerAttackTarget`
+  （false 即 `return`），**若在客户端也取消，`LocalPlayer` 会提前返回、连攻击包都不发**，机制直接失效。
+  指令存 `FocusPoolManager` 的**实例字段**（**不是 static**，与 0.0.16 的 `castCount` 同理）并落盘到 NBT
+  （`DisabledFoci` / `PriorityFoci`）；**优先聚晶在下次施法时走 `CastChannel.beginCast(level, entry, mult)`
+  插队**（新重载：**跳过抽签**，其余流程与普通起手完全共用 `startCast`），并按它**自己类别**路由到对应通道。
+  **认主**：刷怪蛋 / 指令生成的仆从**没有主人**，而若严格要求"主人才能指挥"，这条机制将**完全不可达**
+  （用户已确认只用刷怪蛋获取）⇒ **无主的调律师仆从会在第一次被下达聚晶指令时认那位玩家为主人**并提示；
+  **别人家的仆从则完全不干预**（交回默认攻击 / 交互行为）。
+- **⑥ 仆从另外三处与 Boss 对齐 + 一处刻意不做**：免疫 Goety 的召唤冷却 `GoetyEffects.SUMMON_DOWN`
+  （否则它的召唤会**越召唤越废**）、主手暗法杖 `setDropChance(MAINHAND, 0)`（**配发装备不该在死亡时掉出来**）、
+  召唤类权重用的召唤物数量按 `gameTime` **缓存**（本项目红线 13：热路径不许每 tick 全量扫描）。
+  ⚠️ **刻意不做**：仆从**不调用** `FocusPoolManager.noteCast()` —— 0.0.16 的「逐渐学习」是**给 Boss 设计的**，
+  仆从应当**永远以初始分类为准**（保持起始权重 0.15 不变）；`TunerServant` 里已写注释，**以免后人误判成 bug**。
+- **⑦ 泛型化与共用实现（为"同源复用"服务）**：三处渲染 / 模型类做了**泛型化** ——
+  `TunerModel<T extends LivingEntity>`（原写死 `HumanoidModel<TunerBoss>`）、`TunerCapeLayer<T>`、
+  `TunerOrbLayer<T extends LivingEntity & OrbHighlightSource>`（**新增 `entity/OrbHighlightSource` 接口**，
+  Boss 与仆从都实现它 ⇒ 渲染层**不再依赖具体实体类**）；`TunerServantRenderer` 是**唯一**仆从专属渲染文件，
+  只多了一个实体类型。`FocusCategory.parseRoleSpec(String)` 是把 `TunerBoss.parseRoleSpec` **上提到枚举的
+  共用实现**（Boss 侧改成一行薄委托，**4 个调用点不动**），仆从用它解析 `servant.rotation`。
+- **配置**：**67 → 71 项 / section 10 → 11**。新增 **`[servant]` 段 4 项**：`health` = **40**、`followRange` = **32**、
+  `castIntervalTicks` = **40**、`rotation` = **"23"**（**新增键** ⇒ Forge 自动补进老 toml）。
+  ⚠️ 同时**改了已有键** `focus.blacklist` 的**默认值**：`goetytwilight:destruction_focus` →
+  `goetytwilight:destruction_focus, goetytuner:tuner_ripple_focus` —— **这是本次唯一的配置迁移项**
+  （Forge **不会**回填老 toml，见 §六 0.0.18 迁移提示）。
+- **未做**：**游戏内实测** —— 本轮只做到：
+  - `gradlew build` **成功**（**1m19s**），编译期只有项目**既有的基准噪声**（3 条 FML deprecated 警告 +
+    1 条 `TunerBoss` 过时 API 注记），**无新增警告**；
+  - jar 条目比对 **102 → 112**（新增 10 = 6 个新 class + 2 个模型 json + `textures/item/` 目录 + 纹理 png，**无删除**）；
+  - 用**原始字节串搜索**核对（**不用 `javap` 文本匹配 —— `javap` 会折行**）：`TunerNetwork` 含 `2.1`；
+    `SAccentWavePacket` 含 `writeDouble` / `readDouble`；`ModItems` 含三个物品 id；`ModEntities` 含 `tuner_servant`；
+    `TunerServantInteractions` 含 `AttackEntityEvent` / `PlayerInteractEvent$EntityInteract` / `IFocus`；
+    `FocusPoolManager` 含 `takeSpecific` / `isUsable` / `restoreFocusCommands` / `priorityFoci`；
+    `ClientSetup` 含 `TunerServantRenderer`；
+  - 用 `javap` 核对**被 reobf 成 SRG 名的覆写**（字节串搜索会漏报）：`TunerServant.m_7301_(MobEffectInstance)`
+    确实存在且正确调 `Summoned.m_7301_`，构造函数里确有 `m_21409_(EquipmentSlot, F)`（= `setDropChance`）；
+  - 用 `javap` 反编译**映射版 MC**（`forge-1.20.1-47.3.22_mapped_official_1.20.1.jar`）实证两个交互钩子的位置：
+    `Player.attack` **偏移 0** = `ForgeHooks.onPlayerAttackTarget`（false 即 `return`）、
+    `Player.interactOn` **偏移 30** = `ForgeHooks.onInteractEntity`，**早于** `Entity.interact`（偏移 57）
+    与 `itemstack.interactLivingEntity`；
+  - 配置 / 资源核对：`define` 调用 **71** 处、`[servant]` 段 4 项、黑名单默认值正确、两份 lang 各 **37 键**
+    且 JSON 合法、两个模型 json 合法、jar 内 `mods.toml` 版本 **0.0.18**、png 魔数正确。
+  ⚠️ **一切运行时表现都未实测**（详见「仍待办 14」）。
+- **部署产物**：`goetytuner-0.0.18.jar`（**1,778,838 B / md5 `5946D71FA425B8F84E2F7E1CF4B5A8E3` / jar 内 112 条目**）
+  → `D:\落幕曲&原版&灾厄巫咒\.minecraft\versions\测试\mods\`（旧的 `goetytuner-0.0.17.jar` 已删；
+  部署时**游戏未运行**，`Get-Process java` 为空）。⚠️ **git 工作区有未提交改动**（本轮**尚未 commit、也未 push**）。
+  ⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`），判断"部署的 jar 对应哪份源码"
+  要**逐条目比对**，别看整体 md5。
+
+### 第 59 轮（0.0.20）
+
+- **本轮范围**：**一条回归反馈 + 三条新功能**，**版本号 0.0.19 → 0.0.20**。新增 **2 个 Java 类**
+  （`combat/ServantWandBlessing`、`ritual/TunerServantSummonRitual`）+ **1 个仪式配方 json**；
+  改 **6 个既有 Java 文件** + **2 个 lang**（**34 → 43 键**，+9/−0）；**配置 71 → 72 项**
+  （`[servant]` 段 3 → 4 项）；jar 条目 **117 → 120**（新增 3、无删除）；协议仍 **2.1**。
+- **① 【回归】左右键的聚晶指令提示：被我误删，已回补**（用户："左键和右键功能都没有提示了；
+  是不是我让你删提示的时候你把左右键的提示也删了，**这个提示是需要的**"）
+  - **发生了什么**：第 58 轮我把 `TunerServantInteractions` 里**所有**动作栏提示都删了，
+    包括**左右键的指令结果提示**。用户当时要的"不要提示"指的是**物品介绍 / 放置提示**，
+    **不包含"操作结果反馈"** —— 后者是交互闭环的一部分。
+  - **现在的取舍（写进 HANDOVER 红线 18）**：**要有**"一次主动操作产生了什么状态变化"；
+    **不要**物品介绍、自动触发的环境提示（如放置刷怪蛋）。
+  - 恢复的 5 组文案见 `TECHNICAL_SUMMARY.md` §3.21(1)；`%s` 是**聚晶自己的显示名**（走玩家语言文件）。
+  - **没有回退的部分**：刷怪蛋放置提示仍然没有、物品说明仍然只有那一行 tooltip。
+- **② 仆从的仪式召唤**（配方 `data/goety/recipes/tuner_servant_ritual.json`）：
+  - **单位口径（反编译实证）**：`soulCost` = **每秒**消耗的灵魂、`duration` = **秒数** ——
+    灵魂扣除与 `currentTime++` 同在 `gameTime % 20 == 0` 分支里。
+    用户说的"每秒 10 能量、10 秒"因此**正好**是 `soulCost: 10, duration: 10`（共 100 灵魂）。
+  - 材料 **8 个基座**：紫水晶碎片 ×4、红石、钻石、金锭、青金石（"2 个紫水晶 ×2"已与用户确认为 4 个碎片）。
+  - **激活条件是 NBT 级的**：中心那把杖必须是 `IWand` 且**两种调律加成任一 > 0**（`witchcraft_bonus` 或 `magic_damage_bonus`）
+    （= tooltip 上有「调律:巫法加成」或「调律:魔法伤害加成」那一行）⇒ 完全重写 `identify`（取并集，避免"这杖明明调过律却因为某项被配成 0 而召唤不了"的死角）；
+    不满足时返回 false，**复用 Goety 自己的失败提示**，不另造文案。
+  - **`tame = true` ⇒ 认主**（`SummonRitual(recipe, true, false)`，字节码为 `iconst_1, iconst_0`；
+    最终走 `MobUtil.summonTame`）。与刷怪蛋"直接放 = 野生"是两条互不影响的获取路径。
+  - **法杖被祭坛消耗**，其**快照**存进仆从 NBT（既是强度依据也是死亡掉落物）；
+    ⚠️ 仆从**主手**仍是 `goetytuner:tuner_wand`（AI 施法载体），召唤用杖**不装到手上**。
+  - ⚠️ **Goety 的全局仆从上限**：`SummonRitual.isValid` 里还有 `RitualRequirements.canSummon`，
+    它会数玩家已有的 `IOwned` 仆从 ⇒ 满员时仪式不成立（Goety 对所有仆从召唤的统一规则）。
+- **③ 杖的加成 → 仆从强度**（`combat/ServantWandBlessing`，唯一实现）：
+  - 按 `pct = 加成 × 100` 判定（法杖 NBT 是小数、用户说的是百分数，**与 tooltip 数字一致**）：
+
+    | 加成 | 强健 | 生命恢复 | 抗性提升 |
+    |---|---|---|---|
+    | < 10% | — | — | — |
+    | 10% | Ⅰ | — | — |
+    | 30% | Ⅱ | Ⅰ | — |
+    | 40%（击败一次，默认） | Ⅱ | Ⅰ | — |
+    | 70% | Ⅳ | Ⅱ | — |
+    | 90% | Ⅴ | Ⅱ | Ⅰ |
+    | > 100% | Ⅵ+（不封顶） | Ⅱ | Ⅱ（封顶） |
+
+  - **"持续性地给予"= 低频自愈式刷新**：`aiStep` 每 tick 调用，内部按 1 秒降频、每次挂 3 秒，
+    **已是目标档位且剩余时长足够就跳过** ⇒ 平时每秒最多 3 次 `addEffect`，不产生无谓同步；
+    被牛奶清掉后最多 1 秒自动回来。调用点放在 `aiStep` **所有 early-return 之前**（施法中也要维持）。
+  - **药水机制与本体独立**（用户要求）：不继承二阶段增益免疫 / 低谷 SAPPED / DARKNESS、
+    不受 `[boss]` 段任何键影响；唯一开关是新增的 `servant.wandBlessingEnabled`。
+    仆从自己的免疫规则仍只有它自己那条（拒绝 `SUMMON_DOWN`）。
+  - ⚠️ **只有仪式召唤的仆从吃得到**（刷怪蛋 / `/summon` 没有召唤用杖）。
+  - ⚠️ **必须告诉用户的坑**：`goety:buff`（强健）**只加 `ATTACK_DAMAGE`**（近战），
+    而本模组的仆从**刻意没有近战手段** ⇒ **强健几乎不产生战斗力**（HUD 会显示）。
+    这一条**忠实照搬了用户规格**，但"越强"的直觉不成立；**可选修法**（把强健等级同时换算成
+    `ModAttributes.SPELL_POTENCY`）**已写进 `TECHNICAL_SUMMARY.md` §七.15，等用户决定**。
+- **④ 仆从死亡掉落召唤用杖**（`WandUpgradeEvents#onLivingDrops` 里新增一个分支）：
+  - **原样返回**：掉**召唤时那把杖的完整副本**（附魔 / 聚晶 / **它原有的调律加成**全在），
+    **不额外叠加** —— 与 Boss 那句"快照 + `applyWandUpgrade`"刻意对照。
+    （"并不会有加成"已与用户确认为"不会再被加成一次"，不是"剥掉原有加成"。）
+  - 同样先清掉掉落里的 `IWand`（主手 `tuner_wand` 本来就 `setDropChance(0)`，再兜一道）。
+  - 日志：`[Tuner] Tuner servant died, returned its summoning wand: <uuid> (<name>)`。
+- **⑤ 聚晶包 / 多晶大袋批量指令**（`TunerServantInteractions`）：
+  - 判定 `instanceof FocusBag`（`FocusPack extends FocusBag` ⇒ **一个判定覆盖两种袋子**）；
+    内容物走**通用** `ForgeCapabilities.ITEM_HANDLER`（字节码实证：聚晶包 11 格、多晶大袋 21 格）。
+  - 语义与单晶**完全一致**（已与用户确认）：**全部已是该状态 ⇒ 整体清除，否则 ⇒ 全部设为该状态**。
+  - 非聚晶物品跳过、同 id 去重；**空袋子不吞掉**这次攻击 / 交互。
+  - 互斥语义收敛到 `TunerServant` 的 `setDisabledExclusive` / `setPriorityExclusive` 两个私有方法，
+    **单个切换与批量共用同一实现**。
+- **⑥ 顺带的做法收敛**：`WandUpgradeEvents#magicBonusOf`（private）→
+  **`public static magicDamageBonus(ItemStack)`** —— "法杖的调律·魔法伤害加成是多少"的**唯一实现**，
+  现有三个消费方（伤害加成 / 仪式激活判定 / 仆从增益档位）。
+- **未做**：**游戏内实测**。本轮只做到 `gradlew build` **成功**（**1m3s**，只有项目既有基准噪声、
+  **无新增警告**）+ jar 条目核对（**117 → 120**）+ **`javap` 核对**（批量方法签名、
+  `aiStep` 里确有 `ServantWandBlessing.tick`、`ServantWandBlessing` 里确有 `GoetyEffects.BUFF` 与
+  `REGENERATION`/`DAMAGE_RESISTANCE`（**用未 reobf 的 dev class 复核效果身份** —— 只看 SRG 名会认错）、
+  构造函数的 `iconst_1, iconst_0`、`instanceof FocusBag` 与 `ITEM_HANDLER` 引用、
+  `magicDamageBonus` 与 `dropServantSummonWand` 的存在）+ 配置 / 资源核对（`define` **72** 处、
+  section **11** 段、两份 lang **各 43 键**、`mods.toml` **0.0.20**、配方 JSON 的
+  8 个基座与 `soulCost=10 / duration=10 / craftType=magic`）+ 部署核对**逐字节相同**。
+  ⚠️ **四条内容的运行时表现全部未实测**（详见「仍待办 17」）。
+- **部署产物**：`goetytuner-0.0.20.jar`（**1,793,394 B / md5 `81B466A86D59497793D84A8A138246F0` /
+  jar 内 120 条目**）→ `versions\测试\mods\`。
+  ⚠️ **删除了旧的 `goetytuner-0.0.19.jar`** —— 同 mod id 的两个 jar 并存会被 Forge 判为**重复 mod** 而启动失败。
+  ⚠️ **部署时游戏正在运行**（`java-runtime-epsilon`，19:45 启动）⇒ **必须完全重启游戏**才加载 0.0.20。
+- ⚠️ **git 工作区有未提交改动**（0.0.18 + 0.0.19 + 0.0.20 三轮**都尚未 commit、也未 push**）。
+
+### 第 58 轮（0.0.19 修补）
+
+- **本轮范围**：**仍是 `0.0.19`（不升版本号）**，处理用户对第 57 轮交付的**三条反馈**。改 **5 个既有 Java 文件**
+  （`entity/ai/CastChannel`、`entity/TunerServant`、`entity/TunerServantInteractions`、
+  `init/TunerServantSpawnEggItem`、`focus/FocusPoolManager`）+ **2 个 lang**；**没有新增 / 删除任何类与资源**
+  ⇒ jar 条目 **仍 117**（无增无删）；**配置项数仍 71 / 11 段，本轮未动任何配置键**；网络协议仍 **2.1**（未动）。
+- **① 用户第 1 条 · 提示精简**（原话："不需要更多的物品介绍和放置/交互后的提示"）：
+  两份 lang **各 43 → 34 键（净 −9）**，**只保留一行** `tooltip.goetytuner.servant.spawn_egg` =
+  "调律师仆从刷怪蛋，潜行使用会生成你自己的仆从."（en_us：`Tuner Servant Spawn Egg. Sneak-use to spawn one of your own.`）。
+  - `init/TunerServantSpawnEggItem`：**删掉 `useOn` 覆写里那两条动作栏提示**（认主 / 野生）⇒ 该类现在
+    **只做两件事**：继承 Goety `ServantSpawnEggItem` 拿到"直接放 = 野生 / 潜行放 = 认主"的范式，
+    `appendHoverText` 里加**唯一那一行** tooltip（**且不再调用 `super`**，把 Goety 原本的说明也一并去掉）。
+  - `entity/TunerServantInteractions`：**删掉 `wild_hint` / `not_owner_hint` 两条提示**。**行为不变** ——
+    仍然是"**只给提示、不吞掉**"的那个语义，只是**不再弹字**；`canCommand` 拒绝时改打 **INFO 日志**
+    （`[Tuner] Servant focus command refused ...`）。
+  - **规律（写进红线）**：**诊断信息走日志，不走动作栏**；面向玩家的文字**只留必要的一行**。
+- **② 用户第 2 条 · "不释放的调整功能似乎完全不起效了"** —— 两条可能的病根**都堵掉**（本轮**无复现证据**，
+  如实说明是"两条最可能的解释"）：
+  - **（a）野生仆从被拒（最可能的真凶）**：第 57 轮把 `isOwner` 收紧成"只认主人"，而**刷怪蛋默认直接放 = 野生**
+    ⇒ 用户按默认方式放的仆从**有一条算一条全被 `canCommand` 拒绝**，表现就是"**功能完全不起效**"。
+    现在 **`owner == null`（野生）也放行** —— 野生仆从**本来就是可配置的**（它没有主人、也就会听所有玩家），
+    **只有"别人家的仆从"才拒绝**（`owner != player`）。
+  - **（b）潜行劫持左键**：第 57 轮自己加的"**潜行 + 左键 = 清空全部指令**"（`clearFocusCommands`）会在
+    **潜行状态下抢走左键** —— 玩家潜行按左键得到的是"清空"，**看起来就是"不释放切不动"**。
+    该功能连同 `clearFocusCommands` / `disabledCount` / `priorityCount` **一并删除** ⇒
+    左键的语义**只剩**"切换不释放"、右键**只剩**"切换优先释放"，两者**仍然互斥**（任一键都能把聚晶切回中立）。
+  - **规律（写进红线）**：**不要给同一个输入加"隐藏的组合键"** —— 组合键会静默劫持基础操作，
+    让基础操作"看起来坏了"；**归属也只在"生成"这一个点确定**，被拒绝时就该在**日志**里说清楚原因。
+- **③ 用户第 3 条 · 箭雨聚晶"几乎没有持续"**（用户原话："我有点怀疑是否能完美地识别持续类"）：
+  **先核对识别、再修真正的病根。**
+  - **识别没问题**：`scripts/scan_charging_spells.py`（真·class 文件解析，26 个具体长按类法术）实证
+    **`ArrowRainSpell extends EverChargeSpell`**（`EverChargeSpell → ChargingSpell implements IChargingSpell`），
+    本来就在闭包内、本来就被正确识别 ⇒ **不是识别漏了**。
+  - **真因：通道预算把"蓄力"算进了"总时长"**。`ArrowRainSpell.castUp` 由 `new ArrowRainChargeUp(...)` 解算，
+    **默认 20 tick**；而第 57 轮的预算是 `channelEndTick = channelMaxTicks`（默认 **20**）⇒
+    **蓄力刚好把整个预算吃光、一发即收**。这不是箭雨独有 —— 任何 `castUp` 接近或超过 20 的长按类聚晶都会这样。
+  - **修法（两段预算）**：`蓄力 = clamp(round(castUp × warmupMultiplier), 0, casting.maxCastWindowTicks)`、
+    `持续 = max(5, casting.channelMaxTicks)`，`channelEndTick = 蓄力 + 持续` ⇒
+    **`channelMaxTicks` 现在只承诺"持续段"的时长**（配置注释已写清"**不含蓄力**"）。
+  - **顺带删掉"按 `shotsNumber` 提前收手"**：反编译实证 **`DarkWand` 对 `shotsNumber` 只用来记发数、
+    算释放冷却，从不据此停火**（玩家松手前会一直放）⇒ 据此收手是**不忠实的模拟**，已移除。
+    现在长按类只有三条收口：**持续段到点** / `MAX_CHANNEL_SHOTS = 400` 防御性硬上限 / 被打断。
+  - **实测口径**：**腐化光束共 20 tick**（`castUp` 极小、几乎全给了持续）、**箭雨共 40 tick**（20 蓄力 + 20 持续）、
+    **震撼 / 炼狱**等按各自 `castUp` 顺延。⚠️ 平衡风险照旧：腐化光束**每 tick 造成伤害**
+    （`CorruptedBeamDamage` 默认 10.0 且清零 `invulnerableTime`），**`channelMaxTicks` 调到 100 以上基本等于必杀**。
+- **未做**：**游戏内实测**。本轮只做到 `gradlew build` **成功**（**约 1 分钟**，只有项目既有基准噪声、
+  **无新增警告**）+ jar 条目核对（**117 → 117，无增无删**）+ **原始字节串搜索**核对
+  （`CastChannel` 的 `channelChargeTicks`、`channelEndTick`、`IChargingSpell`；`TunerServant` 的
+  `toggleFocusDisabled` / `toggleFocusPriority` / `TUNER_WAND`；`TunerServantInteractions` 的 `canCommand` /
+  `Servant focus command refused`；`TunerServantSpawnEggItem` **不再有 `useOn`**；`FocusPoolManager` 的
+  `setFocusDisabled` / `setFocusPriority`）+ **配置 / 资源核对**（`define` **71** 处、section **11** 段、
+  两份 lang **各 34 键**且 JSON 合法、**无残留** `info.goetytuner.servant.*`、jar 内 `mods.toml` 版本 **0.0.19**、
+  png 魔数正确 627 B）+ 部署核对**构建产物与部署 jar 逐字节相同**。
+  ⚠️ **三条修复的运行时表现全部未实测**（详见「仍待办 16」）。
+- **部署产物**：`goetytuner-0.0.19.jar`（**1,785,988 B / md5 `77DAAFB0A5B77907C3D7A22461731FB8` / jar 内 117 条目**）
+  → `versions\测试\mods\`。⚠️ **部署时游戏正在运行**（PID 8648 / `java-runtime-epsilon` / 19:45 启动）⇒
+  **运行中的实例仍是旧字节码，必须完全重启游戏**才加载本轮修复。
+- ⚠️ **git 工作区有未提交改动**（0.0.18 + 0.0.19 两轮**都尚未 commit、也未 push**）。
+
+### 第 57 轮（0.0.19）
+
+- **本轮范围**：**用户对 0.0.18 交付的五条反馈，全部处理**。新增 **4 个 Java 类**：
+  `combat/TunerDamageRules`、`combat/DamageThrottle`、`focus/TunerWand`、`init/TunerServantSpawnEggItem`；
+  **改 6 个既有 Java 文件**（`entity/ai/CastChannel`、`init/ModItems`、`entity/TunerBoss`、`entity/TunerServant`、
+  `entity/TunerServantInteractions`、`config/TunerCommonConfig`）+ **2 个 lang**（各 37 → 43 键）+
+  **1 个模型 json**（`models/item/tuner_wand.json`）+ 版本号；另改了 `art/gen_ripple_focus_icon.py` 的配色
+  并把 `tuner_ripple_focus.png` 重新生成（694 → 627 B）。`.java` **51 → 55**、源码 **511,948 B**；
+  jar 条目 **112 → 117**（新增 5、**无删除**）。
+- **配置**：**项数与段数都不变（仍 71 项 / 11 段）** —— **新增** `casting.channelMaxTicks`（默认 **20** = 1 秒，
+  范围 5~200）1 项、**删除**死配置 `servant.health`（默认 40）1 项，净变化 0；`casting` 段 10 → 11、
+  `servant` 段 4 → 3。**一「加键」一「删键」，两者都无需手工迁移**（与 0.0.18 那种"改已有键的值"是两种性质）。
+- **① 用户第 1 条 · 聚晶指令「左键『不释放』似乎不能取消」—— 语义重做**：0.0.18 的「不释放」与「优先」是
+  **两张互不相干的表**，同一聚晶可**同时命中两者**（此时"不释放"胜出）⇒「先右键设了优先 → 再左键设了不释放
+  → 又**按右键想取消**」就会**按了没反应**，这正是"不能取消"的来源。现在两状态**互斥**：
+  **左键切换"不释放"并顺手清掉该聚晶的"优先"；右键切换"优先"并顺手清掉"不释放"**
+  （`TunerServant#toggleFocusDisabled` / `#toggleFocusPriority`），任何一键都必然能把聚晶**切回中立**、
+  语义单一可逆。另加**逃生通道**：**潜行 + 左键 = 清空该仆从的全部聚晶指令**（`clearFocusCommands`）。
+  提示文案改为**列出两张表当前的条目数**（新增 `disabledCount()` / `priorityCount()`）⇒ 设置有没有生效一眼可验。
+  ⚠️ **如实说明**：本轮**没有进游戏实测**，所以"原来为什么不能取消"只剩这个**语义解释、没有复现证据**
+  （从代码上找不到一个真正的机械故障，但这是一个**必然导致该症状**的陷阱，已修）。
+- **② 用户第 2 条 · 仆从的血量 / 护甲 / 减伤限伤与本体一致**：
+  **血量 / 护甲**：`TunerServant` 构造函数直接读 **Boss 的配置键** `boss.maxHealth`（默认 **216**）与
+  `boss.equivalentArmor`（默认 **16**），`KNOCKBACK_RESISTANCE` 也对齐成 **1.0**；`createAttributes()` 的
+  占位常量同步改成同一组（避免"config 未加载时创建出的实体数值不一致"这种边角差异）；**`servant.health`
+  （默认 40）已删除**（死配置；属**删键** ⇒ 老 toml 成孤儿条目、Forge 自行处理、**无需迁移**）。
+  **减伤 / 限伤**：把 Boss 原先内联的三段判定抽成**共用实现**（本项目红线：同一职责只允许一处实现）——
+  - 新增 **`combat/TunerDamageRules`**：`isIdentityImmune`（摔落 / 火焰 `IS_FIRE` 全系 / 窒息 / 溺水）、
+    `isDirectMelee`、`applyMeleeVulnerability`（近战易伤 ×(1+`boss.meleeVulnerability`)，默认 +25%）；
+    `TunerBoss` 改为调用它 —— **行为不变，只是搬家**。
+  - 新增 **`combat/DamageThrottle`**：限伤（单次伤害 ≤ 最大生命 × `boss.maxHitDamagePercent`）+
+    限DPS（滑动 1 秒窗口预算，`boss.maxDamagePerSecond`，返回 `-1` = 整段吸收）。0.0.6 时这段内联在
+    `TunerBoss` 里（环形缓冲 + 3 字段 + 3 方法），现整体搬进本类，Boss 与仆从**各持一份实例、共用同一份代码**。
+  - 仆从新增 `hurt` / `actuallyHurt` 覆写，与本体同一套规则；**唯一差别是没有后门豁免**
+    （`/kill` 的 `generic_kill` 本来就该正常生效，仆从不需要"管理员杀不死"）。
+  - ⚠️ **刻意不含**：Boss 的**锁血阶梯**（`lockMark` / 宽限期免疫 / 致死截断 / `/kill` 后门 / 索命后门）——
+    那是 Boss 的招牌机制，仆从若也锁血就成了打不死的怪。这一取舍写进了两个新类的类注释。
+- **③ 用户第 3 条 · 刷怪蛋范式（直接放 = 野生 / 潜行放 = 认主，并附文字提示）**：
+  新增 **`init/TunerServantSpawnEggItem`**，**直接继承 Goety 本体的 `ServantSpawnEggItem`**（本体所有仆从蛋
+  都用它）—— 它的逻辑就是用户描述的那个范式：`if (entity instanceof IOwned owned && !owned.isHostile()) {
+  if (player.isCrouching()) owned.setTrueOwner(player); }`，**不潜行则保持野生**（无主人 ⇒
+  `Summoned.finalizeSpawn` 会 `setWandering(true)`）。本类只外加两件事：① 放置时给**动作栏提示**
+  （认主 / 野生两种文案 `info.goetytuner.servant.spawn.tamed` / `.wild`）；② tooltip 多一行本模组专属说明
+  （Goety 的 `super` 已经加了它自己那条通用提示）。**归属不再因交互而改变（这是用户投诉的点）**：
+  0.0.18 的「野生仆从第一次被下达聚晶指令时认主」（`adoptOwnerIfUnowned`）**已彻底删除**，
+  lang 键 `info.goetytuner.servant.adopted` 也一并删掉；现在归属**只在刷怪蛋放置时**确定，
+  `TunerServantInteractions#isOwner` 只认主人；**野生仆从**被手持聚晶左/右键时给出提示
+  （`info.goetytuner.servant.wild_hint`）且**不吞掉**这次攻击 / 交互；**别人家的仆从**同理
+  （`info.goetytuner.servant.not_owner_hint`）。
+- **④ 用户第 4 条 · 「长按持续释放」类聚晶只放一瞬间就停（本轮最有价值的一处修复）**：
+  现象 —— 腐化 / 震撼 / 炼狱这类在玩家视角中"长按持续释放"的聚晶，在调律师（以及仆从）身上**只放一瞬间
+  就停下**，被当作瞬发法术用了。**两层根因（均已反编译实证）**：
+  - **（a）只结算一次**：玩家施法路径（Goety `DarkWand.onUseTick`）对 `IChargingSpell` 是"蓄力到 `castUp`
+    之后，每 `Cooldown` tick 调一次 `MagicResults`（→ `SpellResult`），一直持续到松手"，而 `CastChannel`
+    原先只在**前摇结束时**调**一次** `SpellResult` ⇒ 轰炸 / 雷电 / 暴雪这类"每发生成一个实体"的法术只出了一发。
+  - **（b）实体下一 tick 就自毁**（"腐化"最直接的原因）：Goety 的 `AbstractBeam.tick()`（腐化光束的基类）有
+    `if (owner == null || !owner.isAlive() || (this.itemBase && !MobUtil.isSpellCasting(owner))) { this.discard(); return; }`，
+    而 `MobUtil.isSpellCasting` = `livingEntity.isUsingItem() && getUseItem().getItem() instanceof IWand
+    && !WandUtil.findFocus(e).isEmpty()` ⇒ **Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃 ⇒
+    玩家看到的就是"闪一下"。
+  **修法**：`CastChannel` 新增通道型路径 **`tickChannel`** —— ① 用 `startUsingItem(MAIN_HAND)` 让施法者
+  **真的在"使用法杖"**（每 tick 自愈式重设，被打断 / 被其它模组 `stopUsingItem` 时能恢复），
+  且 `finishCast` / `interrupt` / `startSpell` 异常 / **外层兜底 catch** 四处一律 `stopChannelUse(...)`
+  （否则光束会永远不消失、施法者永远"使用中"）；② 按法术自己的 `Cooldown` / `shotsNumber` 节奏**反复释放**；
+  ③ 判定依据是 Goety 自己的 `IChargingSpell`（腐化 / 震撼 / 暴雪 / 轰炸 / 旋风 / 箭雨 / 电击 / 水流 / 蒸汽 /
+  念力 / 吸取 / 掘地 / 进食 / 飞行 / 防护 / 流星雨 … 全是它的子类），**不写死任何聚晶 id** ⇒
+  附属模组的同类法术**自动受益**。
+  **⚠️ 关键坑 · 为什么必须自备 `focus/TunerWand` 而不能继续用 `goety:dark_wand`**：让 Mob 去"使用"
+  dark_wand 会让 `DarkWand.onUseTick` 每 tick 跑起来，它的收尾是
+  `this.MagicResults(stack, worldIn, livingEntity, spell)`，而该方法对**非玩家施法者**走的是
+  `failParticles(...) + FIRE_EXTINGUISH` 分支 —— **既不释放法术，又会每 `Cooldown` tick 冒一把白烟 +
+  响一声灭火音**。所以本轮自备 `focus/TunerWand implements IWand`：
+  - `onUseTick(...)` **空实现**（这就是本类存在的核心理由）；
+  - `getUseDuration(stack)` 返回 **72000**（只为不让 `LivingEntity` 自动 `completeUsingItem`，
+    真正决定何时松手的是 `CastChannel`）；
+  - `initCapabilities` 显式委托 `IWand.super.initCapabilities(...)`（`SoulUsingItemHandler` 依赖这条
+    capability，`BossWandHelper.installFocus` 与 `IWand.getFocus` 都走它）；
+  - `getSpellType()` = `SpellType.NONE`（与 dark_wand 一致、接受所有聚晶）；
+  - 模型 `assets/goetytuner/models/item/tuner_wand.json` 内容只有 `{"parent": "goety:item/dark_wand"}`
+    ⇒ **外观与之前完全一样**。
+  Boss 与仆从的主手都从 `goety:dark_wand` 换成 `goetytuner:tuner_wand`，并在 `readAdditionalSaveData` 里做
+  **旧档迁移**（老存档主手仍是 dark_wand 时自动换成新杖）。**顺带落地了遗留待办「C Boss专属魔杖」**
+  （原先用 dark_wand 占位）。
+  **用时上限（用户点名要求「给一个用时上限，防止它停不下来」）**：新增配置
+  **`casting.channelMaxTicks`**（`IntValue`，**默认 20 = 1 秒**，范围 5~200）。三条**独立**的收口条件、
+  谁先到算谁：① 总时长到 `channelMaxTicks`；② 法术自己的 `IChargingSpell#shotsNumber(...)`（`> 0` 时）放完；
+  ③ 防御性硬上限 `MAX_CHANNEL_SHOTS = 400`。到点必然 `finishCast()`（内含 `stopUsingItem`）。
+  **⚠️ 顺带澄清用户那个疑问**（"我记得已经给过一种时间限额，我不清楚它是否奏效、是不是应用于这一部分"）：
+  **旧键 `casting.maxCastWindowTicks`（默认 50）确实一直在生效，但它管的是"把前摇截断到 2.5 秒"，
+  并不管持续释放。** 长按类法术的 `defaultCastDuration()` 默认是 **72000**，会被它截成 50 ⇒
+  **旧行为就是"站桩 2.5 秒 → 放一发 → 结束"，这正是本 bug 的一部分**。现在两个键分工明确：
+  `maxCastWindowTicks` = **普通法术**的蓄力截断；`channelMaxTicks` = **长按类法术**的持续时长上限。
+  **与旧行为的关系**：普通法术（非 `IChargingSpell`）**完全不变** —— 仍是
+  `warmup = min(castDuration × 倍率, maxCastWindowTicks)` 然后单次结算。
+  **⚠️ 平衡风险（必须告知）**：腐化光束这类法术是**每 tick 造成伤害**的（Goety 默认
+  `CorruptedBeamDamage = 10.0`/次，且它把目标 `invulnerableTime` 清零以绕过无敌帧），上限 20 已经能打出
+  很高的总伤害，**调到 100 以上基本等于必杀**。觉得太强就把 `casting.channelMaxTicks` 调小，
+  或把该聚晶写进 `focus.blacklist`。
+- **⑤ 用户第 5 条 · 聚晶图标改为灰黑色 + 白色**（用户原话："聚律波纹聚晶的贴图变为灰黑色和白色，
+  即原本紫色的部分变为黑色"）：改了 `art/gen_ripple_focus_icon.py` 的配色 —— 盘面由紫色系改成
+  **近黑轮廓 `(8,8,8)` + 深灰→近黑渐变 `(58→22)`**，亮环与圆心改成**白 `(240,240,240)` / 纯白 `(255,255,255)`**，
+  青色圆心渐变也去掉了（灰黑配色下不再引入第三色）。重新生成后 **694 → 627 B**，尺寸仍是 16×16 RGBA，
+  脚本**仍字节可复现**（重跑 sha256 一致）。
+  ⚠️ 作者 agent **不具备图像输入能力、从未看过它**，只做了 ASCII 灰度近似检视（`art/preview_ascii.py`）；
+  **观感仍需人类过目**。
+- **未做**：**游戏内实测** —— 本轮只做到：
+  - `gradlew build` **成功**（**约 1 分钟**，编译期只有项目**既有的基准噪声**：3 条 FML deprecated 警告 +
+    1 条 `TunerBoss` 过时 API 注记，**无新增警告**）；
+  - jar 条目比对 **112 → 117**（新增 5 = 4 个新 class + `tuner_wand.json`，**无删除**）；
+  - 用**原始字节串搜索**核对（**不用 `javap` 文本匹配 —— `javap` 会折行**）：`CastChannel` 含 `tickChannel` /
+    `channeled` / `channelEndTick` / `IChargingSpell`；`TunerWand` 含 `initCapabilities`；`TunerServant` 含
+    `toggleFocusDisabled` / `toggleFocusPriority` / `clearFocusCommands` / `disabledCount` / `priorityCount` /
+    `TUNER_WAND` / `DamageThrottle` / `TunerDamageRules`；`TunerServantSpawnEggItem` 含 `ServantSpawnEggItem` /
+    `spawn.tamed` / `spawn.wild`；`TunerServantInteractions` 含 `isOwner` / `wild_hint` / `not_owner_hint`；
+    `ModItems` 含 `tuner_wand`；
+  - 用 `javap` 核对**被 reobf 成 SRG 名的覆写 / 调用**（字节串搜索会漏报这类）：`TunerWand` 的方法表为
+    `m_5929_`(=onUseTick) / `m_8105_`(=getUseDuration) / `m_7203_`(=use) / `initCapabilities`；
+    `TunerServant` 的 `m_6469_`(=hurt) / `m_6475_`(=actuallyHurt) / `m_7301_`(=canBeAffected)；
+    `CastChannel.tickChannel` 字节码里确有 `LivingEntity.m_6117_()`(=isUsingItem) 与
+    `m_6672_(InteractionHand)`(=startUsingItem)、`stopChannelUse` 里确有 `m_5810_()`(=stopUsingItem)，
+    并正确 `invokeinterface IChargingSpell.castUp/Cooldown/shotsNumber`；
+  - 配置 / 资源核对：`define` 调用 **71** 处、section **11** 个、`channelMaxTicks` 存在、`servant.health` 已移除、
+    两份 lang 各 **43 键**且 JSON 合法、jar 内 `mods.toml` 版本 **0.0.19**、png 魔数正确（627 B / 16×16 RGBA）；
+  - 部署核对：**构建产物与已部署 jar 逐字节相同**。
+  ⚠️ **五条修复的运行时表现全部未实测**（详见「仍待办 15」）。
+- **部署产物**：`goetytuner-0.0.19.jar`（第 57 轮首次部署时 **1,787,227 B / md5 `9363476AD6F24B6296DF59303BE0DBB7` /
+  jar 内 117 条目**；**第 58 轮三次修补后最终为 1,785,988 B / md5 `77DAAFB0A5B77907C3D7A22461731FB8` / 同样 117 条目**）
+  → `D:\落幕曲&原版&灾厄巫咒\.minecraft\versions\测试\mods\`（**旧的 `goetytuner-0.0.17.jar` 与
+  `goetytuner-0.0.18.jar` 都已删除**，该目录现在只有 0.0.19 这一个）。
+  ⚠️ **第 58 轮部署时游戏正在运行**（`java-runtime-epsilon`，启动于 19:45）—— 覆盖 jar 时**运行中的实例仍持有旧
+  字节码**，**新 jar 必须重启游戏才生效**；这也是"第 57 轮的修复看起来没起效"的一个可能来源。
+  ⚠️ **git 工作区有未提交改动**（0.0.18 + 0.0.19 两轮**都尚未 commit、也未 push**）。
+  ⚠️ **jar 的 md5 不可复现**（`MANIFEST.MF` 的 `Implementation-Timestamp`），判断"部署的 jar 对应哪份源码"
+  要**逐条目比对**，别看整体 md5（本轮又实证**三次**：加 `CastChannel` 兜底、加"长按类聚晶检测"日志、
+  对齐 `getWandVisualHeight`，每次都只是小改，jar 依次为
+  1,786,750 B / `C097ED89…` → 1,786,756 B / `8ECE82F3…` → 1,787,227 B / `9363476A…` → 1,785,988 B / `CAA04A08…`
+  → `2D90CA05…`（第 58 轮中途）→ **1,785,988 B / `77DAAFB0…`（第 58 轮最终，即当前部署的那一个）**）。
+
 ---
 
 ## 十、构建与运行
@@ -1225,6 +1823,8 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | 传送太频繁/太少 | `teleportInterval` | 200=10秒，400=20秒；二阶段可用 `phase2TeleportIntervalFactor`（0.1~1.0）单独缩短 |
 | 召唤太多/太少 | `maxMinions` / `refillHysteresis` | hysteresis=满员后需低于max-N才恢复 |
 | 高潮太难/太易 | `climaxWarmupMultiplier` | 0.5=前摇减半（更快施法），1.0=正常；施法窗口上限见 `maxCastWindowTicks`（当前 50） |
+| **长按类聚晶放太久 / 把 Boss 变得太强（腐化光束秒人）** | **`casting.channelMaxTicks`** | **0.0.19 新增**，默认 **20 = 1 秒**（范围 5~200），管的是 Goety **`IChargingSpell`**（腐化光束 / 震撼 / 暴雪 / 轰炸 / 旋风 / 箭雨 / 电击 / 水流 / 蒸汽 / 念力 / 吸取 / 掘地 / 进食 / 飞行 / 防护 / 流星雨 …）这类"按住右键持续放"的法术**一次能放多久**（Mob 没有松手动作，所以必须给上限）。**⚠️ 与 `maxCastWindowTicks`（默认 50）的分工**：`maxCastWindowTicks` 管**普通法术**的蓄力截断（2.5 秒）；本键管**长按类**的持续时长，两者互不影响。**调大 = 更强也更危险**：腐化光束**每 tick 造成伤害**（Goety 默认 10 点/次，还会清零目标 `invulnerableTime` 绕过无敌帧），**调到 100 以上基本等于必杀**；想让战斗更温和就调小（5 = 0.25 秒）。另有两条独立上限兜底：法术自己的 `shotsNumber`、以及硬上限 `MAX_CHANNEL_SHOTS = 400`。⚠️ **配置界面没有入口** ⇒ 只能手改 `goetytuner-common.toml` 后**重启游戏** |
+| 长按类聚晶**完全不放 / 只闪一下**（0.0.18 及以前的老 bug） | （无需配置） | **0.0.19 已修**。两层根因：① `CastChannel` 原先只在前摇结束时调一次 `SpellResult`（现在按法术自己的 `Cooldown`/`shotsNumber` 反复释放）；② `AbstractBeam.tick()` 靠 `MobUtil.isSpellCasting(owner)`（= `isUsingItem() && 用物是 IWand && 杖里有聚晶`）判定存活，而 **Mob 从不 `startUsingItem`** ⇒ 光束刚生成就被丢弃。现在 `tickChannel` 会 `startUsingItem`，并自备 `focus/TunerWand`（`onUseTick` 空实现，避免 `dark_wand` 对非玩家走 `failParticles + FIRE_EXTINGUISH` 只冒白烟）。**若仍只闪一下**：先确认场上实体主手是 `goetytuner:tuner_wand`（老存档会在 `readAdditionalSaveData` 自动迁移），再开 DEBUG 看有无 `stopChannelUse` 相关日志 |
 | 重音推力太强/弱 | `accentKnockback*` | 0.4/0.8/1.2 = 普通/低谷/高潮；二阶段低谷已替换为铺垫，`phase2ValleyKnockbackMultiplier` 不可达 |
 | 重音手感 | `accentShakeTicks` / `accentShakeStrength` | 当前 10 tick / 2.0，调低可减轻镜头晃动 |
 | **重音太密/太疏** | **`music.accentDensityDivisor`** | **0.0.13 新增**，默认 **3** = 每 3 个重音保留 1 个（数量与频率约为原来的 1/3）；**1 = 不抽稀**（回到乐谱原始的 37 个密度），9 = 最稀疏（约 1/9）。**服务端加载乐谱时统一生效** ⇒ HUD 刻度 / 击退 / 涟漪 / 提示音**一起**变，客户端无需改动。⚠️ 配置在启动时读取、乐谱在 Boss 构造时加载 ⇒ **改完需重启游戏**，已存在的 Boss 不会重新抽稀 |
@@ -1240,3 +1840,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3 -ErrorAction SilentlyContinue
 | Boss 卡在死亡动画不动 | `lockDeathRevive`（默认 true） | 0.0.8 已修（新增 `SEntityRevivePacket` 同步复位客户端死亡动画 + 脏状态只清动画不吃档位 + 锁血未耗尽时拦截 `remove(KILLED)`，**但 `/kill` 例外**）；若仍出现，先确认 `lockDeathRevive` 未被关闭。**0.0.17 补充**：还有一类"**血量已回正、动画却永久留着**"的形态——根因是 `deathTime` **不是同步数据**，服务端只发**一次**复位包，若那一刻客户端血量同步还没落地，客户端会**自己再把 `deathTime` 加上去**（服务端侧治不了）。0.0.17 已在 `tick()` 的**客户端分支**加**对称自愈**（`deathTime > 0 && getHealth() > 0` 即直接复位，**无配置开关、始终生效**）⇒ 至多残留 1~2 tick。若仍长时间躺着，请开 DEBUG 日志看是否有 `client stale death animation` |
 | 想直接击杀 Boss（跳过锁血阶梯） | —（无对应配置） | 用 `/kill`（**0.0.9 起可用**：管理员指令识别 `DamageTypes.GENERIC_KILL`，无视锁血体系的全部保护）；**0.0.17 起「索命聚晶」也是一条路**（`goety:death` 同套后门语义，见下面一行）。常规输出仍受锁血阶梯约束 |
 | **被索命秒杀太强 / 想关掉索命后门** | **`boss.deathCurseExecution`** | **0.0.17 新增**，默认 **true** = 玩家用**索命聚晶**命中 Boss 时，`goety:death` 的致死伤害**无视剩余锁血档位直接处决**（跳过宽限期免疫 / 致死截断 / 限伤·限DPS / 死亡回弹 / `remove(KILLED)` 拦截）。**觉得"被索命一发秒掉太强"** ⇒ 改成 **`false`** = 关闭后门、索命重新受锁血保护（回到 0.0.17 之前的旧行为）。⚠️ 键在 **`[boss]` 段**（与 `maxDamagePerSecond` / `lockDeathRevive` 同段）；属**新增键**（Forge 会自动补进老 toml），但**配置界面没有入口** ⇒ **只能手改 `goetytuner-common.toml`，改完需重启游戏**。**取舍提示**：关掉后门后，索命打中 Boss 会回到"被锁血拦下 → 复活"的路径（同时仍可能留下动画残留，不过 0.0.17 的客户端自愈已处理残留）；另一条路是把 `goety:killing_focus` 加进 `focus.blacklist`（**拉黑** = Boss 干脆不抽这张聚晶）。**代价侧**：索命对施法者反噬「目标当前生命值 **125%**」，所以它是有代价的处决手段 |
+| **仆从太肉/太脆、施法太频/太慢、轮换不对** | **`servant.followRange` / `servant.castIntervalTicks` / `servant.rotation`** | **0.0.18 新增 `[servant]` 段**（原 4 项）。⚠️ **0.0.19 起 `servant.health` 已删除** —— 仆从的血量 / 护甲改为**与本体一致**，直接读 `[boss]` 段的 **`maxHealth`（默认 216）** 与 **`equivalentArmor`（默认 16）**（另有近战易伤 `meleeVulnerability`、限伤 `maxHitDamagePercent`、限DPS `maxDamagePerSecond` 也一并适用）。**⇒ 想调仆从肉度就改 `[boss].maxHealth`，但那会同时改 Boss 本体**（本轮取舍：用户要求"与本体保持一致"，故不做独立旋钮）。剩余 3 项：`followRange` = 32（索敌半径 / FOLLOW_RANGE，8~128；仆从是远程施法者，比近战仆从大一些）、`castIntervalTicks` = 40（两次施法间隔 = **2 秒**，0~600：指「上一发结算完」到「开始下一发前摇」的等待，**与聚晶自身冷却取更长者**）、`rotation` = "23"（施法轮换序列，每位一个通道角色：**1=防御 2=攻击 3=召唤 4=其他**，按序循环；默认攻击 / 召唤各半 —— 想让仆从更偏输出就写 `"2"`，想要它兼顾召唤就留 `"23"`）。⚠️ 三键都是**新增键**（Forge 会**自动补进**老 toml、无需手改），但**配置界面没有入口** ⇒ 只能手改 `goetytuner-common.toml` 后**重启游戏** |
+| **仆从的聚晶指令不生效 / 想清空指令** | （无配置项，游戏内操作） | **0.0.19 起语义**：**只有主人**手持**聚晶**对仆从**左键 = 切换「不释放」/ 右键 = 切换「优先释放」**，两者**互斥**（左键会顺手清掉「优先」、右键会顺手清掉「不释放」）⇒ **任何一个键都能把该聚晶切回中立**。**潜行 + 左键** = **清空该仆从的全部聚晶指令**。提示会带**两张表的条目数**（如「不释放：火焰聚晶 ｜不释放 2 项 / 优先 1 项」）⇒ 便于确认设置真的生效。**归属只在刷怪蛋放置时确定**（**直接放 = 野生 / 潜行放 = 认主**）：**野生仆从**永远不接受指令（会给 `wild_hint` 提示），**别人家的仆从**同理（`not_owner_hint`），且这两种情况下这次左键 / 右键会**照常当作普通攻击 / 交互**处理（不会被吞掉）。指令随 NBT 持久化（`DisabledFoci` / `PriorityFoci`） |
+| **波纹聚晶被 Boss 抽到 / 想解禁它给 Boss 用** | `focus.blacklist` | **0.0.18 起代码默认值已含 `goetytuner:tuner_ripple_focus`**（防 Boss **白得一个 0.5 秒冷却的重音**，以及那发涟漪把 **Boss 自己一起推开**）。**若故意想让 Boss 也能抽到它** ⇒ 在游戏内配置界面的「聚晶黑名单」输入框里把它删掉（**改完立即生效**，无需重启），但要自己承担"Boss 被自己的涟漪推开"的表现。⚠️ 老 toml **不会**自动带上这个新默认值（**改默认值不回填**）⇒ 需按 §六 的 **0.0.18 迁移提示**手工补一次，或用 `scripts/add_ripple_focus_blacklist.py`。⚠️ **0.0.19 未改动本键**（本轮是"加键 + 删键"，与它无关） |
+| **长按类聚晶被 Boss 抽到太危险（腐化光束秒人）** | `focus.blacklist` **或** `casting.channelMaxTicks` | 0.0.19 让**长按类法术真的能持续释放**了 ⇒ 腐化光束这类**每 tick 造成伤害**（Goety 默认 10 点/次、还会清零目标 `invulnerableTime` 绕过无敌帧）的聚晶**强度显著上升**。**两条降险路径**：① 把 `casting.channelMaxTicks`（默认 20）调小到 5~10；② 直接把该聚晶写进 `focus.blacklist`（**推荐** —— 在游戏内配置界面的「聚晶黑名单」输入框里加 id，改完立即生效），让 Boss 干脆不抽它。⚠️ 黑名单是**全局**的，加进去后**玩家自己也没法用该聚晶**（玩家侧本来就正常，不需要靠这个键兜底） |
