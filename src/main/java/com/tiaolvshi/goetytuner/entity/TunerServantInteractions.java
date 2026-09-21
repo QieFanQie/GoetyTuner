@@ -93,8 +93,37 @@ import java.util.List;
 @Mod.EventBusSubscriber(modid = GoetyTuner.MOD_ID)
 public class TunerServantInteractions {
 
-    /** 左键：切换「不释放」（手持袋子时 = 批量）。 */
-    @SubscribeEvent
+    /**
+     * 左键：切换「不释放」（手持袋子时 = 批量）。
+     *
+     * <h2>⚠️ 0.0.20 追加5：必须写 {@code receiveCanceled = true}（这是"左键完全没反应"的真根因）</h2>
+     * <p><b>Goety 本体会取消这个事件。</b>{@code ServantEvents#PlayerAttackEvent} 的逻辑是
+     * （反编译实证）：
+     * <pre>
+     * if (target instanceof IOwned owned
+     *     &amp;&amp; (owned.getTrueOwner() == player
+     *         || (owned.getTrueOwner() instanceof IOwned o &amp;&amp; o.getTrueOwner() == player))) {
+     *     if (MobsConfig.OwnerAttackCancel.get()) {
+     *         stack.getItem().onLeftClickEntity(stack, player, target);
+     *         event.setCanceled(true);          // ← 偏移 107
+     *     }
+     * }
+     * </pre>
+     * 而 <b>Forge 的规矩是：事件一旦被取消，就不会再派发给没有声明
+     * {@code receiveCanceled = true} 的监听器</b> ⇒ 我们的处理器**根本不会被调用**：
+     * 没有提示、没有状态变化 —— 用户看到的正是"手持聚晶左键我的仆从，没有提示"。
+     *
+     * <p><b>为什么右键正常、野生仆从也正常</b>：
+     * ① 右键走 {@code PlayerInteractEvent.EntityInteract}，Goety 不在那里取消；
+     * ② Goety 的取消条件要求 {@code getTrueOwner() == player}，
+     * 而**野生**仆从（刷怪蛋直接放置，{@code owner == null}）不满足 ⇒ 左键对野生的有效。
+     * 这解释了"为什么仪式召唤来的（有主）仆从怎么点都没反应"。
+     *
+     * <p>⚠️ 这个坑是**不可见**的：事件被别的模组取消后，我们的代码根本没机会打日志，
+     * 所以前两轮我按"代码里哪里可能错"去推全都推错了方向（见 §3.21(5d) 的教训）。
+     * <b>凡是处理可取消事件的监听器，都要先问一句"谁会在我之前取消它"。</b>
+     */
+    @SubscribeEvent(receiveCanceled = true)
     public static void onAttackEntity(AttackEntityEvent event) {
         if (!(event.getTarget() instanceof TunerServant servant)) {
             return;
@@ -138,8 +167,15 @@ public class TunerServantInteractions {
                 : "info.goetytuner.servant.focus.disabled.cleared", held.getHoverName());
     }
 
-    /** 右键：切换「优先释放」（手持袋子时 = 批量）。 */
-    @SubscribeEvent
+    /**
+     * 右键：切换「优先释放」（手持袋子时 = 批量）。
+     *
+     * <p>⚠️ 同样声明 {@code receiveCanceled = true}：右键这条链上 Goety 也挂了监听器
+     * （{@code ServantEvents#InteractEntityEvent} 处理的是 {@code EntityInteractSpecific}，
+     * 与本节不是同一个事件，但同一个位置上**将来**可能有别的模组取消）
+     * —— 与左键保持同一种写法，避免"换一个人/换一个附属就把功能静默干掉"。
+     */
+    @SubscribeEvent(receiveCanceled = true)
     public static void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
         if (!(event.getTarget() instanceof TunerServant servant)) {
             return;

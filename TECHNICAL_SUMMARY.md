@@ -2271,6 +2271,39 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   `只释放优先聚晶` / `只释放优先聚晶（尚未设过优先聚晶，暂时照常释放）` / `已取消「只释放优先聚晶」`。
 - lang **43 → 46 键**（+3）。
 
+**（5f）【0.0.20 追加·真根因②】Goety 取消了事件 ⇒ 我们的左键监听器**根本没被调用**
+
+用户："手持一个聚晶，**右键**我的仆从，**有反应**；而手持一个聚晶，**左键**我的仆从，**没有提示**。"
+
+- **根因（反编译 Goety 实证）**：Goety 的 `ServantEvents#PlayerAttackEvent`：
+  ```java
+  if (target instanceof IOwned owned
+      && (owned.getTrueOwner() == player
+          || (owned.getTrueOwner() instanceof IOwned o && o.getTrueOwner() == player))) {
+      if (MobsConfig.OwnerAttackCancel.get()) {
+          stack.getItem().onLeftClickEntity(stack, player, target);
+          event.setCanceled(true);          // ← 偏移 107
+      }
+  }
+  ```
+  而 **Forge 的规矩：事件被取消后不再派发给没有声明 `receiveCanceled = true` 的监听器**
+  ⇒ 我们的 `onAttackEntity` **一次都不会被调用**（没有提示、没有状态、日志里什么都没有）。
+- **为什么右键正常、野生仆从也正常**：
+  ① 右键走 `PlayerInteractEvent.EntityInteract`，Goety 不在那里取消；
+  ② Goety 的取消条件要求 `getTrueOwner() == player`，**野生**仆从（`owner == null`）不满足
+  ⇒ 左键对**野生**仆从有效、对**有主**的（仪式召唤 / 潜行放置）**永远无效**。
+  ⚠️ 这也解释了第 58 轮"改成接受野生仆从"为什么让症状看起来好了一点 —— 但**有主的仆从仍然全灭**，
+  用户一直在测的正是仪式召唤来的（有主的）那只。
+- **修法（一个注解参数，不是加层）**：
+  `@SubscribeEvent(receiveCanceled = true)` —— 两个处理器都加（左键是必须的，右键是防御性的，
+  免得将来别的附属在 `EntityInteract` 链上取消就把右键也静默干掉）。
+- ⚠️ **这个坑的教训（写进 HANDOVER 红线 22）**：**别人的模组可以在你之前取消事件，
+  而这个失败是完全不可见的**（我们的代码没机会打任何日志）。前两轮我按"我们代码里哪里可能错"
+  去推，两次都推错了方向（§3.21(5d) 的每 tick 触发是**另一个**真问题，也已修）。
+  **⇒ 处理可取消事件的监听器，第一句该问的是"谁会在我之前取消它"。**
+- **验收**：手持聚晶**左键自己的（有主）仆从** ⇒ 出现提示 + 状态确实翻转；
+  **左键野生仆从** ⇒ 同样有效；⚠️ 此时**不再有伤害**（我们照样 `setCanceled(true)`）。
+
 **（6）本轮做的"唯一实现"抽取**
 
 - `WandUpgradeEvents#magicBonusOf`（`private`）→ **`public static magicDamageBonus(ItemStack)`**：
@@ -2307,7 +2340,7 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   **8 个基座物品 = 紫水晶碎片 ×4 / 红石 / 钻石 / 金锭 / 青金石**、
   `soulCost=10`、`duration=10`、`craftType=magic`、`ritual_type=goetytuner:tuner_servant_summon`。
 - **部署核对**：构建产物与部署 jar **逐字节相同**
-  （1,799,637 B / md5 `05DCDEE8E6199DF0E3F86612E90345C9` / 122 条目）。
+  （1,799,657 B / md5 `CCF56EEB9B5A3360EE693806C65A3CC7` / 122 条目）。
   同时**删除了旧的 `goetytuner-0.0.19.jar`** —— 同名版本换了版本号，
   两个 jar 并存会被 Forge 判为**重复 mod** 而启动失败。
 - ⚠️ **四条内容的运行时表现全部未实测** —— 见 §七.13。
@@ -2426,7 +2459,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
 | 0.0.19 | `goetytuner-0.0.19.jar` | 1,785,988 B | `77DAAFB0A5B77907C3D7A22461731FB8` | 已删除（被 0.0.20 取代；**不能与 0.0.20 并存**，同 mod id 会让 Forge 报重复 mod） |
-| 0.0.20 | `goetytuner-0.0.20.jar` | 1,799,637 B | `05DCDEE8E6199DF0E3F86612E90345C9` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+| 0.0.20 | `goetytuner-0.0.20.jar` | 1,799,657 B | `CCF56EEB9B5A3360EE693806C65A3CC7` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
 
 > 本轮（0.0.19）jar 内共 **117 条目**（0.0.18 为 112）：新增 5 条 = 4 个新 class
 > （`DamageThrottle` / `TunerDamageRules` / `TunerWand` / `TunerServantSpawnEggItem`）
@@ -2690,7 +2723,14 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
       ⚠️ **没设过优先聚晶时应当照常释放**（这是设计，不是 bug）；
       有优先聚晶但此刻都在冷却 / 被禁放 ⇒ **不放**（「只放」的字面含义）；
       再右键 ⇒ `已取消「只释放优先聚晶」`；⚠️ 重进存档后开关仍在（NBT `PriorityOnly`）。
-    ⑦ **回归**：① 聚晶指令的单体语义（互斥 + 可撤销）与 0.0.19 一致；
+    ⑦ **⚠️ 左键对「有主的仆从」是否终于有反应（§3.21(5f)，本轮修的第四个"左键不起效"）**：
+    - 手持聚晶**左键你自己仪式召唤来的（有主）仆从** ⇒ **应当出现提示**并且状态确实翻转
+      （修复前：**连提示都没有**，因为 Goety 先把事件取消、我们的监听器根本没被调用）；
+    - **左键野生仆从**（刷怪蛋直接放）⇒ 同样应当有效；
+    - ⚠️ 左键仍然**不应造成伤害**（我们照样取消事件）；
+    - ⚠️ 若左键**依然毫无反应**，请把日志里有没有 `[Tuner] Servant focus ... -> DISABLED` 告诉我 ——
+      有日志=事件通了（那是别的问题）；没日志=还有人在我们之前取消/拦截。
+    ⑧ **回归**：① 聚晶指令的单体语义（互斥 + 可撤销）与 0.0.19 一致；
     ② 刷怪蛋"直接放 = 野生 / 潜行放 = 认主"不变，且**野生仆从仍可被任何玩家配置**；
     ③ 仆从的血量 / 护甲 / 减伤限伤仍与本体一致（216 血 / 护甲 16）；
     ④ 联机协议仍 **2.1**（双方都要 0.0.20）。
