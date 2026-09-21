@@ -334,6 +334,41 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
         }
     }
 
+
+    /**
+     * 【0.0.20 追加6】**永远不"潜行"** —— 这是"召唤类聚晶放不出来"的根因。
+     *
+     * <p><b>问题</b>：我们在施法前摇期间把姿态设成 {@link Pose#CROUCHING}
+     * （原版 DATA_POSE 同步，客户端 {@code TunerModel} 靠它做蹲姿瞄准动画）。
+     * 但 {@code Entity#isCrouching()} 的实现就是
+     * {@code hasPose(Pose.CROUCHING)} ⇒ **施法期间 {@code isCrouching()} 恒为 true**。
+     * 而 Goety 的判断"是否潜行施法"是
+     * {@code Spell#isShifting(caster)}：
+     * <pre>
+     * return (caster.isCrouching() || caster.isShiftKeyDown())
+     *        &amp;&amp; !WandUtil.findWand(caster).isEmpty();
+     * </pre>
+     * ⇒ **我们的施法者被 Goety 当成了"潜行施法"**，而全模组有 **43 个法术类**用
+     * {@code isShifting} 切"潜行变体"分支。最典型的就是召唤类：
+     * 潜行施法的语义是"把**已有**的仆从传送到施法者身边"，**不是召唤新的**
+     * ⇒ 没有仆从时**什么都不发生** —— 玩家看到的就是"召唤聚晶根本放不出来/没召唤出来"。
+     *
+     * <p><b>为什么覆盖 {@code isCrouching()} 是安全的</b>：
+     * <ul>
+     *   <li>我们的蹲姿动画**不看这个查询** —— {@code client/render/TunerModel#setupAnim}
+     *       读的是 {@code entity.hasPose(Pose.CROUCHING)}（本覆盖不影响 pose 本身）</li>
+     *   <li>判定箱、模型、动画全部走 {@code getPose()}，不受影响；</li>
+     *   <li>全模组检索：我们自己的代码**没有任何一处**依赖本实体（非玩家）的
+     *       {@code isCrouching()}；Goety 的 {@code Summoned}/{@code IOwned} 也不用它。</li>
+     * </ul>
+     * 语义上也说得通：本实体**从不需要真的潜行**，那个 CROUCHING 只是"瞄准姿态"，
+     * 所以对"我是否在潜行"这个问题，正确答案就是**否**。
+     */
+    @Override
+    public boolean isCrouching() {
+        return false;
+    }
+
     public static AttributeSupplier.Builder createAttributes() {
         // 【2026-08-18 第七轮修复】此方法在 EntityAttributeCreationEvent（mod 注册阶段）
         // 被调用，config 尚未加载（Forge: Cannot get config value before config is loaded），

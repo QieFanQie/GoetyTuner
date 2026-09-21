@@ -2304,6 +2304,45 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
 - **验收**：手持聚晶**左键自己的（有主）仆从** ⇒ 出现提示 + 状态确实翻转；
   **左键野生仆从** ⇒ 同样有效；⚠️ 此时**不再有伤害**（我们照样 `setCanceled(true)`）。
 
+**（5g）【0.0.20 追加·真根因③】召唤类聚晶"放不出来" —— 施法蹲姿被 Goety 当成"潜行施法"**
+
+用户反馈："调律师仆从使用召唤类聚晶似乎有bug"，症状经确认为**"聚晶根本放不出来 / 没召唤出来"**。
+
+- **根因（反编译实证，两段拼起来就闭合了）**：
+  1. 我们的施法前摇会把姿态设成 `Pose.CROUCHING`
+     （`TunerServant` / `TunerBoss` 都是，原版 DATA_POSE 同步、零额外网络包；
+     客户端 `TunerModel#setupAnim` 靠它做蹲姿瞄准动画）；
+  2. `Entity#isCrouching()` 的实现**就是** `hasPose(Pose.CROUCHING)`
+     ⇒ **施法期间 `isCrouching()` 恒为 true**；
+  3. Goety 判断"是否潜行施法"的 `Spell#isShifting(caster)`：
+     ```java
+     return (caster.isCrouching() || caster.isShiftKeyDown())
+            && !WandUtil.findWand(caster).isEmpty();
+     ```
+     ⇒ **我们的施法者被当成"潜行施法"**。
+  4. **全模组有 43 个法术类用 `isShifting` 切"潜行变体"**（`SummonSpell` / `FangSpell` /
+     `BulwarkSpell` / `VexSpell` / `IllusionSpell` / `SpikeSpell` / `TeethSpell` …）。
+     召唤类的潜行语义是"**把已有的仆从传送到施法者身边**"，**不是召唤新的**
+     ⇒ 没有仆从时**什么都不发生** ⇒ 玩家看到"根本没召唤出来"。
+- **修法（覆盖一个查询，不动姿态）**：在两个实体上
+  ```java
+  @Override
+  public boolean isCrouching() { return false; }
+  ```
+  **为什么安全**：
+  - 蹲姿动画**不看这个查询** —— `TunerModel#setupAnim` 读的是
+    `entity.hasPose(Pose.CROUCHING)`，而 `hasPose` 不受本覆盖影响（pose 本身没变）；
+  - 判定箱 / 模型 / 动画全部走 `getPose()`；
+  - 全模组检索：我们自己的代码**没有一处**依赖本实体的 `isCrouching()`；
+    Goety 的 `Summoned` / `IOwned` 也不使用它。
+  - 语义上也更正确：本实体**从不需要真的潜行**，那个 CROUCHING 只是"瞄准姿态"，
+    所以"我是否在潜行"的正确答案就是**否**。
+- **影响面**：这不只修了召唤 —— 那 43 个法术的"潜行变体"分支全都恢复了正常语义
+  （例如某些召唤聚晶的潜行分支是"传送到身边"、部分攻击法术的潜行分支是另一种打法）。
+- **同类教训（红线 23）**：**原版 `Pose` 不只是外观** —— `Entity#isCrouching()` 等查询直接由它推导，
+  第三方模组（包括 Goety）会用这些查询做**逻辑分支**。
+  用 `Pose.CROUCHING` 表达"非潜行的瞄准/蓄力姿态"会**静默改变大量法术的行为**。
+
 **（6）本轮做的"唯一实现"抽取**
 
 - `WandUpgradeEvents#magicBonusOf`（`private`）→ **`public static magicDamageBonus(ItemStack)`**：
@@ -2340,7 +2379,7 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   **8 个基座物品 = 紫水晶碎片 ×4 / 红石 / 钻石 / 金锭 / 青金石**、
   `soulCost=10`、`duration=10`、`craftType=magic`、`ritual_type=goetytuner:tuner_servant_summon`。
 - **部署核对**：构建产物与部署 jar **逐字节相同**
-  （1,799,657 B / md5 `CCF56EEB9B5A3360EE693806C65A3CC7` / 122 条目）。
+  （1,799,699 B / md5 `D7E089F6EEDD68F6E68489C4514C3D11` / 122 条目）。
   同时**删除了旧的 `goetytuner-0.0.19.jar`** —— 同名版本换了版本号，
   两个 jar 并存会被 Forge 判为**重复 mod** 而启动失败。
 - ⚠️ **四条内容的运行时表现全部未实测** —— 见 §七.13。
@@ -2459,7 +2498,7 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
 | 版本 | 文件 | 大小 | md5 | 部署位置 |
 |---|---|---|---|---|
 | 0.0.19 | `goetytuner-0.0.19.jar` | 1,785,988 B | `77DAAFB0A5B77907C3D7A22461731FB8` | 已删除（被 0.0.20 取代；**不能与 0.0.20 并存**，同 mod id 会让 Forge 报重复 mod） |
-| 0.0.20 | `goetytuner-0.0.20.jar` | 1,799,657 B | `CCF56EEB9B5A3360EE693806C65A3CC7` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
+| 0.0.20 | `goetytuner-0.0.20.jar` | 1,799,699 B | `D7E089F6EEDD68F6E68489C4514C3D11` | `versions\测试\mods\`（该目录只保留这一个 goetytuner jar） |
 
 > 本轮（0.0.19）jar 内共 **117 条目**（0.0.18 为 112）：新增 5 条 = 4 个新 class
 > （`DamageThrottle` / `TunerDamageRules` / `TunerWand` / `TunerServantSpawnEggItem`）
@@ -2730,7 +2769,15 @@ Remove-Item Env:ACC_PRODUCT_CONFIG_V3
     - ⚠️ 左键仍然**不应造成伤害**（我们照样取消事件）；
     - ⚠️ 若左键**依然毫无反应**，请把日志里有没有 `[Tuner] Servant focus ... -> DISABLED` 告诉我 ——
       有日志=事件通了（那是别的问题）；没日志=还有人在我们之前取消/拦截。
-    ⑧ **回归**：① 聚晶指令的单体语义（互斥 + 可撤销）与 0.0.19 一致；
+    ⑧ **⚠️ 召唤类聚晶是否终于能召唤出东西（§3.21(5g)）**：
+    - 让仆从抽到 / 优先释放一个**召唤类**聚晶（僵尸 / 骷髅 / 冰傀儡 / 先锋 …）⇒
+      **应当真的出现召唤物**（修复前：什么都不发生，因为施法蹲姿被当成"潜行施法"，
+      而潜行语义是"把已有仆从传送到身边"）；
+    - ⚠️ 修复前**除非它已经有仆从**，否则永远是空放 —— 所以这是"从来没能召唤出来"；
+    - ⚠️ 顺带确认**蹲姿瞄准动画仍然正常**（`TunerModel` 读的是 pose，本修复不动 pose）；
+    - ⚠️ 另外 42 个用 `isShifting` 的法术的"潜行变体"分支语义也一并恢复，
+      若你发现某个法术的行为与以前不同，那多半是**这次修好了**。
+    ⑨ **回归**：① 聚晶指令的单体语义（互斥 + 可撤销）与 0.0.19 一致；
     ② 刷怪蛋"直接放 = 野生 / 潜行放 = 认主"不变，且**野生仆从仍可被任何玩家配置**；
     ③ 仆从的血量 / 护甲 / 减伤限伤仍与本体一致（216 血 / 护甲 16）；
     ④ 联机协议仍 **2.1**（双方都要 0.0.20）。
