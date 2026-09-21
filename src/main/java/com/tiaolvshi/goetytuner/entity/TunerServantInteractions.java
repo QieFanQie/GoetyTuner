@@ -19,6 +19,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.common.util.LazyOptional;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
@@ -114,6 +115,9 @@ public class TunerServantInteractions {
                 return; // 别人家的仆从：只提示，不吞掉
             }
             event.setCanceled(true);
+            if (!servant.acceptCommandClick(player.level().getGameTime(), true)) {
+                return; // 按住左键时的重复包：去抖（见 TunerServant#acceptCommandClick）
+            }
             boolean on = servant.applyFocusDisabledBatch(ids);
             message(player, on ? "info.goetytuner.servant.batch.disabled"
                     : "info.goetytuner.servant.batch.disabled.cleared", ids.size());
@@ -126,6 +130,9 @@ public class TunerServantInteractions {
             return;
         }
         event.setCanceled(true); // 指令而非攻击：不吃伤害、不掉血
+        if (!servant.acceptCommandClick(player.level().getGameTime(), true)) {
+            return; // 按住左键时的重复包：去抖
+        }
         boolean on = servant.toggleFocusDisabled(focusId);
         message(player, on ? "info.goetytuner.servant.focus.disabled"
                 : "info.goetytuner.servant.focus.disabled.cleared", held.getHoverName());
@@ -143,6 +150,31 @@ public class TunerServantInteractions {
         }
         ItemStack held = player.getItemInHand(event.getHand());
 
+        // ---- 【0.0.20】下界之星：切换「只释放优先聚晶」 ----
+        if (held.is(Items.NETHER_STAR)) {
+            if (!canCommand(servant, player)) {
+                return;
+            }
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            if (!servant.acceptCommandClick(player.level().getGameTime(), false)) {
+                return; // 按住右键每 4 tick 会重发一次交互包：去抖
+            }
+            boolean on = servant.togglePriorityOnly();
+            // 用户要求"没有优先聚晶时也可以这么设置，只是无效、照常释放" ⇒ 提示里点明这一点
+            String key;
+            if (!on) {
+                key = "info.goetytuner.servant.priority_only.cleared";
+            } else if (servant.hasPriorityFoci()) {
+                key = "info.goetytuner.servant.priority_only";
+            } else {
+                key = "info.goetytuner.servant.priority_only.empty";
+            }
+            player.displayClientMessage(Component.translatable(key).withStyle(
+                    on ? ChatFormatting.AQUA : ChatFormatting.GRAY), true);
+            return;
+        }
+
         // ---- 批量（聚晶包 / 多晶大袋） ----
         if (held.getItem() instanceof FocusBag) {
             List<String> ids = focusIdsInBag(held);
@@ -154,6 +186,9 @@ public class TunerServantInteractions {
             }
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
+            if (!servant.acceptCommandClick(player.level().getGameTime(), false)) {
+                return; // 按住右键时的重复包：去抖
+            }
             boolean on = servant.applyFocusPriorityBatch(ids);
             message(player, on ? "info.goetytuner.servant.batch.priority"
                     : "info.goetytuner.servant.batch.priority.cleared", ids.size());
@@ -167,6 +202,9 @@ public class TunerServantInteractions {
         }
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
+        if (!servant.acceptCommandClick(player.level().getGameTime(), false)) {
+            return; // 按住右键时的重复包：去抖
+        }
         boolean on = servant.toggleFocusPriority(focusId);
         message(player, on ? "info.goetytuner.servant.focus.priority"
                 : "info.goetytuner.servant.focus.priority.cleared", held.getHoverName());

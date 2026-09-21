@@ -14,6 +14,7 @@ import com.Polarice3.Goety.api.items.magic.IWand;
 import com.Polarice3.Goety.common.effects.GoetyEffects;
 import com.Polarice3.Goety.common.entities.ally.Summoned;
 import com.tiaolvshi.goetytuner.GoetyTuner;
+import com.tiaolvshi.goetytuner.GoetyTuner;
 import com.tiaolvshi.goetytuner.combat.BuffSpellPower;
 import com.tiaolvshi.goetytuner.combat.DamageThrottle;
 import com.tiaolvshi.goetytuner.combat.ServantWandBlessing;
@@ -150,6 +151,51 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
     // ---- 仆从数量统计缓存（同一 gameTime 内复用；见类注释的性能说明） ----
     private int cachedMinionTick = Integer.MIN_VALUE;
     private int cachedMinionCount = 0;
+
+    // ---- 指令去抖 + 「只放优先聚晶」（0.0.20） ----
+
+    /**
+     * 【0.0.20 关键修复】左键 / 右键指令的**上升沿去抖**时间戳（{@code gameTime}）。
+     *
+     * <p><b>为什么必须有它</b>（这是"左键设了没反应 / 又变回去了"的**真根因**）：
+     * 原版客户端在**按住左键期间每 tick** 都会调
+     * {@code MultiPlayerGameMode.attack} —— 它先把 {@code ServerboundInteractPacket}(attack)
+     * 发出去、再调 {@code Player.attack}（原版伤害节流 {@code attackStrengthScale > 0.9}
+     * 是在**那之后**才判的，拦不住发包）。
+     * 而我们的 {@code AttackEntityEvent} 挂在 {@code Player.attack} 的**第一条指令**上
+     * （{@code ForgeHooks.onPlayerAttackTarget}，字节码实证偏移 0）
+     * ⇒ **按住不放时服务器每 tick 都会执行一次我们的处理器**
+     * ⇒ 若直接 toggle，状态会以 20Hz 来回翻转，松手时落在哪一侧全看时机
+     * —— 表现出来就是"点了没用"。右键同理（按住时每 4 tick 重发一次交互包）。
+     *
+     * <p><b>修法</b>：只在"新一轮按压的**第一个包**"上生效 ——
+     * 无论接受与否都刷新时间戳，于是：
+     * <ul>
+     *   <li>按住不放：第 1 个包生效，之后每个包都只刷新时间戳（间隔恒为 1 tick）⇒ **一次按压只翻转一次**；</li>
+     *   <li>松手后再点：与上次动作相隔 &gt; {@value #CLICK_DEBOUNCE_TICKS} tick ⇒ 正常生效；</li>
+     *   <li>顺带把"手抖双击"当成同一次按压（避免误翻两下）。</li>
+     * </ul>
+     * ⚠️ 初值取 {@code -1000}（而不是 {@code Long.MIN_VALUE}）—— 后者参与减法会**溢出成负数**，
+     * 导致"史上第一次指令被吞掉"。
+     */
+    private long lastLeftClickTick = -1000L;
+    private long lastRightClickTick = -1000L;
+
+    /** 去抖窗口（tick）：小于它的两次点击视为同一轮按压。0.25 秒。 */
+    private static final int CLICK_DEBOUNCE_TICKS = 5;
+
+    /**
+     * 【0.0.20】「只释放优先聚晶」开关（下界之星右键切换）。
+     *
+     * <p>语义（用户原话）："可以让它只释放优先聚晶（若没有优先聚晶**仍可这么设置**，但无效，
+     * 按照正常的来）" ⇒ 开启后：
+     * <ul>
+     *   <li>有优先聚晶：只放它们（插队逻辑本来就是这个，见 {@link #tryPriorityCast}）；</li>
+     *   <li>**没有**优先聚晶：本开关**无效**，照常按轮换序列抽签；</li>
+     *   <li>有优先聚晶但此刻都不可用（冷却中 / 被禁放）：**不施法**（"只放优先"的字面含义）。</li>
+     * </ul>
+     */
+    private boolean priorityOnly = false;
 
     // ---- 召唤用杖（0.0.20） ----
     /**
@@ -387,6 +433,11 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
             this.activeChannel = priority;
             return true;
         }
+        // 【0.0.20】「只释放优先聚晶」：插队失败后是否还允许正常抽签。
+        // 用户要求"没有优先聚晶时本开关无效、照常"⇒ 只在**确实设了优先聚晶**时才拦住常规轮换。
+        if (this.priorityOnly && !this.pools.priorityFoci().isEmpty()) {
+            return false;
+        }
         FocusCategory[] rotation = this.rotation();
         if (rotation.length == 0) {
             return false;
@@ -403,6 +454,37 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
             }
         }
         return false;
+    }
+
+    /**
+     * 【0.0.20】左键 / 右键指令是否应当生效（上升沿去抖）。
+     *
+     * @param now       当前 {@code gameTime}
+     * @param leftClick true = 左键通道，false = 右键通道（两个通道各自独立计时）
+     * @return true = 这是"新一轮按压的第一包"，应当执行指令
+     */
+    public boolean acceptCommandClick(long now, boolean leftClick) {
+        long last = leftClick ? this.lastLeftClickTick : this.lastRightClickTick;
+        boolean fresh = now - last > CLICK_DEBOUNCE_TICKS;
+        // ⚠️ 无论是否接受都要刷新：否则按住不放时每隔 5 tick 就会再翻一次
+        if (leftClick) {
+            this.lastLeftClickTick = now;
+        } else {
+            this.lastRightClickTick = now;
+        }
+        return fresh;
+    }
+
+    /** 【0.0.20】「只释放优先聚晶」是否开启。 */
+    public boolean isPriorityOnly() {
+        return this.priorityOnly;
+    }
+
+    /** 【0.0.20】切换「只释放优先聚晶」，返回切换后的状态。 */
+    public boolean togglePriorityOnly() {
+        this.priorityOnly = !this.priorityOnly;
+        GoetyTuner.LOGGER.info("[Tuner] Servant {} priority-only -> {}", this.getUUID(), this.priorityOnly);
+        return this.priorityOnly;
     }
 
     /**
@@ -677,6 +759,11 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         return this.pools.isFocusPriority(itemId);
     }
 
+    /** 【0.0.20】是否已设过任何优先聚晶（供"只释放优先聚晶"的提示与判定）。 */
+    public boolean hasPriorityFoci() {
+        return !this.pools.priorityFoci().isEmpty();
+    }
+
     // ---- 召唤用杖（0.0.20） ----
 
     /** 召唤用杖快照（没有则返回 {@link ItemStack#EMPTY}）。 */
@@ -715,6 +802,8 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         // 【0.0.18】聚晶指令落盘：不落盘的话重启就丢，玩家会以为"右键设置没用"
         tag.put("DisabledFoci", writeStrings(this.pools.disabledFoci()));
         tag.put("PriorityFoci", writeStrings(this.pools.priorityFoci()));
+        // 【0.0.20】「只释放优先聚晶」也要落盘（否则重进存档就悄悄失效）
+        tag.putBoolean("PriorityOnly", this.priorityOnly);
         // 【0.0.20】召唤用杖落盘：它既是增益依据、又是死亡掉落物，
         // 不落盘的话"重进存档 ⇒ 仆从变弱、死了也不还杖"。
         if (!this.summonWand.isEmpty()) {
@@ -727,6 +816,7 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         super.readAdditionalSaveData(tag);
         this.pools.restoreFocusCommands(
                 readStrings(tag, "DisabledFoci"), readStrings(tag, "PriorityFoci"));
+        this.priorityOnly = tag.getBoolean("PriorityOnly");
         // 【0.0.20】恢复召唤用杖（老存档 / 刷怪蛋仆从没有这个键 ⇒ 保持 EMPTY）
         if (tag.contains("SummonWand", 10)) { // 10 = CompoundTag
             this.summonWand = ItemStack.of(tag.getCompound("SummonWand"));
