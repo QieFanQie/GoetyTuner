@@ -366,7 +366,12 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
             // 【0.0.20】改用**仆从自己的**限伤配置（用户要求"加强仆从的限伤机制"）。
             // 0.0.19 时这里读的是 [boss] 的两个键（限伤 25%、限DPS 关闭）⇒ 仆从照样会被
             // 高爆发几下打死。现在 [servant] 有独立且更狠的一组默认值：
-            // 单次 ≤ 15% 最大生命、每秒 ≤ 50% 最大生命 ⇒ 无论 DPS 多高至少 2 秒才能打死。
+            // 单次 ≤ 15% 最大生命（≈32 点）、每秒 ≤ 108 **点**（= 默认生命的 50%）
+            // ⇒ 无论 DPS 多高，至少 2 秒才能打死。
+            // ⚠️ **两个键的单位不同**（DamageThrottle 的既有契约，也是 [boss] 的既有语义）：
+            //    上一个是**比例**（内部乘最大生命），下一个是**绝对点数/秒**。
+            //    0.0.20 起初把后者也当比例传了 0.50 ⇒ 每秒预算只剩 0.5 点伤害
+            //    ⇒ 超过之后每次伤害都被整段吸收 ⇒ 玩家实测"仆从几乎不受伤"。已修。
             float allowed = damageThrottle.apply(
                     this.level().getGameTime(),
                     amount,
@@ -427,6 +432,10 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         // 顺序有意放在上一行之后：同一次 aiStep 里先把强健挂上，这里立刻就能读到它。
         // 用户要求"只对调律师生效"⇒ 只有本模组的两个实体调用这个方法。
         BuffSpellPower.tick(this);
+
+        // 【0.0.20】缓慢自愈：默认每 200 tick（10 秒）回 1 点（用户要求）。
+        // 放在所有 early-return 之前：施法中、无目标时也照样慢慢回。
+        this.tickSlowRegen();
 
         // 冷却池推进（与 Boss 一样每 tick 推进：到点的聚晶回功能池）
         this.pools.tickCooldowns();
@@ -556,6 +565,39 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
             this.rotationCache = FocusCategory.parseRoleSpec(raw);
         }
         return this.rotationCache;
+    }
+
+    // ================= 缓慢自愈 =================
+
+    /** 缓慢自愈计时器（tick）。不落盘：重载后重新计时，没有副作用。 */
+    private int slowRegenTimer = 0;
+
+    /**
+     * 【0.0.20】缓慢自愈：每 {@code servant.regenIntervalTicks}（默认 200 = 10 秒）回复 **1 点**生命。
+     *
+     * <p>用户要求："为调律师仆从添加 10 秒 1 滴血的缓慢恢复效果。"
+     * <ul>
+     *   <li>只在**未满血**时回（满血不浪费、也不产生无谓的同步）；</li>
+     *   <li>只在服务端执行（调用点在 {@code aiStep} 的服务端分支，那里已经排除了客户端）；</li>
+     *   <li>与限伤互补：限伤决定"一时打不死"，本键决定"打完会慢慢爬起来"；</li>
+     *   <li>{@code regenIntervalTicks = 0} 关闭（此时计时器也不再推进）。</li>
+     * </ul>
+     * ⚠️ 刻意**不**与本体二阶段那套回血共用实现：本体那个是"锁血档位 7~12 内、
+     * 非宽限期、每 2 秒回 1 点"，与阶段/档位强耦合；这里是**与任何阶段无关的常数速率**，
+     * 两者除了都是"回血"之外没有可复用的实质（强行抽象只会让两边都变难懂）。
+     */
+    private void tickSlowRegen() {
+        int interval = TunerCommonConfig.SERVANT_REGEN_INTERVAL_TICKS.get();
+        if (interval <= 0) {
+            return;
+        }
+        if (++this.slowRegenTimer < interval) {
+            return;
+        }
+        this.slowRegenTimer = 0;
+        if (this.isAlive() && this.getHealth() < this.getMaxHealth()) {
+            this.heal(1.0F);
+        }
     }
 
     // ================= 召唤物数量（召唤类权重用） =================

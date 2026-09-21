@@ -153,8 +153,11 @@ public class TunerCommonConfig {
     /** 【0.0.20】仆从**单次**伤害上限（占最大生命的比例，默认 0.15）。 */
     public static final ForgeConfigSpec.DoubleValue SERVANT_MAX_HIT_DAMAGE_PERCENT;
 
-    /** 【0.0.20】仆从**每秒**伤害上限（占最大生命的比例，默认 0.50）。 */
+    /** 【0.0.20】仆从**每秒**伤害上限（**绝对点数/秒**，默认 108 = 默认最大生命 216 的 50%）。 */
     public static final ForgeConfigSpec.DoubleValue SERVANT_MAX_DAMAGE_PER_SECOND;
+
+    /** 【0.0.20】仆从缓慢自愈间隔（tick，默认 200 = 每 10 秒回 1 点；0 = 关闭）。 */
+    public static final ForgeConfigSpec.IntValue SERVANT_REGEN_INTERVAL_TICKS;
 
     // ---- LLM 自动分类 ----
     public static final ForgeConfigSpec.ConfigValue<String> LLM_API_URL;
@@ -471,12 +474,23 @@ public class TunerCommonConfig {
                 "· 默认 0.15 ⇒ 216 血时单次最多掉 32 点（本体是 54 点）。",
                 "· 0 = 关闭限伤。")
                 .defineInRange("maxHitDamagePercent", 0.15D, 0.0D, 1.0D);
-        SERVANT_MAX_DAMAGE_PER_SECOND = b.comment("【0.0.20】调律师仆从的**每秒伤害上限**（占最大生命的比例）。",
+        SERVANT_MAX_DAMAGE_PER_SECOND = b.comment("【0.0.20】调律师仆从的**每秒伤害上限**：**绝对点数/秒**。",
+                "⚠️ **单位与 [boss].maxDamagePerSecond 完全一致（都是点数/秒，不是比例）** ——",
+                "   0.0.20 起初这里误当成比例填了 0.50，结果「每秒预算」只有 0.5 点伤害，",
+                "   超过 0.5 点之后每一次伤害都被整段吸收 ⇒ 玩家实测「仆从几乎不受伤」。已修。",
+                "   （同一个方法里，单次上限是**比例**、每秒上限是**点数**，单位不同是既有契约。）",
                 "· 与单次限伤互补：单次限伤管「一击爆发」，本键管「高频多段/多来源的持续爆发」。",
-                "· 默认 0.50 ⇒ 216 血时每秒最多掉 108 点 ⇒ **无论 DPS 多高，至少 2 秒才能打死它**。",
+                "· 默认 108 = 默认最大生命 216 的 50% ⇒ **无论 DPS 多高，至少 2 秒才能打死它**。",
                 "  （本体默认 0 = 关闭，所以仆从现在比本体更抗打。）",
                 "· 0 = 关闭限DPS。⚠️ 窗口是**滑动 1 秒**；预算耗尽的那次伤害被**整段吸收**。")
-                .defineInRange("maxDamagePerSecond", 0.50D, 0.0D, 10.0D);
+                .defineInRange("maxDamagePerSecond", 108.0D, 0.0D, 10000.0D);
+        SERVANT_REGEN_INTERVAL_TICKS = b.comment("【0.0.20】调律师仆从的**缓慢自愈间隔**（tick，20 = 1 秒）。",
+                "· 用户要求：「为调律师仆从添加 10 秒 1 滴血的缓慢恢复效果」",
+                "  ⇒ 默认 **200 tick = 每 10 秒回 1 点**生命。",
+                "· 只在**未满血**时回（满血不浪费、也不产生无谓的同步）；只服务端执行。",
+                "· 与限伤互补：限伤决定「一时打不死」，本键决定「打完能慢慢爬起来」。",
+                "· 0 = 关闭自愈。")
+                .defineInRange("regenIntervalTicks", 200, 0, 72000);
         b.pop();
 
         b.push("llm");

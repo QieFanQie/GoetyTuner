@@ -54,8 +54,19 @@ public final class DamageThrottle {
      * @param now       当前 {@code gameTime}（滑动窗口的时钟）
      * @param amount    本次伤害（已过近战易伤等修正）
      * @param maxHealth 实体最大生命（限伤按它的百分比算）
-     * @param hitCapPct 单次伤害上限占最大生命的比例，{@code <= 0} 表示关闭限伤
-     * @param dpsCap    每秒伤害上限，{@code <= 0} 表示关闭限DPS
+     * @param hitCapPct 单次伤害上限**占最大生命的比例**（内部会乘 {@code maxHealth}），
+     *                  {@code <= 0} 表示关闭限伤
+     * @param dpsCap    每秒伤害上限，**绝对点数/秒**（⚠️ **不乘 maxHealth**；
+     *                  与 {@code [boss].maxDamagePerSecond} 同一契约），
+     *                  {@code <= 0} 表示关闭限DPS
+     *
+     * <p>⚠️ **两个参数的单位不同，这是刻意的**（延续 0.0.6 起 [boss] 那两个键的语义）：
+     * 「单次上限」按**生命比例**表达更稳健（改 {@code maxHealth} 时自动跟着变），
+     * 「每秒上限」按**绝对点数**表达更直观（"每秒最多掉 108 点"）。
+     * <p>0.0.20 给仆从新增键时正是**把这两者当成同一种单位**了 ——
+     * 把比例 {@code 0.50} 当成点数传进来，于是每秒预算只剩 0.5 点伤害，
+     * 超过之后每一次伤害都被整段吸收，玩家实测为"仆从几乎不受伤"。
+     * **新增调用方时务必看清这一行。**
      * @return 允许生效的伤害；DPS 预算已耗尽时返回 {@code -1}（调用方应直接放弃本次伤害）
      */
     public float apply(long now, float amount, float maxHealth, double hitCapPct, double dpsCap) {
