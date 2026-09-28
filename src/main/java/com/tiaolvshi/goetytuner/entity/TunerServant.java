@@ -900,12 +900,17 @@ public class TunerServant extends Summoned implements CastChannel.TunerCastCallb
         }
         // 与 TunerBoss 相同的旧档自愈：从 NBT 恢复时主手可能不是法杖（或为空），
         // 而 SoulUsingItemHandler.get 对非 IWand 会抛异常 ⇒ 补发调律师法杖。
-        // 【0.0.19】同时完成「goety:dark_wand → goetytuner:tuner_wand」的旧档迁移
-        // （dark_wand 也是 IWand、能通过 instanceof 判定，但撑不起长按类法术）。
-        if (!(this.getMainHandItem().getItem() instanceof IWand)
-                || this.getMainHandItem().getItem()
-                == com.Polarice3.Goety.common.items.ModItems.DARK_WAND.get()) {
-            this.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(ModItems.TUNER_WAND.get()));
+        // 【0.0.19】同时完成「goety:dark_wand → goetytuner:tuner_wand」的旧档迁移。
+        // 【0.0.21】判定放宽成「**不是**本模组自备的 TunerWand 就换」（不再只认 dark_wand 一个注册名）：
+        // dark_wand / dark_staff / nameless_staff / 任意附属法杖都能通过 instanceof IWand 判定，
+        // 但**全都撑不起"被 Mob 使用"** —— CastChannel 的通道型施法会 startUsingItem，
+        // DarkWand 家族对非玩家施法者会 failParticles（10~44 个白烟粒子）+ 灭火音且不放法术。
+        // 原杖 NBT 由 BossWandHelper#inertCarrier 原样保留。
+        ItemStack mainHand = this.getMainHandItem();
+        if (!(mainHand.getItem() instanceof IWand)
+                || !(mainHand.getItem() instanceof com.tiaolvshi.goetytuner.focus.TunerWand)) {
+            this.setItemInHand(InteractionHand.MAIN_HAND,
+                    com.tiaolvshi.goetytuner.focus.BossWandHelper.inertCarrier(mainHand));
         }
     }
 

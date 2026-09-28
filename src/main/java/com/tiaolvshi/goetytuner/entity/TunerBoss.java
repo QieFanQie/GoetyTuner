@@ -1989,20 +1989,22 @@ public class TunerBoss extends Monster implements CastChannel.TunerCastCallback,
         // 存档中的值（修复前生成的 Tuner 主手为空），导致 SoulUsingItemHandler.get 崩溃
         // （"ItemStack is missing item capability"）。readAdditionalSaveData 在构造函数
         // 之后执行，故此处兜底：主手非法杖则补发调律师法杖（IWand 自带 SoulUsing capability）。
-        // 【0.0.19】这里也顺带完成"从 goety:dark_wand 迁移到 goetytuner:tuner_wand"——
-        // 老存档里存的仍是 dark_wand，它会走 IWand 判定通过（dark_wand 也是 IWand），
-        // 但它**无法**支撑长按类法术（见构造函数注释），所以按注册名精确迁移。
-        if (!(this.getMainHandItem().getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)
-                || isLegacyDarkWand(this.getMainHandItem())) {
+        //
+        // 【0.0.19】顺带完成"从 goety:dark_wand 迁移到 goetytuner:tuner_wand"。
+        // 【0.0.21】⚠️ 判定从「注册名 == goety:dark_wand」放宽成「**不是**我们自己的 TunerWand」：
+        //   ① 老版本（0.0.8~0.0.18）主手存的确实只是 dark_wand，但**仪式召唤**出来的存档
+        //      主手存的是**玩家那把杖** —— 可能是 dark_staff / nameless_staff / 任意白名单附属法杖，
+        //      它们全都继承 DarkWand、全都撑不起"被 Mob 使用"（会每 tick 冒 10~44 个白烟粒子
+        //      + 一声灭火音且不放法术，见 CastChannel#ensureInertWand 的实证链条）；
+        //   ② 指令 / 数据包 / 其它附属也可能给 Boss 换上任意 IWand。
+        //   所以这里按"是不是惰性杖"收口，而不是按注册名白名单。原杖 NBT 由
+        //   BossWandHelper#inertCarrier 原样搬到新杖上（调律加成等不丢）。
+        ItemStack mainHand = this.getMainHandItem();
+        if (!(mainHand.getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)
+                || !(mainHand.getItem() instanceof com.tiaolvshi.goetytuner.focus.TunerWand)) {
             this.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND,
-                    new net.minecraft.world.item.ItemStack(
-                            com.tiaolvshi.goetytuner.init.ModItems.TUNER_WAND.get()));
+                    com.tiaolvshi.goetytuner.focus.BossWandHelper.inertCarrier(mainHand));
         }
-    }
-
-    /** 【0.0.19】老存档的主手是 {@code goety:dark_wand} 时判定为需要迁移。 */
-    private static boolean isLegacyDarkWand(net.minecraft.world.item.ItemStack stack) {
-        return stack.getItem() == com.Polarice3.Goety.common.items.ModItems.DARK_WAND.get();
     }
 
     /**

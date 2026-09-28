@@ -16,7 +16,9 @@ import com.tiaolvshi.goetytuner.focus.BossWandHelper;
 import com.tiaolvshi.goetytuner.focus.FocusCategory;
 import com.tiaolvshi.goetytuner.focus.FocusEntry;
 import com.tiaolvshi.goetytuner.focus.FocusPoolManager;
+import com.tiaolvshi.goetytuner.focus.TunerWand;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
@@ -90,6 +92,14 @@ public class CastChannel {
      * {@code beginCast} 的兜底 catch 会据此补发一次 {@code onCastFailed} 让计数平衡。
      */
     private boolean startEmitted;
+
+    /**
+     * 【0.0.21】本次施法是否已经为「主手不是惰性法杖」打过日志。
+     *
+     * <p>只为防刷屏：换成 {@link TunerWand} 之后主手就永远是我们的杖了，
+     * 同一个实体**最多只会命中一次**，但并行三通道 + 每 tick 自愈仍可能重复进入该方法。
+     */
+    private boolean wandSwapLogged;
 
     /** 施法事件的宿主回调（由TunerBoss实现） */
     public interface TunerCastCallback {
@@ -305,8 +315,18 @@ public class CastChannel {
         }
         // ① 维持"正在使用法杖"：被打断（受伤、其它模组 stopUsingItem 等）时自愈。
         //    这是 AbstractBeam 那类"以法杖为基准"的实体存活的前提。
-        if (!caster.isUsingItem()) {
-            caster.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+        //
+        // 【0.0.21】但**不能**无条件自愈 —— 先做两道闸（顺序很关键）：
+        //   闸A：手里"正在使用"的东西不是惰性法杖 ⇒ **立刻松手**（下面保证不会再启用手里的外来杖）；
+        //   闸B：主手不是惰性法杖 ⇒ 先换成 tuner_wand（并重装当前聚晶）再 startUsingItem。
+        // 没有这两道闸，主手若是 goety:dark_wand / dark_staff / nameless_staff（旧档、仪式召唤、
+        // 附属模组、指令换上…），自愈就等于**每 tick 触发一次** MagicResults 的非玩家分支：
+        // 10~44 个白烟粒子 + 一声灭火音、且不放法术。完整链条见 ensureInertWand 的 javadoc。
+        if (caster.isUsingItem() && !isInertWand(caster.getUseItem())) {
+            caster.stopUsingItem();
+        }
+        if (!caster.isUsingItem() && ensureInertWand(caster, current)) {
+            caster.startUsingItem(InteractionHand.MAIN_HAND);
         }
         // ② 蓄力满之后按法术自己的节奏反复释放
         if (castTicksElapsed >= channelChargeTicks && --channelFireTimer <= 0) {
@@ -340,6 +360,97 @@ public class CastChannel {
         }
     }
 
+    /** 本模组自备的「惰性法杖」判定（唯一被允许 {@code startUsingItem} 的物品，理由见下）。 */
+    private static boolean isInertWand(ItemStack stack) {
+        return stack.getItem() instanceof TunerWand;
+    }
+
+    /**
+     * 【0.0.21】保证施法者主手是一把**可以在 Item 层被"使用"**的法杖，并把当前聚晶装回去。
+     *
+     * <h2>为什么必须是「惰性法杖」（一条完整的实证链，别再删掉它）</h2>
+     * <p>用户报的现象：调律师（及仆从）施法时**每 tick 冒 10~44 个白烟粒子 + 一声灭火音，
+     * 且不放法术**。反编译 + 字节码核对后的完整链条（4 环，缺一不可）：
+     *
+     * <ol>
+     *   <li><b>谁会去"使用"杖</b>：{@link #tickChannel} 要 {@code startUsingItem(MAIN_HAND)}
+     *       —— 这是 {@code AbstractBeam} 那类"以法杖为基准"的光束实体存活的前提
+     *       （{@code MobUtil.isSpellCasting} = 施法者 {@code isUsingItem()} ∧ 使用物是 {@code IWand}
+     *       ∧ 杖里有聚晶）。这一步让**手里的那把杖的 Item 层代码真正跑起来**。</li>
+     *   <li><b>{@code DarkWand} 的 useDuration 是 0</b>：{@code DarkWand#getUseDuration}
+     *       （jar 内 SRG {@code m_8105_}）读 {@code stack.getTag().getInt("Cast Time")}。
+     *       而 **Mob 的持有物永远不跑 {@code ItemStack#inventoryTick}**（1.20.1 里只有
+     *       {@code Inventory#tick} 调它 ⇒ 仅玩家物品栏；{@code Mob}/{@code LivingEntity} 的
+     *       {@code tick} 里没有这次调用，已用 {@code javap} 逐方法确认）⇒ 这个键要么不存在（= 0）、
+     *       要么是玩家留下的**陈旧值**。玩家拿着杖时 {@code setSpellConditions} 还会把
+     *       {@code Cooldown} 一起写进去，非玩家则连这一步都不会发生。</li>
+     *   <li><b>于是"使用"当场就结束</b>：{@code LivingEntity#startUsingItem} 把
+     *       {@code getUseDuration()} 当 {@code useItemRemaining}；为 0 时
+     *       {@code updateUsingItem} **连 {@code onUseTick} 都不会调**（它的前置条件是
+     *       {@code getUseItemRemainingTicks() > 0}），直接
+     *       {@code --useItemRemaining <= 0 ⇒ completeUsingItem()}
+     *       ⇒ {@code DarkWand#finishUsingItem}（{@code m_5922_}）⇒ {@code MagicResults(...)}。</li>
+     *   <li><b>{@code MagicResults} 对非玩家只会冒烟</b>：整段逻辑包在
+     *       {@code if (spell != null && caster instanceof Player)} 里，非玩家直接掉进 else：
+     *       {@code failParticles(...)}（{@code IWand} 的 default 实现 =
+     *       {@code for (i < random.nextInt(35) + 10)} 反复 {@code ParticleTypes.CLOUD}
+     *       ⇒ **恰好 10~44 个白烟**）+ {@code FIRE_EXTINGUISH} 音效，**法术一个都不放**。</li>
+     * </ol>
+     *
+     * <p>再叠加 {@link #tickChannel} 的"每 tick 自愈"⇒ 这条链**每 tick 触发一次**
+     * （用户以为是"每冷却 tick"，实测链条上更频繁：因为第 2 环已经把 useDuration 变成 0，
+     * {@code onUseTick} 那条按 {@code Cooldown} 节流的路径根本走不到）。</p>
+     *
+     * <p><b>为什么不能只靠"给 Boss 发一把好杖"</b>：主手这把杖有四个来源 —— 构造函数、
+     * 旧档 NBT（0.0.18 及以前是 {@code goety:dark_wand}）、**仪式召唤**
+     * （0.0.20 及以前 {@code TunerSummonRitual} 会把**玩家那把杖**塞进 Boss 主手，
+     * 而那可能是 {@code dark_staff} / {@code nameless_staff} / 任意附属法杖）、
+     * 以及指令/数据包/其它附属的任意 {@code IWand}。所以这里**按行为收口**：
+     * 只要主手不是我们自己的 {@link TunerWand}（唯一确定的惰性杖），就换成它并保留原杖 NBT
+     * （见 {@link BossWandHelper#inertCarrier(ItemStack)}）。</p>
+     *
+     * @param entry 当前施法的聚晶（换杖后必须重新装进去，否则 {@code isSpellCasting} 的
+     *              "杖里有聚晶"这一条不成立、光束照样活不下来）
+     * @return {@code true} = 主手已是一把可安全 {@code startUsingItem} 的 IWand
+     */
+    private boolean ensureInertWand(LivingEntity caster, FocusEntry entry) {
+        ItemStack hand = caster.getMainHandItem();
+        if (!(hand.getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)) {
+            // 正常不可达：startCast 起手就要求主手是 IWand；中途被别的模组换掉才会走到这里。
+            if (!wandSwapLogged) {
+                wandSwapLogged = true;
+                GoetyTuner.LOGGER.warn("[Tuner] {} 主手不是法杖（{}）⇒ 本次通道不置「正在使用」状态"
+                                + "（光束类法术会提前消失，但不会有副作用）。",
+                        caster.getName().getString(), hand.getItem());
+            }
+            return false;
+        }
+        if (!isInertWand(hand)) {
+            String oldWand = hand.getHoverName().getString();
+            // 换杖前先松手：正在"使用"的栈被换掉时，LivingEntity#updatingUsingItem 会把
+            // useItem 与手上物品判成不一致而 stopUsingItem —— 与其让它在中途发生，
+            // 不如我们显式先松手、再换、再 startUsingItem。
+            if (caster.isUsingItem()) {
+                caster.stopUsingItem();
+            }
+            ItemStack carrier = BossWandHelper.inertCarrier(hand);
+            caster.setItemInHand(InteractionHand.MAIN_HAND, carrier);
+            hand = caster.getMainHandItem();
+            if (!wandSwapLogged) {
+                wandSwapLogged = true;
+                GoetyTuner.LOGGER.info("[Tuner] 主手法杖在 Item 层不惰性，已换成 tuner_wand 以免每 tick 冒白烟："
+                                + "{} 的 {} → tuner_wand（原杖 NBT 已保留）",
+                        caster.getName().getString(), oldWand);
+            }
+        }
+        // 聚晶必须跟着走：新载体栈的 capability 是空的，不重装的话
+        // MobUtil.isSpellCasting 会因为"杖里没有聚晶"而判假。
+        if (entry != null) {
+            BossWandHelper.installFocus(hand, entry, null);
+        }
+        return true;
+    }
+
     /** beginCast 的实际流程（由 beginCast 统一兜底异常） */
     private boolean startCast(ServerLevel level, FocusEntry entry, double warmupMultiplier) {
         LivingEntity boss = callback.boss();
@@ -355,24 +466,38 @@ public class CastChannel {
         }
 
         // 主手必须是法杖（IWand 自带 SoulUsing capability），否则本次施法无法进行
-        // （SoulUsingItemHandler.get 会对非法杖抛异常）。正常由 TunerBoss 保证常驻暗法杖；
-        // 此检查为最终防线：异常时放弃本次施法而非崩溃。
+        // （SoulUsingItemHandler.get 会对非法杖抛异常）。正常由 TunerBoss/TunerServant 的
+        // 构造函数与旧档迁移保证常驻 goetytuner:tuner_wand；此检查为最终防线：
+        // 异常时放弃本次施法而非崩溃。
         if (!(boss.getMainHandItem().getItem() instanceof com.Polarice3.Goety.api.items.magic.IWand)) {
             return false;
         }
         // 装配法杖：boss主手杖 + 当前聚晶（附魔注入示例： potency 2，后续由配置驱动）
         // TODO: 附魔表由 focus_enchants.json 配置注入
+        //
+        // 【0.0.21】⚠️ 惰性法杖是**在这一步之后**才强制的（见下面 channeled 分支里的
+        // ensureInertWand）：因为只有通道型施法才 startUsingItem，也只有它需要"惰性"。
+        // 普通法术既不 startUsingItem 也从不读 useDuration ⇒ 主手是什么杖都不会有副作用。
         BossWandHelper.installFocus(boss.getMainHandItem(), entry, null);
-        boss.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, boss.getMainHandItem());
+        boss.setItemInHand(InteractionHand.MAIN_HAND, boss.getMainHandItem());
 
         current = entry;
         castTicksElapsed = 0;
+        wandSwapLogged = false; // 【0.0.21】新一轮施法：允许为"换掉非惰性法杖"打一条日志
 
         // 【0.0.19】分两条路：普通法术 = 前摇一次然后放一发；「长按持续释放」法术 = 蓄力后连续放。
         // 判定依据是 Goety 自己的 IChargingSpell（腐化/震撼/暴雪/轰炸/旋风…全是它的子类）。
         channeled = spell instanceof com.Polarice3.Goety.api.magic.IChargingSpell;
         if (channeled) {
             var charging = (com.Polarice3.Goety.api.magic.IChargingSpell) spell;
+            // 【0.0.21】第一件事：把主手换成**惰性法杖**（tuner_wand）+ 重装当前聚晶。
+            // 只有这种杖"被使用"时在 Item 层什么都不会发生；若主手是 goety:dark_wand /
+            // dark_staff / nameless_staff / 附属法杖，下面的 startUsingItem 就会每 tick 触发一次
+            // failParticles（10~44 白烟）+ 灭火音，而且一个法术都不放
+            // —— 完整实证链条见 ensureInertWand 的 javadoc。
+            // 放在读 castUp 之前：换杖会连 NBT 一起带走（见 BossWandHelper#inertCarrier），
+            // 先换再问，法术看到的就是最终那把杖。
+            ensureInertWand(boss, entry);
             // ⚠️【0.0.19 修正 · 关键】蓄力与"持续释放"是**两段互不重叠**的时间，必须分别给预算：
             //     总时长 = 蓄力(channelChargeTicks) + 持续(channelMaxTicks) = channelEndTick
             //
@@ -401,7 +526,7 @@ public class CastChannel {
             warmupTicksRemaining = sustain; // 仅作兜底路径使用
             // 让施法者**真的开始"使用法杖"**：AbstractBeam 那类实体靠
             // MobUtil.isSpellCasting(caster) 判定存活（详细理由见 tickChannel 的 javadoc）。
-            boss.startUsingItem(net.minecraft.world.InteractionHand.MAIN_HAND);
+            boss.startUsingItem(InteractionHand.MAIN_HAND);
             GoetyTuner.LOGGER.debug("[Tuner] Channelled cast {} (charge={}, sustain={}, total={})",
                     entry.getItemId(), channelChargeTicks, sustain, channelEndTick);
         } else {

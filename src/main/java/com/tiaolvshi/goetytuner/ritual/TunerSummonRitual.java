@@ -99,7 +99,25 @@ public class TunerSummonRitual extends SummonRitual {
         super.initSummoned(living, level, pos, altar, player);
         if (living instanceof TunerBoss boss && !wandCopy.isEmpty()) {
             // Boss 战斗用：会被持续改写聚晶槽，但死亡不掉落它
-            boss.setItemSlot(EquipmentSlot.MAINHAND, wandCopy.copy());
+            //
+            // 【0.0.21】⚠️ 这里给的是**本模组自备的惰性载体杖**（tuner_wand 的外观 = dark_wand 模型），
+            // **不是**玩家那把杖本体 —— 而是"带上玩家那把杖 NBT 的 tuner_wand"。
+            //
+            // 为什么必须这样（用户报的 bug 的**根因**就在这一行）：
+            // 玩家激活仪式用的通常是 goety:dark_wand（`goety:wands` 标签的第一个常见物品），
+            // 也可能是 dark_staff / nameless_staff / 白名单里的附属法杖 —— 而它们**全都继承
+            // DarkWand**。把这种杖塞进 Boss 主手后，CastChannel 的通道型施法会
+            // startUsingItem(MAIN_HAND)，于是 DarkWand#finishUsingItem → MagicResults 会掉进
+            // "非玩家"分支：failParticles（random.nextInt(35)+10 ⇒ **10~44 个白烟粒子**）
+            // + FIRE_EXTINGUISH 音效，**且不放法术**；再叠加 tickChannel 的每 tick 自愈
+            // ⇒ Boss 变成一台冒烟机器。完整链条（4 环，含 javap 实证）见
+            // CastChannel#ensureInertWand 与 BossWandHelper#inertCarrier 的 javadoc。
+            //
+            // 保留下来的东西：① 原杖 NBT（调律加成等，`SpellDamageBonus` 里
+            // `wand.bonusAppliesToBoss` 读的正是 Boss 主手这件物品）；② 死亡掉落用的
+            // originalWand 快照（下面一行）—— 玩家拿回的仍是自己那把杖。
+            boss.setItemSlot(EquipmentSlot.MAINHAND,
+                    com.tiaolvshi.goetytuner.focus.BossWandHelper.inertCarrier(wandCopy));
             // 原始快照持久化：死亡掉落 + 升级逻辑读取此快照
             boss.setOriginalWand(wandCopy.copy());
             wandCopy = ItemStack.EMPTY;

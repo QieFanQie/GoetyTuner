@@ -14,6 +14,7 @@ import com.tiaolvshi.goetytuner.entity.TunerBoss;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
+import net.minecraft.client.renderer.entity.layers.ItemInHandLayer;
 import net.minecraft.resources.ResourceLocation;
 
 /**
@@ -42,6 +43,13 @@ public class TunerRenderer extends HumanoidMobRenderer<TunerBoss, TunerModel<Tun
         // 深紫披风渲染层（模型层定义注册见 ClientSetup#onRegisterLayers）
         this.addLayer(new TunerCapeLayer<>(this, ctx.getModelSet()));
         this.addLayer(new TunerOrbLayer<>(this, ctx.getModelSet()));
+        // 【0.0.21】把 HumanoidMobRenderer 构造器里自带的那层原版 ItemInHandLayer
+        // 换成我们的子类：Boss 实际握的是惰性载体杖（tuner_wand），但画面要画"原来那把杖"
+        // （仪式/旧档快照存在载体杖 tag 里）。为什么不加一层而要把原版那层摘掉 ⇒ 否则会画两遍；
+        // 为什么"摘掉"能写在子类里 ⇒ `LivingEntityRenderer#layers` 是 protected，
+        // 只有子类实例能访问（所以这个两行装配必须留在各渲染器自己的构造器里）。
+        this.layers.removeIf(layer -> layer instanceof ItemInHandLayer);
+        this.addLayer(new TunerHandLayer<>(this, ctx.getItemInHandRenderer()));
     }
 
     @Override

@@ -13,6 +13,7 @@ import com.tiaolvshi.goetytuner.entity.TunerServant;
 import net.minecraft.client.model.geom.ModelLayers;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.HumanoidMobRenderer;
+import net.minecraft.client.renderer.entity.layers.ItemInHandLayer;
 import net.minecraft.resources.ResourceLocation;
 
 /**
@@ -29,6 +30,11 @@ public class TunerServantRenderer extends HumanoidMobRenderer<TunerServant, Tune
         super(ctx, new TunerModel<>(ctx.bakeLayer(ModelLayers.PLAYER)), 0.5F);
         this.addLayer(new TunerCapeLayer<>(this, ctx.getModelSet()));
         this.addLayer(new TunerOrbLayer<>(this, ctx.getModelSet()));
+        // 【0.0.21】与 Boss 渲染器同一处理：摘掉原版 ItemInHandLayer、换成 TunerHandLayer。
+        // 仆从目前没有"原杖快照"（召唤用杖只存在 NBT 里、不装到手上），所以这层对它是
+        // **行为不变**的 —— 两处都装只是为了让"主手显示"这件事在两个渲染器上完全一致。
+        this.layers.removeIf(layer -> layer instanceof ItemInHandLayer);
+        this.addLayer(new TunerHandLayer<>(this, ctx.getItemInHandRenderer()));
     }
 
     @Override

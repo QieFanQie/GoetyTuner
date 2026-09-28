@@ -1727,6 +1727,14 @@ Goety/本模组**都没有**"Boss 手持外观跟随玩家召唤用杖"这种机
 （`TunerSummonRitual` 对**玩家手持杖**做 `copy()` 快照 → `WandUpgradeEvents` 掉它）。
 所以"自定义后会不会影响跟随"这个担心没有对应的既有行为 —— **原本就没有"跟随"**。
 
+> 🔴 **【0.0.21 更正 · 上面这段有半句是错的】** 写这段时我只看了 `TunerBoss` 的构造函数，
+> **漏看了 `TunerSummonRitual#initSummoned` 里的 `boss.setItemSlot(EquipmentSlot.MAINHAND, wandCopy.copy())`**
+> —— 也就是说**仪式召唤出来的 Boss 主手实际拿的正是玩家那把杖**（任意 `goety:wands` 物品或白名单法杖）。
+> 这不是纯外观问题：主手那把杖会被 `CastChannel` 的通道型施法 `startUsingItem` 起来，而
+> `DarkWand`（含 `DarkStaff` / `NamelessStaff`）对**非玩家**施法者会冒白烟 + 响灭火音且不放法术
+> ⇒ **就是用户报的那个 bug 的根因**。已在 0.0.21 修复：仪式改成交给 Boss 一把带原杖 NBT 的
+> `tuner_wand`（外观 = `dark_wand` 模型），详见 **§3.22**。修完之后这段描述**才成立**。
+
 **④ 顺带查出一处真需要对齐的 `IWand` 成员：`getWandVisualHeight`。**
 `IWand` 的 default 是 **0.8F**，而 `goety:dark_wand` 覆写成 **0.4F**（`DarkStaff` 又是另一个值）。
 它被用来把"从杖尖发出"的东西对齐到杖尖，共 8 处引用：
@@ -2409,6 +2417,96 @@ jar 条目 **117 → 122**（新增 3 = 2 个新 class + `tuner_servant_ritual.j
   同时**删除了旧的 `goetytuner-0.0.19.jar`** —— 同名版本换了版本号，
   两个 jar 并存会被 Forge 判为**重复 mod** 而启动失败。
 - ⚠️ **四条内容的运行时表现全部未实测** —— 见 §七.13。
+
+---
+
+### 3.22 0.0.21（第 60 轮）：调查并修掉「施法时每 tick 冒 10~44 个白烟 + 一声灭火音」
+
+**用户原话（本轮唯一目标）**：调查调律师及仆从是否会出现
+「`CastChannel.tickChannel` 里一句自愈式 `caster.startUsingItem(MAIN_HAND)` + 自备的
+`focus/TunerWand`（`onUseTick` 空实现）—— 因为让 mob 去用 `dark_wand` 会掉进
+`DarkWand.MagicResults` 的 `instanceof Player` 门，每冷却 tick 冒 10~44 个白烟粒子 + 一声灭火音，
+且不放法术」这个问题，并尝试解决。
+
+#### (1) 调查结论：**会出现，而且比用户描述的更频繁（是"每 tick"，不是"每冷却 tick"）**
+
+根因不在 `CastChannel`（它的 `startUsingItem` 是对的，`TunerWand` 也是干净的），
+而在**主手那把杖是谁**：`ritual/TunerSummonRitual#initSummoned` 有一行
+
+```java
+boss.setItemSlot(EquipmentSlot.MAINHAND, wandCopy.copy());   // 0.0.20 及以前
+```
+
+`wandCopy` = **玩家激活仪式那把杖的完整副本**（任意 `goety:wands` 物品或 `wand_whitelist` 里的附属法杖）
+⇒ 只要玩家用 `goety:dark_wand`（最常见）或 `dark_staff` / `nameless_staff` / 附属法杖召唤，
+Boss **整场战斗主手都是一把 DarkWand 家族法杖**。`TunerWand` 只在「构造函数」与「旧档迁移」两条路
+上被保证，**仪式这条路把构造函数写的那把覆盖掉了**。
+
+#### (2) 完整实证链（4 环，源码 + **部署 jar 内字节码**双向核对）
+
+| # | 事实 | 证据 |
+|---|---|---|
+| ① | 通道型施法会 `startUsingItem(MAIN_HAND)`（为了让 `AbstractBeam` 那类光束活下来） | `CastChannel#tickChannel` / `startCast`；jar 内 `m_6672_(InteractionHand)` |
+| ② | `DarkWand#getUseDuration`（SRG **`m_8105_`**）= `tag.getInt("Cast Time")`；而**Mob 的持有物永远不跑 `ItemStack#inventoryTick`**（1.20.1 只有 `Inventory#tick` 调它 ⇒ 仅玩家物品栏；`Mob`/`LivingEntity` 的 `tick` 内没有这次调用，已逐方法 `javap` 确认）⇒ 该键**要么不存在（0）、要么是玩家留下的陈旧值** | `DarkWand.jar` `m_8105_` 字节码；`LivingEntity`/`Mob`/`Inventory` 字节码 |
+| ③ | `LivingEntity#startUsingItem` 把 `getUseDuration()` 当 `useItemRemaining`；为 **0** 时 `updateUsingItem` **连 `onUseTick` 都不调**（前置条件是 `getUseItemRemainingTicks() > 0`），直接 `--useItemRemaining <= 0` ⇒ `completeUsingItem()` ⇒ `DarkWand#finishUsingItem`（SRG **`m_5922_`**）⇒ `MagicResults(...)` | `LivingEntity` 的 `startUsingItem` / `updateUsingItem` / `completeUsingItem` 全部字节码 |
+| ④ | `MagicResults` 整段包在 `if (spell != null && caster instanceof Player)` 里 ⇒ 非玩家掉进 `else`：`IWand#failParticles` = `for (i < random.nextInt(35) + 10)` 反复 `ParticleTypes.CLOUD`（**恰好 10~44 个白烟**，与用户报的数字完全一致）+ `FIRE_EXTINGUISH`，**法术一个都不放** | `DarkWand.MagicResults` 与 `IWand.failParticles` 的 jar 内字节码 |
+
+⇒ 叠加 `tickChannel` 的「每 tick 自愈」，这条链**每 tick 重演一次**（Boss = 冒烟机器）。
+用户说的"每冷却 tick"是**玩家侧**那条 `COOL >= Cooldown` 节流路径 —— 对 Mob 而言
+第 ② 环已经把 `useDuration` 变成 0，`onUseTick` **根本不会被调用**，所以是「每 tick」而非「每冷却 tick」。
+另外「且不放法术」也确认：这条链只会冒烟，法术是由我们自己的 `spell.SpellResult(...)` 放的。
+
+**为什么旧档迁移挡不住**：0.0.19 的迁移判定是 `stack.getItem() == goety:dark_wand`（`isLegacyDarkWand`）
+—— **只认一个注册名**，`dark_staff` / `nameless_staff` / 附属法杖**全部漏网**；
+而仪式召唤这条路甚至在"存档中"就存着玩家那把杖。
+
+#### (3) 修法（三条收口 + 一处共用实现）
+
+| 位置 | 改动 |
+|---|---|
+| **`focus/BossWandHelper#inertCarrier(ItemStack)`（新增，唯一实现）** | 把**任意**法杖栈换成 `goetytuner:tuner_wand` 并**原样保留旧杖 NBT**（附魔/名字/调律加成…；聚晶槽是 capability 不随 tag 走，由 `installFocus` 重装） |
+| `ritual/TunerSummonRitual#initSummoned` | **根因修复**：不再把玩家那把杖塞进主手，改成 `inertCarrier(wandCopy)`；`setOriginalWand(wandCopy.copy())` 不动 ⇒ **死亡掉落仍是玩家自己那把杖**（含升级加成） |
+| `entity/TunerBoss` / `entity/TunerServant` 的 `readAdditionalSaveData` | 迁移判定由「== `goety:dark_wand`」放宽为「**不是** `TunerWand` 就换」，并保留原杖 NBT ⇒ 覆盖 0.0.8~0.0.18 老档、仪式召唤老档、指令/数据包/其它附属换上的任意 `IWand`。`isLegacyDarkWand` 已删除 |
+| `entity/ai/CastChannel#ensureInertWand`（新增，**运行时兜底**） | 通道型施法第一件事：主手非 `TunerWand` ⇒ 先 `stopUsingItem()`、换成 `inertCarrier(...)`、**重装当前聚晶**（否则 `MobUtil.isSpellCasting` 的"杖里有聚晶"不成立、光束照样活不下来），并打一条 INFO 日志当**永久绊线** |
+| `CastChannel#tickChannel` 自愈处 | 加**闸A**：手里"正在使用"的不是惰性法杖 ⇒ 立刻松手（把任何来源的外来杖从"使用中"状态踢出去）；再由闸B（`ensureInertWand`）决定是否重新 `startUsingItem` |
+
+#### (3b) 追加：**外观零变化** —— 实际持惰性杖、画面画原杖（用户本轮明确要求）
+
+用户反馈：不想看到"用 `dark_staff` / `nameless_staff` 召唤出来的 Boss 手上变成暗法杖"这个外观变化，
+并点名要"实际使用惰性杖但渲染为玩家法杖，同时惰性杖忠实保留快照法杖的属性"。做法：
+
+| 部件 | 改动 |
+|---|---|
+| **显示快照** | `BossWandHelper#inertCarrier` 把原杖的**完整 ItemStack 快照**（`source.copy().save(...)`）写进载体杖 tag 的 `goetytuner_display` 键；新读入口 `BossWandHelper#displayWand(ItemStack)`（物品在客户端缺失 / 无快照 ⇒ `EMPTY`）。**不需要任何封包或同步字段**：Mob 主手物品本来就同步（`ItemByteBuf#writeItem` + `Item#shouldOverrideMultiplayerNbt()` 默认 `true` ⇒ 连 `IWand#getShareTag` 的 tag 一起发），也天然跟着存档走 |
+| **渲染** | 新增 `client/render/TunerHandLayer`（`extends ItemInHandLayer`，只覆写 `renderArmWithItem`）：若传入的栈**就是**该实体的 `getMainHandItem()`（身份比较，与惯用手无关）且实体是 `TunerBoss`/`TunerServant`，就把要画的栈换成显示快照那份。两个渲染器构造器里 `this.layers.removeIf(l -> l instanceof ItemInHandLayer)` + `addLayer(new TunerHandLayer<>(...))` —— ⚠️ **必须摘掉原版那层**：`HumanoidMobRenderer` 的构造器里**自带**一个 `ItemInHandLayer`（0.0.19 的文档写反了，本轮更正），不摘就会画两遍。`layers` 是 `protected`，所以这个两行装配只能写在各渲染器子类自己的构造器里 |
+| **忠实度** | 画的是 `ItemStack.of(快照)`，交给原版 `ItemInHandRenderer` ⇒ 模型 / 贴图 / `display` 变换 / 附魔光效 / 自定义名 / **物品自己的 `getCustomRenderer()`（BEWLR，如 `goety:nameless_staff`）**全部来自原物品本身，不是仿的 |
+| **属性忠实代理** | `TunerWand#getAttributeModifiers(slot, stack)` 覆写：有快照就问快照那把杖要 modifier（`display.getAttributeModifiers(slot)`），没有才走默认。理由：`goety:dark_staff`（及 `NamelessStaff`）覆写了这个方法，给**主手**挂 `ATTACK_DAMAGE`/`ATTACK_SPEED`（`dark_wand` 没有）—— 0.0.20 及以前 Boss 拿着那把 staff 是**吃到这份加成**的，换载体杖后不代理就等于悄悄削了 Boss 的近战伤害。**代理而非抄数值** ⇒ 不写死任何数字，Goety/附属改了也自动跟上 |
+| 性能 | `TunerHandLayer` 每帧都要拿显示栈，用一个 `WeakHashMap<ItemStack, ItemStack>`（键是手上那个**实例**，装备变更换实例 ⇒ 自动失效；`EMPTY` 也缓存）把 NBT 解析挡在渲染热路径之外 |
+
+⚠️ **仍然不一致的一处（诚实说明）**：`dark_staff` 的 `getWandVisualHeight()` = 0.8（`dark_wand` = 0.4）**没有**代理。
+按 §3.19 的 `javap` 审计，该值只作用于**玩家**路径（三个世界空间光束渲染器 + `Spell#useParticle` 的
+`SStaffParticlePacket`），对 Mob 当下没有可见影响；真要做就得连"从杖尖发粒子"那条链一起搬，属另一个话题。
+
+**副作用**：`TunerWand` 的模型是 `{"parent":"goety:item/dark_wand"}` ⇒ 用 `dark_wand` 召唤时
+**外观零变化**；用 `dark_staff` / `nameless_staff` / 附属法杖召唤时，Boss 手里的杖会显示成
+dark_wand 的外观（这是"Boss 主手 = 本模组施法载体"这一设计的应有结果，见 §3.19 的更正框）。
+
+#### (4) 验证做到什么程度
+
+- `gradlew build` **成功**（**59 s** / 复现 **19~28 s**），只有项目既有基准噪声（3 条 FML 弃用注记 + `TunerBoss` 过时 API 注记）；jar 条目 **122 → 123**（新增 1 个客户端类 `client/render/TunerHandLayer`，无删除；改动类 6 → 7 ⇒ 共动 8 个 Java 文件）、`goetytuner-0.0.20.jar` = **1,804,747 B / md5 `4EC211FDFE2D3A1C9B3928EDAC9937E9` / 123 条目**、jar 内 `mods.toml` 版本 **0.0.20**。部署到 `versions\测试\mods\goetytuner-0.0.20.jar.disabled`（该实例当前**所有** mod 都是 `.disabled`，照原状态替换那一份；桌面另放一份），**逐条目比对 differing=0**。
+  ⚠️ **部署核对的做法**：本轮构建了多次（每次都会产生新的 `MANIFEST` 时间戳 ⇒ 大小/md5 不同、**源码相同**）——"部署的 jar 对应哪份源码"**只能靠逐条目 SHA256 比对**（本项目既有红线），别用整体 md5。
+  ⚠️ **本机现在必须用这两条参数才build得动**（否则会拿到一堆与本次改动无关的假编译错误）：
+  `--offline`（ForgeGradle 会去 `maven.minecraftforge.net` / `libraries.minecraft.net` 校验 ETag 与证书，本机当前**出网超时** ⇒ mc 依赖解析不全 ⇒ `com.mojang.brigadier` / `Matrix3f` / `ByteBuf` 找不到，实测 **29 条假错误**）
+  + `-Dnet.minecraftforge.gradle.check.certs=false`（否则插件应用阶段就挂在
+  `Failed to validate certificate for host 'https://libraries.minecraft.net/'`）。**判据是 `BUILD SUCCESSFUL`，别被那批假错误带偏。**
+- **`javap`（reobf jar）核对**：`BossWandHelper` 方法表含 `inertCarrier`；`CastChannel` 方法表含 `isInertWand` / `ensureInertWand`，且 `tickChannel` 字节码里确有 `m_6117_()`(isUsingItem) → `m_21211_()`(getUseItem) → `isInertWand` → `m_5810_()`(stopUsingItem) 的闸A序列、随后 `ensureInertWand` → `m_6672_(InteractionHand)`(startUsingItem)；`ensureInertWand` 内确有 `m_21205_()`(getMainHandItem) / `instanceof IWand` / `inertCarrier` / `m_21008_(InteractionHand, ItemStack)`(setItemInHand)；`startCast` 的通道分支在 `m_6672_` 之前调用了 `ensureInertWand`。
+- **四处新调用点全部在包里**（字节串/字节码搜索 `BossWandHelper.inertCarrier`）：`CastChannel`、`TunerBoss.m_7378_`、`TunerServant.m_7378_`、`TunerSummonRitual.initSummoned`；**`DARK_WAND` 引用已从本模组全部消失**（`isLegacyDarkWand` 已删除）。
+- **外观方案的字节码核对**：`client/render/TunerHandLayer` 存在且 `m_117184_`(= `ItemInHandLayer#renderArmWithItem`) 覆写成立，其体内确有 `isTuner` 与 `displayOf` → `BossWandHelper.displayWand`；两个渲染器构造器里各有 `List.removeIf` + `instanceof ItemInHandLayer` + `new TunerHandLayer(...)`；`TunerWand` 方法表含 `getAttributeModifiers(EquipmentSlot, ItemStack)`，其体内确有 `displayWand` → `ItemStack.m_41638_`(=`getAttributeModifiers`) → `isEmpty` → `Item.getAttributeModifiers` 的回退链；`BossWandHelper` 方法表含 `DISPLAY_KEY` / `displayWand`。
+- **中文日志串编码核对**：`CastChannel.class` 里能按 **modified UTF-8** 搜到新日志串 `主手法杖在 Item 层不惰性` ⇒ 没写坏编码。
+- ⚠️ **未进游戏实测**：本轮**没有**跑客户端验证"白烟确实消失"。要现场确认看两件事：
+  ① 日志里有没有 `[Tuner] 主手法杖在 Item 层不惰性，已换成 tuner_wand …`（有 ⇒ 说明那条来源命中过、兜底生效了）；
+  ② 仪式召唤一只 Boss，用 `goety:dark_wand` 触发一次长按类聚晶（腐化/震撼/炼狱），看还有没有白烟与灭火音。
+  修复后**正常路径不会打这条日志**（仪式已经在源头给了 `tuner_wand`），它只是兜底绊线。
 
 ---
 
